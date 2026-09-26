@@ -47,7 +47,11 @@ _Avoid_: block, item
 A tool request together with its result, treated as one unit.
 
 **Raw record**:
-The Source's original on-disk data for a Session, kept verbatim alongside the parsed Transcript.
+The Source's original on-disk data for a Session, kept verbatim alongside the parsed Transcript: one Source file, or one Session's rows for a database-backed Source. When its content is rewritten rather than appended to, the earlier content is kept as a superseded version.
+
+**Record key**:
+The stable name of a Raw record within its Source on one Machine. It stays the same when the Source compresses or archives the underlying file.
+_Avoid_: path, filename
 
 ## Relationships
 
@@ -55,6 +59,7 @@ The Source's original on-disk data for a Session, kept verbatim alongside the pa
 - A **Collector** reads from zero or more **Sources** installed on its **Machine**
 - A **Session** belongs to exactly one **Source** and one **Machine**
 - A **Session** has one **Transcript** and one or more **Raw records**
+- A **Raw record** is identified by (**Machine**, **Source**, **Record key**)
 - A **Project** belongs to exactly one **Machine**; the same path on two Machines is two **Projects**
 - A **Session** belongs to at most one **Project**, fixed by where it started
 - A **Child Session** has exactly one parent **Session** and is spawned by one **Tool call** in it
