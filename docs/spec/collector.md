@@ -106,6 +106,7 @@ root    = "/Users/ted/.local/share/opencode"
 | `exclude` | no | `[]` | See §4.6 |
 | `sources.<id>.enabled` | no | `true` | `false` means the Source is never read |
 | `sources.<id>.root` | no | the adapter's default root | Absolute path. `init` writes the resolved value. |
+| `sources.opencode.db` | no | `<root>/opencode.db` | Absolute path to opencode's database. `init` writes it only when `OPENCODE_DB` is set (`adapters/opencode.md` §2.1). |
 
 - `<id>` is the Source identifier from `protocol.md` §3.1: `claude-code`, `codex`, `oh-my-pi`, `opencode`.
 - Unknown keys are logged at `warn` and ignored.
@@ -185,6 +186,7 @@ A **Source adapter** provides:
 | `Version(root)` | The Source's version if it can be read cheaply, else empty. Sent to the Hub in `PUT /machines/{id}`. |
 | `Layouts` | The ranked list below |
 | `KnownIgnored` | Path globs, relative to the root, that are recognized but deliberately not read |
+| `ScanPaths(root)` | The directories (and root-level file globs) checked for unclaimed paths (§4.7). Codex, oh-my-pi and opencode keep much unrelated state under their roots, so they scan only their history directories. |
 
 Each **Layout** provides:
 
@@ -196,7 +198,7 @@ Each **Layout** provides:
 | `Claims(path)` | Whether a path under the root belongs to this Layout. Used to find unclaimed paths. |
 | `WatchPaths(root)` | The directories (or files) to watch with fsnotify |
 | `StartCwd(record)` | The Session's starting cwd, read cheaply from metadata. Used only for `exclude` (§4.6). |
-| `Parent(record)` | For a Child Session's record: the Record key of its parent, if it's knowable from the path or metadata. Used only for `exclude`. |
+| `Parent(record)` | For a Child Session's record: the Record key of its parent. For an attachment record: the Record key of the `main` it belongs to. Only when knowable from the path or metadata. Used only for `exclude`. |
 
 Rules every adapter follows (from `protocol.md` §3.3):
 
@@ -337,8 +339,8 @@ Source: [Collector → Hub ingestion protocol](https://github.com/tedkulp/agent-
 opencode's `sqlite` Layout is not a file per Session, so it's handled differently:
 
 - The Collector watches `opencode.db-wal` (and `opencode.db`). A change starts the debounce for the whole database.
-- It opens the database **read-only** (`mode=ro`, never creating or checkpointing the WAL) and queries Sessions whose `time_updated` is greater than `opencode_last_time_updated`.
-- For each such Session it exports that Session's `session`, `message` and `part` rows as table-tagged JSONL. The exact line shape is in `adapters/opencode.md`. Each export is sent as a `replace` (`protocol.md` §4.2), which the Hub treats as a no-op when nothing changed.
+- It opens the database **read-only** (`mode=ro`, never creating or checkpointing the WAL) and queries Sessions changed since `opencode_last_time_updated`: the Session's own `time_updated`, or that of any of its rows, is newer (`adapters/opencode.md` §2.2).
+- For each such Session it exports that Session's `session`, `message`, `part` and `session_message` rows as table-tagged JSONL. The exact line shape is in `adapters/opencode.md`. Each export is sent as a `replace` (`protocol.md` §4.2), which the Hub treats as a no-op when nothing changed.
 - `opencode_last_time_updated` moves forward only after every exported Session is acked.
 - If the database is locked or busy, retry on the next event or rescan.
 
@@ -359,11 +361,11 @@ Source: [Collector design](https://github.com/tedkulp/agent-history/issues/11)
 
 On every rescan, for each detected Source:
 
-- Every regular file under the root is checked against each Layout's `Claims` and the adapter's `KnownIgnored` globs.
+- Every regular file under the adapter's `ScanPaths` is checked against each Layout's `Claims` and the adapter's `KnownIgnored` globs.
 - A file that matches neither is **unclaimed**. The first time each unclaimed path is seen, it's logged at `warn`, and `status` lists the count and the first 5 paths. Unclaimed files are not shipped.
 - **Known-ignored** files are listed in `status` with their modification time. For Codex, this is how the operator notices if Codex stops writing JSONL: the ignored `thread_history_*.sqlite` gets newer than the newest claimed record.
 
-Source: [Source format drift](https://github.com/tedkulp/agent-history/issues/16)
+Source: [Source format drift](https://github.com/tedkulp/agent-history/issues/16); `ScanPaths` filled in by [Write the adapter specs](https://github.com/tedkulp/agent-history/issues/23)
 
 ### 4.8 Service definitions
 

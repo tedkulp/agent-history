@@ -116,7 +116,8 @@ A **parser** provides:
 
 `Parse` input:
 
-- the Session's `main` Raw record content (current version, decompressed) from the winning Layout (§4.3)
+- the Session's native id (from `MapKey`). Some parsers derive Child Session ids from it (e.g. oh-my-pi).
+- the Session's `main` Raw record content (current version, decompressed) from the winning Layout (§4.3), with its Record key
 - every `attachment` Raw record of that Layout, keyed by Record key
 - the Machine's `home_dir` (some Sources encode paths relative to it)
 
@@ -137,7 +138,7 @@ Rules every parser follows:
 - Dropped on purpose (Raw only): system prompts / `base_instructions`, telemetry (Codex `event_msg` / `world_state`, Claude `file-history-snapshot`), cost, thinking signatures and encrypted reasoning.
 - A panic inside `Parse` is recovered by the worker and treated as a parse failure.
 
-Source: [Normalized Transcript model](https://github.com/tedkulp/agent-history/issues/9), [Hub storage schema](https://github.com/tedkulp/agent-history/issues/12), [Source format drift](https://github.com/tedkulp/agent-history/issues/16), [Re-parse flow when a parser changes](https://github.com/tedkulp/agent-history/issues/14); the member list filled in while writing this spec
+Source: [Normalized Transcript model](https://github.com/tedkulp/agent-history/issues/9), [Hub storage schema](https://github.com/tedkulp/agent-history/issues/12), [Source format drift](https://github.com/tedkulp/agent-history/issues/16), [Re-parse flow when a parser changes](https://github.com/tedkulp/agent-history/issues/14); the member list filled in while writing this spec; the native id input filled in by [Write the adapter specs](https://github.com/tedkulp/agent-history/issues/23)
 
 ### 2.6 Image and compose file
 
@@ -349,7 +350,7 @@ CREATE TABLE blobs (
 |---|---|
 | `text` | `{"text": "…"}` (Markdown) |
 | `thinking` | `{"text": "…"}` (readable thinking or its summary only) |
-| `tool_call` | `{"call_id", "name", "input": <JSON value>, "status": "ok"\|"error"\|"pending", "output": "…"\|null, "output_size": N, "output_preview": "…", "child_session": "<native id>"\|null, "diff": {"path", "old", "new"}\|null}` |
+| `tool_call` | `{"call_id", "name", "input": <JSON value>, "status": "ok"\|"error"\|"pending", "output": "…"\|null, "output_size": N, "output_preview": "…", "child_sessions": ["<native id>", …], "diff": {"path", "old", "new"}\|null}` |
 | `image` | `{"sha256", "mime", "alt": "…"}` |
 | `attachment` | `{"label": "…"}`: a file reference or opencode snapshot/patch, no bytes |
 | `marker` | `{"marker": "compaction"\|"model_change"\|"thinking_level"\|"slash_command", "text": "…"}` |
@@ -358,10 +359,11 @@ CREATE TABLE blobs (
 - **Tool output over 16 KB** (16,384 bytes) goes to `tool_outputs`; the payload's `output` is `null`. Smaller output stays inline in `output`. `output_size` is always set.
 - `output_preview` is the first 200 characters of the output, set whenever `output_size` is over 4 KB. The collapsed stub in the UI shows it (§4.7).
 - `diff` is set by the parser for file-editing tools (e.g. Claude `Edit`), so the UI can render a diff without knowing Source tool names.
+- `child_sessions` lists the native ids of the Child Sessions a call spawned, usually one; an oh-my-pi `task` call can spawn several. `[]` for ordinary calls.
 - `blobs` are content-addressed, so the same image stored twice is one row. Blobs are never deleted, even if a re-parse stops referencing them.
 - **Usage** is kept per assistant Message. `sessions.usage_json` is the sum. Codex's duplicate usage records are deduped by its parser.
 
-Source: [Normalized Transcript model](https://github.com/tedkulp/agent-history/issues/9), [Hub storage schema](https://github.com/tedkulp/agent-history/issues/12), [Web UI: browse and search screens](https://github.com/tedkulp/agent-history/issues/13); payload field names, the id charset and the preview filled in while writing this spec
+Source: [Normalized Transcript model](https://github.com/tedkulp/agent-history/issues/9), [Hub storage schema](https://github.com/tedkulp/agent-history/issues/12), [Web UI: browse and search screens](https://github.com/tedkulp/agent-history/issues/13); payload field names, the id charset and the preview filled in while writing this spec; `child_sessions` as a list filled in by [Write the adapter specs](https://github.com/tedkulp/agent-history/issues/23)
 
 ### 3.6 Parse warnings
 
@@ -486,8 +488,9 @@ Source: [Collector → Hub ingestion protocol](https://github.com/tedkulp/agent-
 - The Collector never sends a Session id. Upload order doesn't matter: an `attachment` that arrives before its `main` waits, and the Session parses once a `main` exists.
 - **Layout ranks.** When one native Session id has Raw records in two Layouts (e.g. an opencode Session migrated into the database while its legacy JSON files remain), all of them attach to the same Session. The Session's **winning Layout** is the highest `layout_rank` among its records whose `MapKey` role is `main`. Records from any other Layout get role **`shadow`**: they are kept Raw-only and never parsed.
 - Roles are recomputed whenever a record attaches to a Session. If the winner changes (a higher-ranked Layout appears), the old winner's records become `shadow` and the Session is live-enqueued.
+- If the winning Layout holds more than one `main` for the Session (e.g. an oh-my-pi file re-shipped under a new key after omp renamed its directory), the one with the highest `raw_records.id` is parsed and the others become `shadow`.
 
-Source: [Hub storage schema](https://github.com/tedkulp/agent-history/issues/12), [Source format drift](https://github.com/tedkulp/agent-history/issues/16)
+Source: [Hub storage schema](https://github.com/tedkulp/agent-history/issues/12), [Source format drift](https://github.com/tedkulp/agent-history/issues/16); the several-`main` rule filled in by [Write the adapter specs](https://github.com/tedkulp/agent-history/issues/23)
 
 ### 4.4 Project assignment
 
@@ -593,6 +596,7 @@ The UI is **search-first**: a search box over a feed of recent Sessions from eve
 #### Transcript (`/sessions/{id}`)
 
 - **Header**: title, Source, Machine and Project (both link to the feed filtered by them), git branch, model, start time, and "↰ child of …" (linking to the spawning call's anchor in the parent) for a Child Session, or "forked from …" for a fork.
+  - The spawning call is `spawning_call_id` when the parser set it. Otherwise the Hub looks in the parent's `tool_call` Parts for one whose `child_sessions` contains this Session's native id. If neither finds a call, the link goes to the top of the parent.
 - **Notes** under the header, collapsed by default:
   - Parse warnings: e.g. "12 items not understood (unknown_type: `foo_event` ×10, …)", with `source_version` and each `first_excerpt` on expand.
   - Parse failure: "parse failed" with `parse_error`, shown above the last good Transcript (or alone, if there never was one).
@@ -606,7 +610,7 @@ The UI is **search-first**: a search box over a feed of recent Sessions from eve
 
 **Rejected:** drill-down pages (a page per level is slow for the most common action, "find that conversation"); a three-pane reader (tool calls always expanded bury the conversation, and three panes are cramped on narrow screens).
 
-Source: [Web UI: browse and search screens](https://github.com/tedkulp/agent-history/issues/13), [Hub language and web UI stack](https://github.com/tedkulp/agent-history/issues/7), [Re-parse flow when a parser changes](https://github.com/tedkulp/agent-history/issues/14), [Source format drift](https://github.com/tedkulp/agent-history/issues/16); page sizes, the `before` cursor and the Child Session search label filled in while writing this spec
+Source: [Web UI: browse and search screens](https://github.com/tedkulp/agent-history/issues/13), [Hub language and web UI stack](https://github.com/tedkulp/agent-history/issues/7), [Re-parse flow when a parser changes](https://github.com/tedkulp/agent-history/issues/14), [Source format drift](https://github.com/tedkulp/agent-history/issues/16); page sizes, the `before` cursor and the Child Session search label filled in while writing this spec; the spawning-call lookup filled in by [Write the adapter specs](https://github.com/tedkulp/agent-history/issues/23)
 
 ### 4.8 Backups
 

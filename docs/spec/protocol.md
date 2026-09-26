@@ -152,7 +152,7 @@ Source: [Collector → Hub ingestion protocol](https://github.com/tedkulp/agent-
 A Raw record is identified by **(Machine, Source, Record key)**. Its content is one of:
 
 - **File Layouts** (Claude Code, Codex, oh-my-pi, opencode `legacy-json`): the bytes of one Source file. Compressed files (`.jsonl.zst`, `.gz`) are shipped **decompressed**, so the Hub always stores what the Source originally wrote.
-- **opencode `sqlite` Layout**: one Session's rows from the `session`, `message` and `part` tables, exported verbatim as JSONL. Each line is one row, tagged with its table name. This is an export, not a parse, so ADR 0001 holds. The exact line shape is in `adapters/opencode.md`.
+- **opencode `sqlite` Layout**: one Session's rows from the `session`, `message`, `part` and `session_message` tables, exported verbatim as JSONL. Each line is one row, tagged with its table name. This is an export, not a parse, so ADR 0001 holds. The exact line shape is in `adapters/opencode.md`.
 
 For JSONL content, the Collector ships only up to the **last complete `\n`**. A half-written line is never sent. Chunk boundaries also fall on line boundaries (§4.3).
 
@@ -163,7 +163,7 @@ Source: [Collector → Hub ingestion protocol](https://github.com/tedkulp/agent-
 The Source's adapter on the Collector defines the Record key. The protocol requires:
 
 - **Stable.** The key stays the same when the Source compresses, moves, or archives the file. For example, Codex `.jsonl` → `.jsonl.zst`, Codex `archived_sessions/`, and oh-my-pi `archive/` all map back to the original key. They never create a second Raw record.
-- **Relative to the Source root**, not an absolute path. Moving the root (for example `CLAUDE_CONFIG_DIR`) does not change keys.
+- **Relative to the Source root**, not an absolute path. Moving the root (for example `CLAUDE_CONFIG_DIR`) does not change keys. A key need not be a literal path: an adapter may synthesize one to keep it stable or to name its Session (Codex keys are the bare file name; opencode legacy part keys insert the Session id).
 - **Layout-prefixed** when a Source has more than one Layout (e.g. `json:` / `db:` for opencode), so two Layouts never collide.
 - Non-empty UTF-8, at most 1024 bytes.
 
@@ -171,7 +171,7 @@ The Collector never sends a Session id. **The Hub derives the owning Session** f
 
 If the Hub cannot map a key (an unknown Source, or a Layout prefix this Hub's parser doesn't know), it still **stores the bytes and acks**. The record stays unattached to any Session until a Hub with a matching parser maps it on start (see the Re-parse flow in `hub.md`). Raw data is never refused for being unfamiliar.
 
-Source: [Collector → Hub ingestion protocol](https://github.com/tedkulp/agent-history/issues/10), [Hub storage schema](https://github.com/tedkulp/agent-history/issues/12), [Source format drift](https://github.com/tedkulp/agent-history/issues/16)
+Source: [Collector → Hub ingestion protocol](https://github.com/tedkulp/agent-history/issues/10), [Hub storage schema](https://github.com/tedkulp/agent-history/issues/12), [Source format drift](https://github.com/tedkulp/agent-history/issues/16); synthesized keys filled in by [Write the adapter specs](https://github.com/tedkulp/agent-history/issues/23)
 
 ### 3.4 Versions on the Hub
 
