@@ -23,6 +23,12 @@ type Layout interface {
 	Rank() int
 	// Discover lists the Layout's Raw records under root.
 	Discover(root string) ([]Record, error)
+	// WatchPaths are the directories to watch with fsnotify. Each is
+	// watched recursively, with new subdirectories added as they appear.
+	WatchPaths(root string) []string
+	// Claims returns the Raw record held at path, an absolute path under
+	// root, when this Layout claims it.
+	Claims(root, path string) (Record, bool)
 }
 
 // Record is one discovered Raw record.

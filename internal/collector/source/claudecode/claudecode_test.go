@@ -83,3 +83,17 @@ func TestDetect(t *testing.T) {
 		t.Fatal("missing dir detected")
 	}
 }
+
+func TestClaims(t *testing.T) {
+	root := "/r/a"
+	key := "-Users-ted-src-app/" + sess + ".jsonl"
+	rec, ok := jsonlLayout{}.Claims(root, root+"/"+key)
+	if !ok || rec.Key != key || rec.Path != root+"/"+key {
+		t.Fatalf("Claims = %+v, %v", rec, ok)
+	}
+	for _, p := range []string{"/r/a/-Users-ted-src-app/memory/MEMORY.md", "/elsewhere/-p/" + sess + ".jsonl", "/r/" + sess + ".jsonl", "/r/a"} {
+		if _, ok := (jsonlLayout{}).Claims(root, p); ok {
+			t.Errorf("Claims(%q) = true", p)
+		}
+	}
+}

@@ -10,24 +10,27 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/tedkulp/agent-history/internal/buildinfo"
+	"github.com/tedkulp/agent-history/internal/collector/cache"
 	"github.com/tedkulp/agent-history/internal/collector/config"
 	"github.com/tedkulp/agent-history/internal/collector/hubclient"
-	"github.com/tedkulp/agent-history/internal/collector/reconcile"
+	"github.com/tedkulp/agent-history/internal/collector/runner"
 	"github.com/tedkulp/agent-history/internal/collector/source"
 	"github.com/tedkulp/agent-history/internal/collector/source/claudecode"
+	"github.com/tedkulp/agent-history/internal/collector/state"
 	"github.com/tedkulp/agent-history/protocol"
 )
 
 const usage = `usage: agent-history <command>
 
 commands:
-  run       ship every Source's records to the Hub
+  run       ship every Source's records to the Hub and keep it current
   version   print the version
 `
 
@@ -79,11 +82,17 @@ func run() error {
 		return errors.New("exclude is not supported by this Collector yet; remove it from the config to run")
 	}
 
+	dir := state.DefaultDir(os.Getenv, home)
+	unlock, err := state.Lock(dir)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	info := machineInfo(cfg, home)
-	var sources []reconcile.Source
+	var sources []runner.Source
 	for _, a := range adapters {
 		sc := cfg.Sources[a.ID()]
 		if !sc.IsEnabled() {
@@ -93,42 +102,22 @@ func run() error {
 		if root == "" {
 			root = a.DefaultRoot(os.Getenv, home)
 		}
-		si := protocol.SourceInfo{Source: a.ID(), Root: root, Layouts: []string{}, Detected: a.Detect(root)}
-		if v := a.Version(root); v != "" {
-			si.Version = &v
-		}
-		if si.Detected {
-			src := reconcile.Source{ID: a.ID()}
-			for _, l := range a.Layouts() {
-				recs, err := l.Discover(root)
-				if err != nil {
-					return fmt.Errorf("%s: discovering %s layout: %w", a.ID(), l.Name(), err)
-				}
-				si.Layouts = append(si.Layouts, l.Name())
-				src.Records = append(src.Records, recs...)
-			}
-			sources = append(sources, src)
-			log.Info("source detected", "source", a.ID(), "root", root, "records", len(src.Records))
-		} else {
-			log.Info("source not detected", "source", a.ID(), "root", root)
-		}
-		info.Sources = append(info.Sources, si)
+		sources = append(sources, runner.Source{Adapter: a, Root: root})
 	}
 
 	hub, err := hubclient.New(cfg.HubURL, cfg.MachineID, buildinfo.Version, &http.Client{Timeout: 5 * time.Minute})
 	if err != nil {
 		return err
 	}
-	start := time.Now()
-	res, err := reconcile.Reconcile(ctx, hub, info, sources, log)
-	if err != nil {
-		return err
-	}
-	log.Info("reconcile finished", "uploaded", res.Uploaded, "unchanged", res.Unchanged, "replaced", res.Replaced, "failed", res.Failed, "mismatched", res.Mismatched, "bytes", res.Bytes, "took", time.Since(start).Round(time.Millisecond))
-	if res.Failed > 0 {
-		return fmt.Errorf("%d records failed to ship", res.Failed)
-	}
-	return nil
+	log.Info("collector starting", "version", buildinfo.Version, "hub", cfg.HubURL, "state_dir", dir)
+	return runner.Run(ctx, runner.Config{
+		Hub:            hub,
+		Info:           machineInfo(cfg, home),
+		Sources:        sources,
+		Cache:          cache.Load(filepath.Join(dir, "cache.json"), cfg.HubURL, log),
+		Log:            log,
+		RescanInterval: cfg.RescanInterval,
+	})
 }
 
 func machineInfo(cfg *config.Config, home string) protocol.MachineInfo {

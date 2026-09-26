@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 
+	"github.com/tedkulp/agent-history/internal/collector/cache"
 	"github.com/tedkulp/agent-history/internal/collector/hubclient"
 	"github.com/tedkulp/agent-history/internal/collector/source"
 	"github.com/tedkulp/agent-history/internal/collector/source/claudecode"
@@ -157,7 +159,7 @@ func (f *fixture) run() Result {
 		f.t.Fatal(err)
 	}
 	info := protocol.MachineInfo{DisplayName: "test", HomeDir: "/Users/ted"}
-	res, err := Reconcile(context.Background(), f.hub, info, []Source{{ID: protocol.SourceClaudeCode, Records: recs}}, nil)
+	res, err := Reconcile(context.Background(), f.hub, info, []Source{{ID: protocol.SourceClaudeCode, Records: recs}}, Options{})
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -439,7 +441,7 @@ func (f *fixture) runWith(hub Hub) Result {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	res, err := Reconcile(context.Background(), hub, protocol.MachineInfo{HomeDir: "/Users/ted"}, []Source{{ID: protocol.SourceClaudeCode, Records: recs}}, nil)
+	res, err := Reconcile(context.Background(), hub, protocol.MachineInfo{HomeDir: "/Users/ted"}, []Source{{ID: protocol.SourceClaudeCode, Records: recs}}, Options{})
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -485,7 +487,7 @@ func TestReconcileFlagsShaMismatchAfterAck(t *testing.T) {
 	f.write(key, "{\"n\":1}\n")
 	hub := &scriptedHub{Hub: f.hub, acked: &protocol.RecordState{Length: 8, Sha256: hexSum([]byte("tampered"))}}
 	rec := source.Record{Key: key, Path: filepath.Join(f.root, filepath.FromSlash(key))}
-	_, _, err := ship(context.Background(), hub, protocol.SourceClaudeCode, rec, nil, slog.Default())
+	_, err := Ship(context.Background(), hub, protocol.SourceClaudeCode, rec, nil, slog.Default())
 	var mm *MismatchError
 	if !errors.As(err, &mm) {
 		t.Fatalf("err = %v, want MismatchError", err)
@@ -538,7 +540,7 @@ func TestReconcileRecoversFromConflict(t *testing.T) {
 	}
 	info := protocol.MachineInfo{HomeDir: "/Users/ted"}
 	before := f.appends.Load()
-	res, err := Reconcile(context.Background(), staleManifest{f.hub}, info, []Source{{ID: protocol.SourceClaudeCode, Records: recs}}, nil)
+	res, err := Reconcile(context.Background(), staleManifest{f.hub}, info, []Source{{ID: protocol.SourceClaudeCode, Records: recs}}, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -547,5 +549,53 @@ func TestReconcileRecoversFromConflict(t *testing.T) {
 	}
 	if c := f.hubContent(key); c != "{\"n\":1}\n{\"n\":2}\n" {
 		t.Fatalf("hub content %q", c)
+	}
+}
+
+func TestReconcileFillsCache(t *testing.T) {
+	f := newFixture(t)
+	key := proj + "/" + sess + ".jsonl"
+	f.write(key, "{\"n\":1}\n{\"half\":")
+	recs, err := claudecode.Adapter{}.Layouts()[0].Discover(f.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := cache.Load(filepath.Join(t.TempDir(), "cache.json"), "h", nil)
+	if _, err := Reconcile(context.Background(), f.hub, protocol.MachineInfo{HomeDir: "/Users/ted"}, []Source{{ID: protocol.SourceClaudeCode, Records: recs}}, Options{Cache: c}); err != nil {
+		t.Fatal(err)
+	}
+	e, ok := c.Get(cache.Key(protocol.SourceClaudeCode, key))
+	fi, _ := os.Stat(filepath.Join(f.root, filepath.FromSlash(key)))
+	if !ok || e.Length != 8 || e.Sha256 != hexSum([]byte("{\"n\":1}\n")) || !e.Unchanged(fi) {
+		t.Fatalf("cache entry %+v, ok %v", e, ok)
+	}
+}
+
+func TestReconcileStopsOnTransientError(t *testing.T) {
+	for _, err := range []error{status(503), &url.Error{Op: "Post", URL: "http://hub", Err: errors.New("connection refused")}} {
+		f := newFixture(t)
+		f.write(proj+"/"+sess+".jsonl", "{\"n\":1}\n")
+		f.write(proj+"/"+sess+"/subagents/agent-a.jsonl", "{\"n\":1}\n")
+		hub := &scriptedHub{Hub: f.hub, errs: []error{err}}
+		recs, _ := claudecode.Adapter{}.Layouts()[0].Discover(f.root)
+		_, got := Reconcile(context.Background(), hub, protocol.MachineInfo{HomeDir: "/Users/ted"}, []Source{{ID: protocol.SourceClaudeCode, Records: recs}}, Options{})
+		if !hubclient.Transient(got) {
+			t.Fatalf("%v: Reconcile err = %v, want a transient error", err, got)
+		}
+		if hub.calls != 1 {
+			t.Fatalf("%v: %d records calls, want the reconcile to stop after 1", err, hub.calls)
+		}
+	}
+}
+
+func TestReconcileStopsWhenAsked(t *testing.T) {
+	f := newFixture(t)
+	f.write(proj+"/"+sess+".jsonl", "{\"n\":1}\n")
+	recs, _ := claudecode.Adapter{}.Layouts()[0].Discover(f.root)
+	stop := make(chan struct{})
+	close(stop)
+	_, err := Reconcile(context.Background(), f.hub, protocol.MachineInfo{HomeDir: "/Users/ted"}, []Source{{ID: protocol.SourceClaudeCode, Records: recs}}, Options{Stop: stop})
+	if !errors.Is(err, ErrStopped) || f.appends.Load() != 0 {
+		t.Fatalf("err = %v, %d uploads", err, f.appends.Load())
 	}
 }

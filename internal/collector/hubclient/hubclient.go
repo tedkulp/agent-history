@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -159,4 +160,19 @@ func (c *Client) postRecord(ctx context.Context, source, key, mode string, offse
 	var st protocol.RecordState
 	err = c.do(req, http.StatusOK, &st)
 	return st, err
+}
+
+// Transient reports whether err means the Hub is unreachable or failing: a
+// connection error or a 5xx (protocol.md §4.5). The Collector backs off and
+// reconciles after one. A cancelled request is not transient.
+func Transient(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+	var se *StatusError
+	if errors.As(err, &se) {
+		return se.StatusCode >= 500
+	}
+	var ue *url.Error
+	return errors.As(err, &ue)
 }

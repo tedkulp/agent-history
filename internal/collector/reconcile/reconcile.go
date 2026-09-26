@@ -14,6 +14,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/tedkulp/agent-history/internal/collector/cache"
 	"github.com/tedkulp/agent-history/internal/collector/hubclient"
 	"github.com/tedkulp/agent-history/internal/collector/source"
 	"github.com/tedkulp/agent-history/protocol"
@@ -43,11 +44,29 @@ type Result struct {
 	Bytes      int64 // decompressed bytes sent
 }
 
+// Options configures a Reconcile. The zero value is valid.
+type Options struct {
+	// Cache, when set, is updated with every record's acked state.
+	Cache *cache.Cache
+	Log   *slog.Logger
+	// Stop, when closed, ends the reconcile before its next record.
+	Stop <-chan struct{}
+}
+
+// ErrStopped is returned when Options.Stop closes mid-reconcile.
+var ErrStopped = errors.New("reconcile stopped")
+
 // Reconcile registers the Machine, fetches the manifest and ships every
 // record the Hub is missing, holds only a prefix of, or holds a different
-// version of. Per-record errors are logged and counted in Result; the
-// returned error is for failures that stop the whole reconcile.
-func Reconcile(ctx context.Context, hub Hub, info protocol.MachineInfo, sources []Source, log *slog.Logger) (Result, error) {
+// version of (protocol.md §4.1). It hashes every record the Hub lists,
+// ignoring the cache, and rewrites the cache from the results.
+//
+// Per-record errors are logged and counted in Result. The returned error is
+// for failures that stop the whole reconcile, including a transient Hub
+// error on any record (hubclient.Transient), after which the caller backs
+// off and reconciles again.
+func Reconcile(ctx context.Context, hub Hub, info protocol.MachineInfo, sources []Source, opts Options) (Result, error) {
+	log := opts.Log
 	if log == nil {
 		log = slog.Default()
 	}
@@ -61,37 +80,54 @@ func Reconcile(ctx context.Context, hub Hub, info protocol.MachineInfo, sources 
 	}
 	onHub := make(map[string]protocol.ManifestRecord, len(manifest))
 	for _, m := range manifest {
-		onHub[m.Source+"\x00"+m.RecordKey] = m
+		onHub[cache.Key(m.Source, m.RecordKey)] = m
 	}
 
 	for _, src := range sources {
 		for _, rec := range src.Records {
+			select {
+			case <-opts.Stop:
+				return res, ErrStopped
+			default:
+			}
 			if err := ctx.Err(); err != nil {
 				return res, err
 			}
+			k := cache.Key(src.ID, rec.Key)
 			var h *protocol.ManifestRecord
-			if m, ok := onHub[src.ID+"\x00"+rec.Key]; ok {
+			if m, ok := onHub[k]; ok {
 				h = &m
 			}
 			rlog := log.With("source", src.ID, "key", rec.Key)
-			sent, outcome, err := ship(ctx, hub, src.ID, rec, h, rlog)
-			res.Bytes += sent
+			out, err := Ship(ctx, hub, src.ID, rec, h, rlog)
+			res.Bytes += out.Sent
 			var mismatch *MismatchError
 			switch {
+			case hubclient.Transient(err) || errors.Is(err, context.Canceled):
+				return res, fmt.Errorf("shipping %s %s: %w", src.ID, rec.Key, err)
 			case errors.As(err, &mismatch):
 				res.Mismatched++
 				rlog.Warn("hub state differs from local content", "err", err)
+				if opts.Cache != nil {
+					opts.Cache.Set(k, mismatch.Entry())
+				}
 			case err != nil:
 				res.Failed++
 				rlog.Error("shipping record", "err", err)
-			case outcome == doNothing:
-				res.Unchanged++
-			case outcome == doReplace:
-				res.Replaced++
-				rlog.Debug("replaced record", "bytes", sent)
 			default:
-				res.Uploaded++
-				rlog.Debug("shipped record", "bytes", sent)
+				if opts.Cache != nil {
+					opts.Cache.Set(k, out.Entry)
+				}
+				switch out.did {
+				case doNothing:
+					res.Unchanged++
+				case doReplace:
+					res.Replaced++
+					rlog.Debug("replaced record", "bytes", out.Sent)
+				default:
+					res.Uploaded++
+					rlog.Debug("shipped record", "bytes", out.Sent)
+				}
 			}
 		}
 	}
@@ -137,18 +173,38 @@ type MismatchError struct {
 	HubSha256, LocalSha256 string
 }
 
+// Entry is a cache entry holding the Hub's state with no file stat, so the
+// record is re-examined on the next change or rescan and then replaced.
+func (e *MismatchError) Entry() cache.Entry {
+	return cache.Entry{Length: e.HubLength, Sha256: e.HubSha256}
+}
+
 func (e *MismatchError) Error() string {
 	return fmt.Sprintf("hub acked length %d sha256 %s, local content is length %d sha256 %s; the record will be replaced on the next reconcile",
 		e.HubLength, e.HubSha256, e.LocalLength, e.LocalSha256)
 }
 
-// ship brings one record up to date and returns the bytes sent and the last
-// action it sent (doNothing when it sent none). A 409 is re-decided against the state it carries (protocol.md
-// §4.4); any other error skips the record until the next reconcile.
-func ship(ctx context.Context, hub Hub, sourceID string, rec source.Record, h *protocol.ManifestRecord, log *slog.Logger) (int64, actionKind, error) {
+// Shipped is what Ship did for one record.
+type Shipped struct {
+	Sent  int64       // decompressed bytes sent
+	Entry cache.Entry // the Hub's state after Ship, and the file's stat from before it was read
+	did   actionKind  // the last action sent; doNothing when none was
+}
+
+// Ship brings one record up to date against h, the Hub's state as last known
+// (nil when the Hub doesn't hold the record). A 409 is re-decided against the
+// state it carries (protocol.md §4.4); any other error is returned.
+func Ship(ctx context.Context, hub Hub, sourceID string, rec source.Record, h *protocol.ManifestRecord, log *slog.Logger) (Shipped, error) {
+	var out Shipped
+	// Stat before reading: if the file changes meanwhile, its new stat
+	// differs from the cached one and the change is picked up again.
+	fi, err := os.Stat(rec.Path)
+	if err != nil {
+		return out, err
+	}
 	L, err := content(rec)
 	if err != nil {
-		return 0, doNothing, err
+		return out, err
 	}
 	jsonl := isJSONL(rec.Key)
 	if jsonl {
@@ -157,29 +213,33 @@ func ship(ctx context.Context, hub Hub, sourceID string, rec source.Record, h *p
 			log.Warn("a line is over the body size limit; shipping the record only up to it", "limit", protocol.MaxBodyBytes, "offset", len(L))
 		}
 	}
-	var sent int64
-	did := doNothing
 	for conflicts := 0; ; conflicts++ {
 		a := decide(h, L)
 		if a.kind == doNothing {
-			return sent, did, nil
+			out.Entry = cache.Entry{Length: h.Length, Sha256: h.Sha256, SrcSize: fi.Size(), SrcMtime: fi.ModTime()}
+			return out, nil
 		}
-		did = a.kind
-		n, err := upload(ctx, hub, sourceID, rec.Key, L, jsonl, a)
-		sent += n
+		out.did = a.kind
+		n, st, err := upload(ctx, hub, sourceID, rec.Key, L, jsonl, a)
+		out.Sent += n
 		var conflict *hubclient.ConflictError
 		if errors.As(err, &conflict) && conflicts < maxConflicts {
 			h = &protocol.ManifestRecord{Length: conflict.Length, Sha256: conflict.Sha256}
 			continue
 		}
-		return sent, did, err
+		if err != nil {
+			return out, err
+		}
+		out.Entry = cache.Entry{Length: st.Length, Sha256: st.Sha256, SrcSize: fi.Size(), SrcMtime: fi.ModTime()}
+		return out, nil
 	}
 }
 
 // upload sends L from action a in chunks (protocol.md §4.3): a replace
 // carries the first chunk and appends carry the rest. After every 200 it
-// checks the Hub's state against the local hash of the same prefix.
-func upload(ctx context.Context, hub Hub, sourceID, key string, L []byte, jsonl bool, a action) (int64, error) {
+// checks the Hub's state against the local hash of the same prefix. It
+// returns the bytes sent and the Hub's last acked state.
+func upload(ctx context.Context, hub Hub, sourceID, key string, L []byte, jsonl bool, a action) (int64, protocol.RecordState, error) {
 	off := a.offset
 	h := sha256.New()
 	h.Write(L[:off])
@@ -198,16 +258,16 @@ func upload(ctx context.Context, hub Hub, sourceID, key string, L []byte, jsonl 
 			return err
 		})
 		if err != nil {
-			return sent, err
+			return sent, st, err
 		}
 		h.Write(chunk)
 		off += int64(len(chunk))
 		sent += int64(len(chunk))
 		if sum := hex.EncodeToString(h.Sum(nil)); st.Length != off || st.Sha256 != sum {
-			return sent, &MismatchError{HubLength: st.Length, HubSha256: st.Sha256, LocalLength: off, LocalSha256: sum}
+			return sent, st, &MismatchError{HubLength: st.Length, HubSha256: st.Sha256, LocalLength: off, LocalSha256: sum}
 		}
 		if off == int64(len(L)) {
-			return sent, nil
+			return sent, st, nil
 		}
 		replace = false
 	}

@@ -12,11 +12,9 @@ import (
 
 // Config is the parsed collector.toml.
 type Config struct {
-	MachineID   string `toml:"machine_id"`
-	DisplayName string `toml:"display_name"`
-	HubURL      string `toml:"hub_url"`
-	// RescanInterval is parsed and validated; the rescan loop that uses it
-	// arrives with live shipping.
+	MachineID      string                  `toml:"machine_id"`
+	DisplayName    string                  `toml:"display_name"`
+	HubURL         string                  `toml:"hub_url"`
 	RescanInterval time.Duration           `toml:"-"`
 	RawRescan      string                  `toml:"rescan_interval"`
 	LogLevel       string                  `toml:"log_level"`

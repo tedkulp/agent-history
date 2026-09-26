@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/tedkulp/agent-history/internal/collector/source"
 	"github.com/tedkulp/agent-history/protocol"
@@ -65,15 +66,26 @@ func (jsonlLayout) Discover(root string) ([]source.Record, error) {
 		if !d.Type().IsRegular() {
 			return nil
 		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		key := filepath.ToSlash(rel)
-		if recordKey.MatchString(key) {
-			out = append(out, source.Record{Key: key, Path: path})
+		if rec, ok := (jsonlLayout{}).Claims(root, path); ok {
+			out = append(out, rec)
 		}
 		return nil
 	})
 	return out, err
+}
+
+// WatchPaths is the root: every directory under it is watched (adapter spec §2).
+func (jsonlLayout) WatchPaths(root string) []string { return []string{root} }
+
+// Claims maps a path to its record: the Record key is the path relative to root.
+func (jsonlLayout) Claims(root, path string) (source.Record, bool) {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return source.Record{}, false
+	}
+	key := filepath.ToSlash(rel)
+	if strings.HasPrefix(key, "../") || !recordKey.MatchString(key) {
+		return source.Record{}, false
+	}
+	return source.Record{Key: key, Path: path}, true
 }

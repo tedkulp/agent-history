@@ -6,6 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/a-h/templ v0.3.1020
 	github.com/alecthomas/chroma/v2 v2.27.0
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/klauspost/compress v1.20.1
 	github.com/yuin/goldmark v1.8.6
 	github.com/yuin/goldmark-highlighting/v2 v2.0.0-20230729083705-37449abec8cc
@@ -20,7 +21,6 @@ require (
 	github.com/dlclark/regexp2/v2 v2.2.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fatih/color v1.16.0 // indirect
-	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
