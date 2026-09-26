@@ -61,14 +61,14 @@ Sent on Collector start, from `init`, and whenever a field changes (display name
     {
       "source": "claude-code",
       "detected": true,
-      "version": "2.1.4",
+      "version": null,
       "root": "/Users/ted/.claude/projects",
       "layouts": ["jsonl"]
     },
     {
       "source": "opencode",
       "detected": true,
-      "version": null,
+      "version": "1.18.31",
       "root": "/Users/ted/.local/share/opencode",
       "layouts": ["legacy-json", "sqlite"]
     }
@@ -154,7 +154,7 @@ A Raw record is identified by **(Machine, Source, Record key)**. Its content is 
 - **File Layouts** (Claude Code, Codex, oh-my-pi, opencode `legacy-json`): the bytes of one Source file. Compressed files (`.jsonl.zst`, `.gz`) are shipped **decompressed**, so the Hub always stores what the Source originally wrote.
 - **opencode `sqlite` Layout**: one Session's rows from the `session`, `message`, `part` and `session_message` tables, exported verbatim as JSONL. Each line is one row, tagged with its table name. This is an export, not a parse, so ADR 0001 holds. The exact line shape is in `adapters/opencode.md`.
 
-For JSONL content, the Collector ships only up to the **last complete `\n`**. A half-written line is never sent. Chunk boundaries also fall on line boundaries (§4.3).
+**JSONL content** is a record whose Record key ends in `.jsonl`, plus every opencode `db:` export. For JSONL content, the Collector ships only up to the **last complete `\n`**. A half-written line is never sent. Chunk boundaries also fall on line boundaries (§4.3). Any other file (e.g. Claude Code `tool-results/*.txt`, images, `.meta.json`, opencode legacy `.json`) is shipped whole, as it is on disk, and its chunks split at 8 MiB.
 
 Source: [Collector → Hub ingestion protocol](https://github.com/tedkulp/agent-history/issues/10)
 
@@ -167,7 +167,7 @@ The Source's adapter on the Collector defines the Record key. The protocol requi
 - **Layout-prefixed** when a Source has more than one Layout (e.g. `json:` / `db:` for opencode), so two Layouts never collide.
 - Non-empty UTF-8, at most 1024 bytes.
 
-The Collector never sends a Session id. **The Hub derives the owning Session** from `(Source, Record key)` with the Source parser's pure function `record key → (native Session id, role, Layout rank)`. Roles are `main`, `attachment` and `shadow` (see `hub.md`).
+The Collector never sends a Session id. **The Hub derives the owning Session** from `(Source, Record key)` with the Source parser's pure function `MapKey`: `record key → (native Session id, role, Layout name, Layout rank)`, where the role is `main` or `attachment`. The Hub itself demotes records outside a Session's winning Layout to a third role, `shadow` (see `hub.md` §4.3).
 
 If the Hub cannot map a key (an unknown Source, or a Layout prefix this Hub's parser doesn't know), it still **stores the bytes and acks**. The record stays unattached to any Session until a Hub with a matching parser maps it on start (see the Re-parse flow in `hub.md`). Raw data is never refused for being unfamiliar.
 
@@ -197,7 +197,7 @@ Reconcile steps:
 
 1. `PUT /machines/{id}` with current metadata.
 2. `GET /machines/{id}/manifest`.
-3. For every Raw record discovered on disk (after `exclude` filtering), compare the local content `L` (cut at the last complete line) with the Hub's entry `H`:
+3. For every Raw record discovered on disk (after `exclude` filtering), compare the local content `L` (for JSONL content, cut at the last complete line, §3.2) with the Hub's entry `H`:
 
 | Case | Action |
 |---|---|
@@ -216,7 +216,7 @@ Source: [Collector → Hub ingestion protocol](https://github.com/tedkulp/agent-
 
 ### 4.2 Live changes
 
-- A file change that the watcher or the 10-minute rescan detects is **debounced 2 s** after the last write, then shipped with the same decision table as §4.1, using the local cache in place of the manifest.
+- A file change that the watcher or the 10-minute rescan detects is **debounced 2 s** after the last write (a record that keeps changing still ships at least every 30 s, see `collector.md` §4.4), then shipped with the same decision table as §4.1, using the local cache in place of the manifest.
 - opencode `sqlite` exports are always sent as `replace`. The Session's rows can change in place, so an append would be wrong.
 - At most **4 uploads** are in flight at once. Uploads for one record are **serialized**: a record never has two requests in flight.
 

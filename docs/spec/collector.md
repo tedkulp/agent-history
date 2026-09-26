@@ -250,15 +250,15 @@ Source: [Collector design](https://github.com/tedkulp/agent-history/issues/11), 
     }
   },
   "opencode_last_time_updated": 1790000000000,
-  "unclaimed_seen": ["codex:\u0000some/new/dir/file.bin"]
+  "unclaimed_seen": ["codex\u0000sessions/2026/09/26/notes.bin"]
 }
 ```
 
 - Keys are `source` + NUL + Record key.
-- `length` and `sha256` are what the Hub acknowledged: decompressed bytes, cut at the last complete line.
+- `length` and `sha256` are what the Hub acknowledged: decompressed bytes, cut at the last complete line for JSONL content (`protocol.md` §3.2).
 - `src_size` and `src_mtime` are the on-disk file's stat at the time of that ack. When both are unchanged, the record is skipped without reading it.
 - `opencode_last_time_updated` is the highest `session.time_updated` already exported (§4.5).
-- `unclaimed_seen` holds unclaimed paths already logged, so each one is logged only once (§4.7).
+- `unclaimed_seen` holds unclaimed paths already logged, as `source` + NUL + path relative to the root, so each one is logged only once (§4.7).
 - The file is written atomically (write a temp file, then rename), at most once every 5 s and on shutdown.
 - If `hub_url` in the cache differs from config, or the file is missing or unreadable, the cache is discarded and rebuilt by the next reconcile.
 
@@ -268,7 +268,7 @@ Source: [Collector → Hub ingestion protocol](https://github.com/tedkulp/agent-
 
 ### 4.1 First run: `init`
 
-`agent-history init --hub <url> [--name <display>] [--offline]`:
+`agent-history init --hub <url> [--name <display>] [--offline] [--reset-roots]`:
 
 1. **Machine id.** Generate a UUID if the config has none. Never replace an existing one.
 2. **Resolve Source roots.** Service managers can't see shell environment variables, so `init` reads them once from the user's interactive shell. It runs `$SHELL -i -c 'env -0'` with a 10 s timeout, and falls back to its own environment if that fails. For each Source, it calls the adapter's `DefaultRoot(env)`. An existing `root` in config is kept unless `--reset-roots` is passed.
@@ -323,9 +323,9 @@ Source: [Collector → Hub ingestion protocol](https://github.com/tedkulp/agent-
 
 1. A watch event or a rescan marks a record dirty.
 2. **Debounce**: the record is shipped 2 s after its last event. A record that keeps changing is still shipped at least every 30 s, so a long-running Session reaches the Hub while it's active.
-3. Read the content, decompressing if needed, and cut it at the last complete `\n` (JSONL Layouts).
+3. Read the content, decompressing if needed. For JSONL content (`protocol.md` §3.2), cut it at the last complete `\n`; any other file is read whole.
 4. Decide against the cache entry with the `protocol.md` §4.1 table: skip, `append` from the cached length, or `replace`. Checking the prefix means hashing `L[0:cached length]`.
-5. Upload in chunks of at most 8 MiB, each ending on a line boundary (`protocol.md` §4.3).
+5. Upload in chunks of at most 8 MiB, each ending on a line boundary for JSONL content (`protocol.md` §4.3).
 6. After each `200`, check the returned sha256 against the local hash, then update the cache entry.
 
 - At most **4 uploads** in flight across all records. One record never has two requests in flight.
