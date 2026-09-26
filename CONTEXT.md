@@ -24,6 +24,10 @@ _Avoid_: agent, tool, provider
 One conversation in one Source on one Machine.
 _Avoid_: agent, chat, thread
 
+**Project**:
+The working directory a Session started in, on one Machine. Sessions started in the home directory or a temp directory belong to no Project.
+_Avoid_: repo, workspace
+
 **Transcript**:
 The ordered messages of a Session, including tool calls, tool results, and usage.
 
@@ -36,6 +40,8 @@ The Source's original on-disk data for a Session, kept verbatim alongside the pa
 - A **Collector** reads from zero or more **Sources** installed on its **Machine**
 - A **Session** belongs to exactly one **Source** and one **Machine**
 - A **Session** has one **Transcript** and one or more **Raw records**
+- A **Project** belongs to exactly one **Machine**; the same path on two Machines is two **Projects**
+- A **Session** belongs to at most one **Project**, fixed by where it started
 
 ## Flagged ambiguities
 
