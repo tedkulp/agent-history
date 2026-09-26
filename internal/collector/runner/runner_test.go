@@ -74,7 +74,7 @@ func newFixture(t *testing.T) *fixture {
 		block := f.block
 		f.blockMu.Unlock()
 		if block != nil {
-			// Read the body first, so the server notices when the client hangs up.
+			// Read the body first, so the handler notices when the Collector hangs up.
 			body, _ := io.ReadAll(r.Body)
 			r.Body = io.NopCloser(bytes.NewReader(body))
 			f.blocked <- struct{}{}
@@ -460,7 +460,7 @@ func TestShipSkipsByStatWithoutReading(t *testing.T) {
 	r := &runner{Config: cfg}
 	rec, _ := claudecode.Adapter{}.Layouts()[0].Claims(f.root, f.path(key))
 	res := r.ship(context.Background(), job{key: k, src: protocol.SourceClaudeCode, rec: rec})
-	if res.unreadable || res.failed != nil || res.transient || f.requests.Load() != 0 {
+	if res.unreadable || res.failedAt != nil || res.transient || f.requests.Load() != 0 {
 		t.Fatalf("result %+v, %d requests: the file should be skipped by stat", res, f.requests.Load())
 	}
 }

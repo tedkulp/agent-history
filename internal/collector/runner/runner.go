@@ -89,17 +89,17 @@ func statOf(fi fs.FileInfo) fileStat { return fileStat{fi.Size(), fi.ModTime()} 
 
 // job is one record handed to an upload goroutine.
 type job struct {
-	key    string
-	src    string
-	rec    source.Record
-	failed *fileStat // the stat at the record's last non-transient failure
-	warned bool      // an unreadable-file warning was already logged
+	key      string
+	src      string
+	rec      source.Record
+	failedAt *fileStat // the stat at the record's last non-transient failure
+	warned   bool      // an unreadable-file warning was already logged
 }
 
 // result is what an upload goroutine reports back.
 type result struct {
 	key        string
-	failed     *fileStat // skip the record until its stat differs from this
+	failedAt   *fileStat // skip the record until its stat differs from this
 	unreadable bool      // the file couldn't be read; the next rescan retries it
 	transient  bool      // the Hub is unreachable
 }
@@ -253,7 +253,7 @@ func (r *runner) step(ctx, uploadCtx context.Context, now time.Time) time.Time {
 			r.inFlight[k] = true
 			j := job{key: k, src: p.src, rec: p.rec, warned: r.unreadable[k]}
 			if f, ok := r.failed[k]; ok {
-				j.failed = &f
+				j.failedAt = &f
 			}
 			go func() { r.results <- r.ship(uploadCtx, j) }()
 		}
@@ -291,7 +291,7 @@ func (r *runner) ship(ctx context.Context, j job) result {
 	if cached && e.Unchanged(fi) {
 		return res
 	}
-	if j.failed != nil && *j.failed == st {
+	if j.failedAt != nil && *j.failedAt == st {
 		return res
 	}
 	var h *protocol.ManifestRecord
@@ -322,15 +322,15 @@ func (r *runner) ship(ctx context.Context, j job) result {
 		res.unreadable = true
 	default:
 		log.Error("shipping record, skipping it until it next changes", "err", err)
-		res.failed = &st
+		res.failedAt = &st
 	}
 	return res
 }
 
 func (r *runner) handleResult(res result) {
 	delete(r.inFlight, res.key)
-	if res.failed != nil {
-		r.failed[res.key] = *res.failed
+	if res.failedAt != nil {
+		r.failed[res.key] = *res.failedAt
 	} else {
 		delete(r.failed, res.key)
 	}
@@ -429,8 +429,8 @@ func (r *runner) rescan() {
 		}
 		r.Cache.Prune(s.ID, present)
 		gone := func(k string) bool {
-			rest, ok := strings.CutPrefix(k, cache.Key(s.ID, ""))
-			return ok && !present[rest]
+			src, rk := cache.Split(k)
+			return src == s.ID && !present[rk]
 		}
 		for k := range r.failed {
 			if gone(k) {
@@ -525,8 +525,8 @@ func (r *runner) watchTree(root, dir string) {
 		}
 		if err := r.watcher.Add(p); err != nil {
 			if !r.watchWarned[root] {
-				r.Log.Warn("can't watch directory (is the inotify watch limit reached?), relying on the rescan for this root",
-					"root", root, "dir", p, "rescan_interval", r.RescanInterval, "err", err)
+				r.Log.Warn("can't watch directory, relying on the rescan for this root",
+					"root", root, "dir", p, "watch_limit", watchLimit(), "rescan_interval", r.RescanInterval, "err", err)
 				r.watchWarned[root] = true
 			}
 			return filepath.SkipAll
@@ -534,6 +534,15 @@ func (r *runner) watchTree(root, dir string) {
 		r.watched[p] = true
 		return nil
 	})
+}
+
+// watchLimit describes the OS limit a failed watch most likely hit.
+func watchLimit() string {
+	const inotify = "/proc/sys/fs/inotify/max_user_watches"
+	if b, err := os.ReadFile(inotify); err == nil {
+		return "fs.inotify.max_user_watches=" + strings.TrimSpace(string(b))
+	}
+	return "open file limit (kqueue)"
 }
 
 func (r *runner) handleEvent(ev fsnotify.Event) {

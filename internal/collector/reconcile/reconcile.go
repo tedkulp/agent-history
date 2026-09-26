@@ -114,6 +114,11 @@ func Reconcile(ctx context.Context, hub Hub, info protocol.MachineInfo, sources 
 			case err != nil:
 				res.Failed++
 				rlog.Error("shipping record", "err", err)
+				// The Hub's state for it is unknown now; the next rescan
+				// ships it again, and a 409 corrects the offset.
+				if opts.Cache != nil {
+					opts.Cache.Delete(k)
+				}
 			default:
 				if opts.Cache != nil {
 					opts.Cache.Set(k, out.Entry)

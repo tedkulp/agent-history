@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -33,12 +34,16 @@ func (e Entry) Unchanged(fi fs.FileInfo) bool {
 // Key is the cache key for a record: source + NUL + Record key.
 func Key(source, recordKey string) string { return source + "\x00" + recordKey }
 
+// Split is the inverse of Key.
+func Split(key string) (source, recordKey string) {
+	source, recordKey, _ = strings.Cut(key, "\x00")
+	return source, recordKey
+}
+
 type file struct {
-	Version                 int              `json:"version"`
-	HubURL                  string           `json:"hub_url"`
-	Records                 map[string]Entry `json:"records"`
-	OpencodeLastTimeUpdated int64            `json:"opencode_last_time_updated,omitempty"`
-	UnclaimedSeen           []string         `json:"unclaimed_seen,omitempty"`
+	Version int              `json:"version"`
+	HubURL  string           `json:"hub_url"`
+	Records map[string]Entry `json:"records"`
 }
 
 // Cache is safe for concurrent use.
@@ -98,14 +103,23 @@ func (c *Cache) Set(key string, e Entry) {
 	c.dirty = true
 }
 
+// Delete drops the entry for key.
+func (c *Cache) Delete(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.f.Records[key]; ok {
+		delete(c.f.Records, key)
+		c.dirty = true
+	}
+}
+
 // Prune drops the entries of source whose Record key is not in present:
 // records that have gone from disk.
 func (c *Cache) Prune(source string, present map[string]bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	prefix := source + "\x00"
 	for k := range c.f.Records {
-		if len(k) > len(prefix) && k[:len(prefix)] == prefix && !present[k[len(prefix):]] {
+		if src, rk := Split(k); src == source && !present[rk] {
 			delete(c.f.Records, k)
 			c.dirty = true
 		}

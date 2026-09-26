@@ -63,6 +63,13 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	dir := state.DefaultDir(os.Getenv, home)
+	unlock, err := state.Lock(dir)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	cfg, err := config.Load(config.DefaultPath(os.Getenv, home))
 	if err != nil {
 		return err
@@ -81,13 +88,6 @@ func run() error {
 	if len(cfg.Exclude) > 0 {
 		return errors.New("exclude is not supported by this Collector yet; remove it from the config to run")
 	}
-
-	dir := state.DefaultDir(os.Getenv, home)
-	unlock, err := state.Lock(dir)
-	if err != nil {
-		return err
-	}
-	defer unlock()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

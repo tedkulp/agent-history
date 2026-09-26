@@ -87,3 +87,9 @@ func TestUnchanged(t *testing.T) {
 		t.Fatal("different mtime should be changed")
 	}
 }
+
+func TestSplitInvertsKey(t *testing.T) {
+	if s, k := Split(Key("claude-code", "p/s.jsonl")); s != "claude-code" || k != "p/s.jsonl" {
+		t.Fatalf("Split = %q, %q", s, k)
+	}
+}
