@@ -28,8 +28,23 @@ _Avoid_: agent, chat, thread
 The working directory a Session started in, on one Machine. Sessions started in the home directory or a temp directory belong to no Project.
 _Avoid_: repo, workspace
 
+**Child Session**:
+A Session spawned by a Tool call in another Session, reached through that parent rather than listed on its own.
+_Avoid_: sub-agent, sidechain
+
 **Transcript**:
-The ordered messages of a Session, including tool calls, tool results, and usage.
+The ordered Messages of a Session, following its latest branch only.
+
+**Message**:
+One turn in a Transcript, by the user, the assistant, or a tool, made of ordered Parts.
+_Avoid_: event, entry
+
+**Part**:
+One typed piece of a Message: text, thinking, Tool call, image, attachment, marker, or unknown.
+_Avoid_: block, item
+
+**Tool call**:
+A tool request together with its result, treated as one unit.
 
 **Raw record**:
 The Source's original on-disk data for a Session, kept verbatim alongside the parsed Transcript.
@@ -42,8 +57,11 @@ The Source's original on-disk data for a Session, kept verbatim alongside the pa
 - A **Session** has one **Transcript** and one or more **Raw records**
 - A **Project** belongs to exactly one **Machine**; the same path on two Machines is two **Projects**
 - A **Session** belongs to at most one **Project**, fixed by where it started
+- A **Child Session** has exactly one parent **Session** and is spawned by one **Tool call** in it
+- A **Transcript** has one or more **Messages**; a **Message** has one or more **Parts**
 
 ## Flagged ambiguities
 
 - "agent" was used for the coding tool, a running session, and the desktop program. Resolved: **Source**, **Session**, and **Collector** respectively.
 - "client" could mean the desktop program or the browser. Resolved: **Collector**.
+- Sources call sub-agent runs "sidechains", "sub-agents", or child sessions. Resolved: **Child Session**.
