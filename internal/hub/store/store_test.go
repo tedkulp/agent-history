@@ -255,3 +255,138 @@ func mustMigrations(t *testing.T) []migration {
 	}
 	return m
 }
+
+func replaceWith(t *testing.T, s *Store, machine, key string, data []byte) (protocol.RecordState, error) {
+	t.Helper()
+	return s.Replace(context.Background(), ReplaceRequest{
+		MachineID:  machine,
+		Source:     protocol.SourceClaudeCode,
+		RecordKey:  key,
+		Data:       data,
+		Compressed: zstdBytes(t, data),
+	})
+}
+
+func TestReplaceKeepsSupersededVersion(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	old := []byte("{\"n\":1}\n{\"n\":2}\n")
+	if _, err := appendChunk(t, s, "m1", "k.jsonl", 0, nil, old); err != nil {
+		t.Fatal(err)
+	}
+
+	neu := []byte("{\"n\":9}\n")
+	st, err := replaceWith(t, s, "m1", "k.jsonl", neu)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Length != int64(len(neu)) || st.Sha256 != hexSum(neu) || st.Version != 2 {
+		t.Fatalf("state after replace = %+v", st)
+	}
+
+	m, err := s.Manifest(ctx, "m1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := protocol.ManifestRecord{Source: protocol.SourceClaudeCode, RecordKey: "k.jsonl", Length: int64(len(neu)), Sha256: hexSum(neu)}
+	if len(m) != 1 || m[0] != want {
+		t.Fatalf("manifest = %+v, want %+v", m, want)
+	}
+	if got, _ := s.CurrentContent(ctx, "m1", protocol.SourceClaudeCode, "k.jsonl"); string(got) != string(neu) {
+		t.Fatalf("current content = %q", got)
+	}
+
+	rows, err := s.read.QueryContext(ctx, `
+		SELECT v.version, v.is_current, v.length, v.sha256 FROM raw_record_versions v
+		JOIN raw_records r ON r.id = v.record_id
+		WHERE r.record_key = 'k.jsonl' ORDER BY v.version`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	type ver struct {
+		version, current, length int64
+		sum                      string
+	}
+	var got []ver
+	for rows.Next() {
+		var v ver
+		if err := rows.Scan(&v.version, &v.current, &v.length, &v.sum); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, v)
+	}
+	wantVers := []ver{{1, 0, int64(len(old)), hexSum(old)}, {2, 1, int64(len(neu)), hexSum(neu)}}
+	if len(got) != 2 || got[0] != wantVers[0] || got[1] != wantVers[1] {
+		t.Fatalf("versions = %+v, want %+v", got, wantVers)
+	}
+
+	// Appends extend the new current version.
+	more := []byte("{\"n\":10}\n")
+	st, err = appendChunk(t, s, "m1", "k.jsonl", int64(len(neu)), neu, more)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := append(append([]byte{}, neu...), more...)
+	if st.Length != int64(len(all)) || st.Sha256 != hexSum(all) || st.Version != 2 {
+		t.Fatalf("append after replace = %+v", st)
+	}
+}
+
+func TestIdenticalReplaceIsNoOp(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	data := []byte("same\n")
+	if _, err := appendChunk(t, s, "m1", "k.jsonl", 0, nil, data); err != nil {
+		t.Fatal(err)
+	}
+	st, err := replaceWith(t, s, "m1", "k.jsonl", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Length != int64(len(data)) || st.Sha256 != hexSum(data) || st.Version != 1 {
+		t.Fatalf("state = %+v", st)
+	}
+	var n int
+	if err := s.read.QueryRowContext(ctx, `SELECT count(*) FROM raw_record_versions`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("%d versions after identical replace", n)
+	}
+}
+
+func TestReplaceUnknownRecordCreatesIt(t *testing.T) {
+	s := openTest(t)
+	data := []byte("fresh\n")
+	st, err := replaceWith(t, s, "m1", "new.jsonl", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Length != int64(len(data)) || st.Sha256 != hexSum(data) || st.Version != 1 {
+		t.Fatalf("state = %+v", st)
+	}
+}
+
+func TestRetriedAppendEndsInSameState(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	a := []byte("a\n")
+	b := []byte("b\n")
+	if _, err := appendChunk(t, s, "m1", "k.jsonl", 0, nil, a); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := appendChunk(t, s, "m1", "k.jsonl", 2, a, b); err != nil {
+		t.Fatal(err)
+	}
+	// The ack was lost; the Collector sends the same append again.
+	_, err := appendChunk(t, s, "m1", "k.jsonl", 2, a, b)
+	var conflict *ConflictError
+	if !errors.As(err, &conflict) || conflict.Length != 4 || conflict.Sha256 != hexSum([]byte("a\nb\n")) {
+		t.Fatalf("retry err = %v", err)
+	}
+	got, _ := s.CurrentContent(ctx, "m1", protocol.SourceClaudeCode, "k.jsonl")
+	if string(got) != "a\nb\n" {
+		t.Fatalf("content = %q", got)
+	}
+}

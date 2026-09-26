@@ -140,9 +140,8 @@ func (s *server) records(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	mode := r.Header.Get(protocol.HeaderMode)
-	if mode != protocol.ModeAppend {
-		// replace arrives with the protocol-hardening work.
-		bad(protocol.HeaderMode + " must be append")
+	if mode != protocol.ModeAppend && mode != protocol.ModeReplace {
+		bad(protocol.HeaderMode + " must be append or replace")
 		return
 	}
 	offset, err := strconv.ParseInt(r.Header.Get(protocol.HeaderOffset), 10, 64)
@@ -150,11 +149,15 @@ func (s *server) records(w http.ResponseWriter, r *http.Request, id string) {
 		bad(protocol.HeaderOffset + " must be a non-negative integer")
 		return
 	}
+	if mode == protocol.ModeReplace && offset != 0 {
+		bad(protocol.HeaderOffset + " must be 0 for replace")
+		return
+	}
 	prefix := r.Header.Get(protocol.HeaderPrefixSha256)
 	if prefix == "" && offset == 0 {
 		prefix = protocol.EmptySha256
 	}
-	if !sha256Hex.MatchString(prefix) {
+	if mode == protocol.ModeAppend && !sha256Hex.MatchString(prefix) {
 		bad(protocol.HeaderPrefixSha256 + " must be lowercase hex sha256")
 		return
 	}
@@ -183,15 +186,26 @@ func (s *server) records(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	st, err := s.store.Append(r.Context(), store.AppendRequest{
-		MachineID:    id,
-		Source:       source,
-		RecordKey:    key,
-		Offset:       offset,
-		PrefixSha256: prefix,
-		Data:         data,
-		Compressed:   compressed,
-	})
+	var st protocol.RecordState
+	if mode == protocol.ModeReplace {
+		st, err = s.store.Replace(r.Context(), store.ReplaceRequest{
+			MachineID:  id,
+			Source:     source,
+			RecordKey:  key,
+			Data:       data,
+			Compressed: compressed,
+		})
+	} else {
+		st, err = s.store.Append(r.Context(), store.AppendRequest{
+			MachineID:    id,
+			Source:       source,
+			RecordKey:    key,
+			Offset:       offset,
+			PrefixSha256: prefix,
+			Data:         data,
+			Compressed:   compressed,
+		})
+	}
 	var conflict *store.ConflictError
 	if errors.As(err, &conflict) {
 		s.log.Warn("append conflict", "machine", id, "source", source, "key", key, "offset", offset, "hub_length", conflict.Length)
@@ -202,7 +216,7 @@ func (s *server) records(w http.ResponseWriter, r *http.Request, id string) {
 		s.internal(w, r, err)
 		return
 	}
-	s.log.Debug("ingested chunk", "machine", id, "source", source, "key", key, "offset", offset, "bytes", len(data))
+	s.log.Debug("ingested chunk", "machine", id, "source", source, "key", key, "mode", mode, "offset", offset, "bytes", len(data), "version", st.Version)
 	writeJSON(w, http.StatusOK, st)
 }
 

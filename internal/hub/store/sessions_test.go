@@ -408,3 +408,42 @@ func TestHomeDirChangeReassignsProjects(t *testing.T) {
 		t.Errorf("home_dir change queued a re-parse: %+v", job)
 	}
 }
+
+func TestReplaceEnqueuesAndParsesNewVersion(t *testing.T) {
+	s, c := openParsing(t)
+	ctx := context.Background()
+	appendTo(t, s, protocol.SourceClaudeCode, mainKey, []byte(`{"type":"user","uuid":"u1","timestamp":"2026-01-01T00:00:00Z","message":{"role":"user","content":"old prompt"}}`+"\n"))
+	id := sessionIDOf(t, s, sessUUID)
+	c.advance(time.Minute)
+	for parseNext(t, s) {
+	}
+	if _, ok := queueOf(t, s, id); ok {
+		t.Fatal("queue row left after parse")
+	}
+
+	neu := []byte(`{"type":"user","uuid":"u2","timestamp":"2026-01-01T00:00:00Z","message":{"role":"user","content":"new prompt"}}` + "\n")
+	if _, err := s.Replace(ctx, ReplaceRequest{MachineID: "m1", Source: protocol.SourceClaudeCode, RecordKey: mainKey, Data: neu, Compressed: zstdBytes(t, neu)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := queueOf(t, s, id); !ok {
+		t.Fatal("replace did not enqueue the Session")
+	}
+	c.advance(time.Minute)
+	for parseNext(t, s) {
+	}
+	var prompt string
+	if err := s.read.QueryRowContext(ctx, `SELECT first_prompt FROM sessions WHERE id = ?`, id).Scan(&prompt); err != nil {
+		t.Fatal(err)
+	}
+	if prompt != "new prompt" {
+		t.Fatalf("first_prompt = %q, want the replaced content", prompt)
+	}
+
+	// An identical replace changes nothing and enqueues nothing.
+	if _, err := s.Replace(ctx, ReplaceRequest{MachineID: "m1", Source: protocol.SourceClaudeCode, RecordKey: mainKey, Data: neu, Compressed: zstdBytes(t, neu)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := queueOf(t, s, id); ok {
+		t.Fatal("identical replace enqueued a parse")
+	}
+}

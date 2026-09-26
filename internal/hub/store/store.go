@@ -157,6 +157,13 @@ func (s *Store) TouchMachine(ctx context.Context, id string) error {
 	return touchMachine(ctx, s.write, id, s.now())
 }
 
+// MachineExists reports whether the Machine has a machines row.
+func (s *Store) MachineExists(ctx context.Context, id string) (bool, error) {
+	var n int
+	err := s.read.QueryRowContext(ctx, `SELECT count(*) FROM machines WHERE id = ?`, id).Scan(&n)
+	return n > 0, err
+}
+
 type execer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
@@ -204,10 +211,112 @@ type AppendRequest struct {
 	Compressed   []byte
 }
 
+// ReplaceRequest is the first chunk of a new current version. Data is the
+// decompressed body and Compressed the same bytes zstd-compressed.
+type ReplaceRequest struct {
+	MachineID  string
+	Source     string
+	RecordKey  string
+	Data       []byte
+	Compressed []byte
+}
+
+// current is a record's current version, read inside an ingest transaction.
+// A record that doesn't exist yet has length 0 and the empty-string hash.
+type current struct {
+	exists    bool
+	recordID  int64
+	sessionID sql.NullInt64
+	role      sql.NullString
+	versionID int64
+	version   int64
+	length    int64
+	sum       string
+	state     []byte
+}
+
 // Append extends a record's current version (protocol.md §4.4), creating the
 // record if needed. It returns *ConflictError when Offset or PrefixSha256 do
 // not match the current version.
 func (s *Store) Append(ctx context.Context, req AppendRequest) (protocol.RecordState, error) {
+	return s.ingest(ctx, req.MachineID, req.Source, req.RecordKey, func(tx *sql.Tx, cur *current, t int64) (protocol.RecordState, bool, error) {
+		if req.Offset != cur.length || req.PrefixSha256 != cur.sum {
+			return protocol.RecordState{}, false, &ConflictError{Length: cur.length, Sha256: cur.sum}
+		}
+		h := sha256.New()
+		if cur.exists {
+			if err := h.(encoding.BinaryUnmarshaler).UnmarshalBinary(cur.state); err != nil {
+				return protocol.RecordState{}, false, fmt.Errorf("sha256 state of record %d: %w", cur.recordID, err)
+			}
+		}
+		h.Write(req.Data)
+		newState, newSum, err := marshalHash(h)
+		if err != nil {
+			return protocol.RecordState{}, false, err
+		}
+		newLength := cur.length + int64(len(req.Data))
+
+		version := cur.version
+		versionID := cur.versionID
+		if !cur.exists {
+			version = 1
+			if versionID, err = insertVersion(ctx, tx, cur.recordID, version, newLength, newSum, newState, t); err != nil {
+				return protocol.RecordState{}, false, err
+			}
+		} else if len(req.Data) > 0 {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE raw_record_versions SET length = ?, sha256 = ?, sha256_state = ? WHERE id = ?`,
+				newLength, newSum, newState, versionID); err != nil {
+				return protocol.RecordState{}, false, err
+			}
+		}
+		if err := insertChunk(ctx, tx, versionID, req.Offset, req.Compressed, len(req.Data)); err != nil {
+			return protocol.RecordState{}, false, err
+		}
+		return protocol.RecordState{Length: newLength, Sha256: newSum, Version: version}, len(req.Data) > 0, nil
+	})
+}
+
+// Replace starts a new current version of a record holding Data, and keeps
+// the old one as superseded (protocol.md §3.4, §4.4). A body equal to the
+// current version is a no-op that returns the current state, so a retried
+// replace is safe.
+func (s *Store) Replace(ctx context.Context, req ReplaceRequest) (protocol.RecordState, error) {
+	return s.ingest(ctx, req.MachineID, req.Source, req.RecordKey, func(tx *sql.Tx, cur *current, t int64) (protocol.RecordState, bool, error) {
+		h := sha256.New()
+		h.Write(req.Data)
+		newState, newSum, err := marshalHash(h)
+		if err != nil {
+			return protocol.RecordState{}, false, err
+		}
+		newLength := int64(len(req.Data))
+		if cur.exists && cur.length == newLength && cur.sum == newSum {
+			return protocol.RecordState{Length: cur.length, Sha256: cur.sum, Version: cur.version}, false, nil
+		}
+		if cur.exists {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE raw_record_versions SET is_current = 0 WHERE id = ?`, cur.versionID); err != nil {
+				return protocol.RecordState{}, false, err
+			}
+		}
+		version := cur.version + 1
+		versionID, err := insertVersion(ctx, tx, cur.recordID, version, newLength, newSum, newState, t)
+		if err != nil {
+			return protocol.RecordState{}, false, err
+		}
+		if err := insertChunk(ctx, tx, versionID, 0, req.Compressed, len(req.Data)); err != nil {
+			return protocol.RecordState{}, false, err
+		}
+		return protocol.RecordState{Length: newLength, Sha256: newSum, Version: version}, true, nil
+	})
+}
+
+// ingest runs one records request in a transaction on the writer
+// (protocol.md §4.4): it registers the Machine, loads the record's current
+// version (creating and attaching the record row if needed), lets apply
+// write the chunk, and live-enqueues the Session when apply reports the
+// content changed.
+func (s *Store) ingest(ctx context.Context, machineID, source, recordKey string, apply func(tx *sql.Tx, cur *current, t int64) (protocol.RecordState, bool, error)) (protocol.RecordState, error) {
 	tx, err := s.write.BeginTx(ctx, nil)
 	if err != nil {
 		return protocol.RecordState{}, err
@@ -215,106 +324,91 @@ func (s *Store) Append(ctx context.Context, req AppendRequest) (protocol.RecordS
 	defer tx.Rollback()
 
 	t := s.now()
-	if err := touchMachine(ctx, tx, req.MachineID, t); err != nil {
+	if err := touchMachine(ctx, tx, machineID, t); err != nil {
 		return protocol.RecordState{}, err
 	}
 
-	var (
-		recordID  int64
-		sessionID sql.NullInt64
-		role      sql.NullString
-		versionID int64
-		version   int64
-		length    int64
-		sum       = protocol.EmptySha256
-		state     []byte
-	)
+	cur := current{sum: protocol.EmptySha256}
 	err = tx.QueryRowContext(ctx, `
 		SELECT r.id, r.session_id, r.role, v.id, v.version, v.length, v.sha256, v.sha256_state
 		FROM raw_records r
 		JOIN raw_record_versions v ON v.record_id = r.id AND v.is_current = 1
 		WHERE r.machine_id = ? AND r.source = ? AND r.record_key = ?`,
-		req.MachineID, req.Source, req.RecordKey).Scan(&recordID, &sessionID, &role, &versionID, &version, &length, &sum, &state)
-	exists := err == nil
+		machineID, source, recordKey).Scan(&cur.recordID, &cur.sessionID, &cur.role, &cur.versionID, &cur.version, &cur.length, &cur.sum, &cur.state)
+	cur.exists = err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return protocol.RecordState{}, err
 	}
 
-	if req.Offset != length || req.PrefixSha256 != sum {
-		return protocol.RecordState{}, &ConflictError{Length: length, Sha256: sum}
-	}
-
-	h := sha256.New()
-	if exists {
-		if err := h.(encoding.BinaryUnmarshaler).UnmarshalBinary(state); err != nil {
-			return protocol.RecordState{}, fmt.Errorf("sha256 state of record %d: %w", recordID, err)
+	// A record created here is rolled back with the transaction if apply
+	// refuses the request (a conflicting append).
+	if !cur.exists {
+		if err := s.createRecord(ctx, tx, &cur, machineID, source, recordKey); err != nil {
+			return protocol.RecordState{}, err
 		}
 	}
-	h.Write(req.Data)
-	newState, newSum, err := marshalHash(h)
+
+	st, changed, err := apply(tx, &cur, t)
 	if err != nil {
 		return protocol.RecordState{}, err
 	}
-	newLength := length + int64(len(req.Data))
 
-	if !exists {
-		res, err := tx.ExecContext(ctx, `
-			INSERT INTO raw_records (machine_id, source, record_key) VALUES (?, ?, ?)`,
-			req.MachineID, req.Source, req.RecordKey)
-		if err != nil {
-			return protocol.RecordState{}, err
-		}
-		if recordID, err = res.LastInsertId(); err != nil {
-			return protocol.RecordState{}, err
-		}
-		if m, ok := s.parsers.MapKey(req.Source, req.RecordKey); ok {
-			id, err := attachRecord(ctx, tx, recordID, req.MachineID, req.Source, m)
-			if err != nil {
-				return protocol.RecordState{}, err
-			}
-			sessionID = sql.NullInt64{Int64: id, Valid: true}
-			role = sql.NullString{String: m.Role, Valid: true}
-		}
-		version = 1
-		res, err = tx.ExecContext(ctx, `
-			INSERT INTO raw_record_versions (record_id, version, is_current, length, sha256, sha256_state, created_at)
-			VALUES (?, 1, 1, ?, ?, ?, ?)`, recordID, newLength, newSum, newState, t)
-		if err != nil {
-			return protocol.RecordState{}, err
-		}
-		if versionID, err = res.LastInsertId(); err != nil {
-			return protocol.RecordState{}, err
-		}
-	} else if len(req.Data) > 0 {
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE raw_record_versions SET length = ?, sha256 = ?, sha256_state = ? WHERE id = ?`,
-			newLength, newSum, newState, versionID); err != nil {
-			return protocol.RecordState{}, err
-		}
-	}
-
-	if len(req.Data) > 0 {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO raw_chunks (version_id, offset, bytes) VALUES (?, ?, ?)`,
-			versionID, req.Offset, req.Compressed); err != nil {
-			return protocol.RecordState{}, err
-		}
-	}
-
-	enqueued := sessionID.Valid && len(req.Data) > 0 && (role.String == parser.RoleMain || role.String == parser.RoleAttachment)
+	enqueued := changed && cur.sessionID.Valid && (cur.role.String == parser.RoleMain || cur.role.String == parser.RoleAttachment)
 	if enqueued {
-		if err := liveEnqueue(ctx, tx, sessionID.Int64, t); err != nil {
+		if err := liveEnqueue(ctx, tx, cur.sessionID.Int64, t); err != nil {
 			return protocol.RecordState{}, err
 		}
 	}
-
 	if err := tx.Commit(); err != nil {
 		return protocol.RecordState{}, err
 	}
 	if enqueued {
 		s.signal()
 	}
-	return protocol.RecordState{Length: newLength, Sha256: newSum, Version: version}, nil
+	return st, nil
+}
+
+// createRecord inserts the raw_records row and attaches it to its Session
+// when the Source's parser maps the key (hub.md §4.2).
+func (s *Store) createRecord(ctx context.Context, tx *sql.Tx, cur *current, machineID, source, recordKey string) error {
+	res, err := tx.ExecContext(ctx, `
+		INSERT INTO raw_records (machine_id, source, record_key) VALUES (?, ?, ?)`,
+		machineID, source, recordKey)
+	if err != nil {
+		return err
+	}
+	if cur.recordID, err = res.LastInsertId(); err != nil {
+		return err
+	}
+	if m, ok := s.parsers.MapKey(source, recordKey); ok {
+		id, err := attachRecord(ctx, tx, cur.recordID, machineID, source, m)
+		if err != nil {
+			return err
+		}
+		cur.sessionID = sql.NullInt64{Int64: id, Valid: true}
+		cur.role = sql.NullString{String: m.Role, Valid: true}
+	}
+	return nil
+}
+
+func insertVersion(ctx context.Context, tx *sql.Tx, recordID, version, length int64, sum string, state []byte, t int64) (int64, error) {
+	res, err := tx.ExecContext(ctx, `
+		INSERT INTO raw_record_versions (record_id, version, is_current, length, sha256, sha256_state, created_at)
+		VALUES (?, ?, 1, ?, ?, ?, ?)`, recordID, version, length, sum, state, t)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// insertChunk stores one compressed chunk; an empty body stores nothing.
+func insertChunk(ctx context.Context, tx *sql.Tx, versionID, offset int64, compressed []byte, n int) error {
+	if n == 0 {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO raw_chunks (version_id, offset, bytes) VALUES (?, ?, ?)`, versionID, offset, compressed)
+	return err
 }
 
 func marshalHash(h hash.Hash) (state []byte, sum string, err error) {

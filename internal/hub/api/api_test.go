@@ -23,6 +23,12 @@ const machine = "3f6c2a4e-8d1b-4f7a-9c2e-5b0d7e1a9f33"
 
 func newServer(t *testing.T) *httptest.Server {
 	t.Helper()
+	srv, _ := newServerStore(t)
+	return srv
+}
+
+func newServerStore(t *testing.T) (*httptest.Server, *store.Store) {
+	t.Helper()
 	s, err := store.Open(context.Background(), t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -30,7 +36,7 @@ func newServer(t *testing.T) *httptest.Server {
 	t.Cleanup(func() { s.Close() })
 	srv := httptest.NewServer(New(s, nil))
 	t.Cleanup(srv.Close)
-	return srv
+	return srv, s
 }
 
 func hexSum(b []byte) string {
@@ -50,6 +56,7 @@ func compress(t *testing.T, b []byte) []byte {
 type recordReq struct {
 	machineHeader string
 	key           string
+	rawKey        string // sent as-is when set
 	mode          string
 	offset        int64
 	prefix        []byte
@@ -82,7 +89,11 @@ func postRecord(t *testing.T, srv *httptest.Server, r recordReq) *http.Response 
 	}
 	req.Header.Set(protocol.HeaderMachineID, mh)
 	req.Header.Set(protocol.HeaderSource, protocol.SourceClaudeCode)
-	req.Header.Set(protocol.HeaderRecordKey, url.PathEscape(r.key))
+	key := url.PathEscape(r.key)
+	if r.rawKey != "" {
+		key = r.rawKey
+	}
+	req.Header.Set(protocol.HeaderRecordKey, key)
 	req.Header.Set(protocol.HeaderMode, mode)
 	req.Header.Set(protocol.HeaderOffset, strconv.FormatInt(r.offset, 10))
 	if r.offset > 0 || r.prefix != nil {
@@ -185,6 +196,9 @@ func TestRecordsRejectsBadRequests(t *testing.T) {
 		{"machine header mismatch", recordReq{key: "k", machineHeader: "other", body: []byte("x")}, http.StatusBadRequest},
 		{"empty key", recordReq{key: "", body: []byte("x")}, http.StatusBadRequest},
 		{"unknown mode", recordReq{key: "k", mode: "merge", body: []byte("x")}, http.StatusBadRequest},
+		{"replace at non-zero offset", recordReq{key: "k", mode: protocol.ModeReplace, offset: 3, prefix: []byte("abc"), body: []byte("x")}, http.StatusBadRequest},
+		{"bad percent-encoding", recordReq{rawKey: "p/%zz.jsonl", body: []byte("x")}, http.StatusBadRequest},
+		{"bad offset", recordReq{key: "k", offset: -1, body: []byte("x")}, http.StatusBadRequest},
 		{"not zstd encoding", recordReq{key: "k", encoding: "gzip", body: []byte("x")}, http.StatusUnsupportedMediaType},
 		{"body not zstd", recordReq{key: "k", rawBody: []byte("plain text")}, http.StatusUnsupportedMediaType},
 	}
@@ -194,6 +208,9 @@ func TestRecordsRejectsBadRequests(t *testing.T) {
 			if resp.StatusCode != tc.want {
 				b, _ := io.ReadAll(resp.Body)
 				t.Fatalf("status %d, want %d (%s)", resp.StatusCode, tc.want, b)
+			}
+			if e := decode[protocol.Error](t, resp); e.Error == "" {
+				t.Fatal("error body has no error code")
 			}
 		})
 	}
@@ -238,5 +255,77 @@ func TestConflictOnUnknownRecordCarriesZeroLength(t *testing.T) {
 	}
 	if raw["length"] != float64(0) || raw["sha256"] != protocol.EmptySha256 {
 		t.Fatalf("409 body %v", raw)
+	}
+}
+
+func TestReplaceViaAPI(t *testing.T) {
+	srv := newServer(t)
+	key := "p/s.jsonl"
+	old := []byte("{\"n\":1}\n{\"n\":2}\n")
+	if resp := postRecord(t, srv, recordReq{key: key, body: old}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("append status %d", resp.StatusCode)
+	}
+	neu := []byte("{\"n\":9}\n")
+	for i, wantVersion := range []int64{2, 2} { // the second replace is identical: a no-op
+		resp := postRecord(t, srv, recordReq{key: key, mode: protocol.ModeReplace, body: neu})
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("replace %d: status %d (%s)", i, resp.StatusCode, b)
+		}
+		st := decode[protocol.RecordState](t, resp)
+		if st.Length != int64(len(neu)) || st.Sha256 != hexSum(neu) || st.Version != wantVersion {
+			t.Fatalf("replace %d: state %+v", i, st)
+		}
+	}
+	m := getManifest(t, srv, machine)
+	if len(m.Records) != 1 || m.Records[0].Sha256 != hexSum(neu) {
+		t.Fatalf("manifest %+v", m.Records)
+	}
+}
+
+func TestBodyOverLimitIs413(t *testing.T) {
+	srv := newServer(t)
+	body := make([]byte, protocol.MaxBodyBytes+1)
+	resp := postRecord(t, srv, recordReq{key: "big.txt", body: body})
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status %d, want 413", resp.StatusCode)
+	}
+	if e := decode[protocol.Error](t, resp); e.Error != protocol.ErrBodyTooLarge {
+		t.Fatalf("error %+v", e)
+	}
+}
+
+func TestRecordsFromUnknownMachineRegistersIt(t *testing.T) {
+	srv, s := newServerStore(t)
+	if resp := postRecord(t, srv, recordReq{key: "k.jsonl", body: []byte("x\n")}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	ok, err := s.MachineExists(context.Background(), machine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("no machines row for the unknown Machine")
+	}
+}
+
+func TestRetriedAppendViaAPI(t *testing.T) {
+	srv := newServer(t)
+	a := []byte("a\n")
+	b := []byte("b\n")
+	postRecord(t, srv, recordReq{key: "k.jsonl", body: a})
+	for i := range 2 {
+		resp := postRecord(t, srv, recordReq{key: "k.jsonl", offset: 2, prefix: a, body: b})
+		want := http.StatusOK
+		if i == 1 {
+			want = http.StatusConflict
+		}
+		if resp.StatusCode != want {
+			t.Fatalf("attempt %d: status %d, want %d", i, resp.StatusCode, want)
+		}
+	}
+	m := getManifest(t, srv, machine)
+	if len(m.Records) != 1 || m.Records[0].Length != 4 || m.Records[0].Sha256 != hexSum([]byte("a\nb\n")) {
+		t.Fatalf("manifest %+v", m.Records)
 	}
 }

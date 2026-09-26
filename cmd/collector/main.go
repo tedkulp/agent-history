@@ -124,7 +124,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	log.Info("reconcile finished", "uploaded", res.Uploaded, "unchanged", res.Unchanged, "deferred", res.Deferred, "failed", res.Failed, "bytes", res.Bytes, "took", time.Since(start).Round(time.Millisecond))
+	log.Info("reconcile finished", "uploaded", res.Uploaded, "unchanged", res.Unchanged, "replaced", res.Replaced, "failed", res.Failed, "bytes", res.Bytes, "took", time.Since(start).Round(time.Millisecond))
 	if res.Failed > 0 {
 		return fmt.Errorf("%d records failed to ship", res.Failed)
 	}

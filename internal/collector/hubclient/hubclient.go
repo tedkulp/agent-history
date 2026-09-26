@@ -134,15 +134,27 @@ func (c *Client) Manifest(ctx context.Context) ([]protocol.ManifestRecord, error
 // Append sends data as an append at offset. prefixSha256 is the hex sha256
 // of the record's bytes before offset. A 409 comes back as *ConflictError.
 func (c *Client) Append(ctx context.Context, source, key string, offset int64, prefixSha256 string, data []byte) (protocol.RecordState, error) {
+	return c.postRecord(ctx, source, key, protocol.ModeAppend, offset, prefixSha256, data)
+}
+
+// Replace sends data as the first chunk of a new current version of the
+// record. The Hub keeps the old version as superseded.
+func (c *Client) Replace(ctx context.Context, source, key string, data []byte) (protocol.RecordState, error) {
+	return c.postRecord(ctx, source, key, protocol.ModeReplace, 0, "", data)
+}
+
+func (c *Client) postRecord(ctx context.Context, source, key, mode string, offset int64, prefixSha256 string, data []byte) (protocol.RecordState, error) {
 	req, err := c.newRequest(ctx, http.MethodPost, "/records", bytes.NewReader(c.enc.EncodeAll(data, nil)))
 	if err != nil {
 		return protocol.RecordState{}, err
 	}
 	req.Header.Set(protocol.HeaderSource, source)
 	req.Header.Set(protocol.HeaderRecordKey, url.PathEscape(key))
-	req.Header.Set(protocol.HeaderMode, protocol.ModeAppend)
+	req.Header.Set(protocol.HeaderMode, mode)
 	req.Header.Set(protocol.HeaderOffset, strconv.FormatInt(offset, 10))
-	req.Header.Set(protocol.HeaderPrefixSha256, prefixSha256)
+	if mode == protocol.ModeAppend {
+		req.Header.Set(protocol.HeaderPrefixSha256, prefixSha256)
+	}
 	req.Header.Set("Content-Encoding", protocol.ContentEncodingZstd)
 	var st protocol.RecordState
 	err = c.do(req, http.StatusOK, &st)
