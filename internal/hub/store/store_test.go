@@ -14,7 +14,7 @@ import (
 
 func openTest(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(context.Background(), t.TempDir())
+	s, err := Open(context.Background(), t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func TestUpsertMachine(t *testing.T) {
 func TestReopenKeepsDataAndSchemaVersion(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
-	s, err := Open(ctx, dir)
+	s, err := Open(ctx, dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestReopenKeepsDataAndSchemaVersion(t *testing.T) {
 	}
 	s.Close()
 
-	s, err = Open(ctx, dir)
+	s, err = Open(ctx, dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestReopenKeepsDataAndSchemaVersion(t *testing.T) {
 func TestOpenRefusesNewerSchema(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
-	s, err := Open(ctx, dir)
+	s, err := Open(ctx, dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +242,7 @@ func TestOpenRefusesNewerSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Close()
-	if _, err := Open(ctx, dir); err == nil {
+	if _, err := Open(ctx, dir, nil); err == nil {
 		t.Fatal("Open succeeded on a newer schema")
 	}
 }

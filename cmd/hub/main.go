@@ -1,5 +1,6 @@
 // Command agent-history-hub is the Hub: it stores Raw records shipped by
-// Collectors (docs/spec/hub.md).
+// Collectors, parses them into Transcripts and serves the Web UI
+// (docs/spec/hub.md).
 package main
 
 import (
@@ -17,7 +18,12 @@ import (
 
 	"github.com/tedkulp/agent-history/internal/buildinfo"
 	"github.com/tedkulp/agent-history/internal/hub/api"
+	"github.com/tedkulp/agent-history/internal/hub/parser"
+	"github.com/tedkulp/agent-history/internal/hub/parser/claudecode"
 	"github.com/tedkulp/agent-history/internal/hub/store"
+	"github.com/tedkulp/agent-history/internal/hub/web"
+	"github.com/tedkulp/agent-history/internal/hub/worker"
+	"github.com/tedkulp/agent-history/protocol"
 )
 
 const usage = `usage: agent-history-hub <command>
@@ -73,15 +79,27 @@ func serve(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	st, err := store.Open(ctx, *data)
+	parsers := parser.NewRegistry(claudecode.New())
+	st, err := store.Open(ctx, *data, parsers)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
 
+	workerCtx, stopWorker := context.WithCancel(context.Background())
+	workerDone := make(chan struct{})
+	go func() {
+		worker.New(st, parsers, log).Run(workerCtx)
+		close(workerDone)
+	}()
+	defer func() { stopWorker(); <-workerDone }()
+
+	mux := http.NewServeMux()
+	mux.Handle(protocol.APIPrefix+"/", api.New(st, log))
+	mux.Handle("/", web.New(st, log))
 	srv := &http.Server{
 		Addr:              *listen,
-		Handler:           api.New(st, log),
+		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}

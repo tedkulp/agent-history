@@ -23,7 +23,7 @@ const machine = "3f6c2a4e-8d1b-4f7a-9c2e-5b0d7e1a9f33"
 
 func newServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	s, err := store.Open(context.Background(), t.TempDir())
+	s, err := store.Open(context.Background(), t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

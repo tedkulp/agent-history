@@ -86,7 +86,7 @@ type fixture struct {
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	st, err := store.Open(context.Background(), t.TempDir())
+	st, err := store.Open(context.Background(), t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,0 +1,90 @@
+package web
+
+import "strconv"
+
+templ layout(title string) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width,initial-scale=1"/>
+			<title>{ title }</title>
+			<link rel="stylesheet" href="/static/app.css"/>
+			<link rel="stylesheet" href="/static/chroma.css"/>
+			<script src="/static/htmx.min.js" defer></script>
+		</head>
+		<body>
+			<div class="wrap">
+				<header class="top"><a class="brand" href="/">Agent History</a></header>
+				{ children... }
+			</div>
+		</body>
+	</html>
+}
+
+templ sourceBadge(source string) {
+	<span class={ "badge", source }>{ source }</span>
+}
+
+templ feedPage(days []feedDay) {
+	@layout("Agent History") {
+		if len(days) == 0 {
+			<p class="dim">No Sessions yet.</p>
+		}
+		for _, d := range days {
+			<div class="day">{ d.Label }</div>
+			for _, r := range d.Rows {
+				<a class="row" href={ templ.SafeURL("/sessions/" + strconv.FormatInt(r.ID, 10)) }>
+					<span class="tm">{ r.Time }</span>
+					<span>
+						<span class="t">{ r.Title }</span>
+						<span class="p">{ r.Prompt }</span>
+					</span>
+					<span class="r">
+						@sourceBadge(r.Source)
+						<br/>
+						{ r.Machine } › <span title={ r.ProjectFull }>{ r.Project }</span>
+					</span>
+				</a>
+			}
+		}
+	}
+}
+
+templ transcriptPage(h headerView, msgs []messageView) {
+	@layout(h.Title + " · Agent History") {
+		<div class="head">
+			<h1>{ h.Title }</h1>
+			<div class="m">
+				@sourceBadge(h.Source)
+				<span>{ h.Machine }</span>
+				<span title={ h.ProjectFull }>{ h.Project }</span>
+				if h.GitBranch != "" {
+					<span>⎇ { h.GitBranch }</span>
+				}
+				if h.Model != "" {
+					<span>{ h.Model }</span>
+				}
+				if h.Started != "" {
+					<span>{ h.Started }</span>
+				}
+			</div>
+		</div>
+		for _, m := range msgs {
+			<div class={ "msg", m.Role } id={ "m-" + m.ID }>
+				for _, p := range m.Texts {
+					<div class="bubble">
+						@templ.Raw(p)
+					</div>
+				}
+				<span class="time">{ m.Time }</span>
+			</div>
+		}
+	}
+}
+
+templ notFoundPage() {
+	@layout("Not found · Agent History") {
+		<p>No such Session.</p>
+	}
+}
