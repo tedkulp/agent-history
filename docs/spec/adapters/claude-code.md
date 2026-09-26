@@ -130,7 +130,7 @@ Walking the path in order:
 | `isMeta: true` | Raw only (injected context) |
 | `isCompactSummary: true` | `marker` Part (`compaction`), text = the summary |
 | Only `tool_result` blocks | No Message. Each result merges into its Tool call (§3.4). |
-| A string starting with `<command-name>` | `marker` Part (`slash_command`), text = the command name plus `<command-args>` if non-empty, e.g. `/review 42` |
+| A string starting with `<command-name>`, or with `<command-message>` (a skill invocation, followed by `<command-name>`) | `marker` Part (`slash_command`), text = the command name plus `<command-args>` if non-empty, e.g. `/review 42` |
 | A string starting with `<local-command-stdout>`, `<local-command-stderr>` or `<local-command-caveat>` | Raw only |
 | Anything else | A `user` Message |
 
@@ -138,7 +138,7 @@ In a `user` Message: a string content is one `text` Part. In a block list, `text
 
 **`assistant` lines**
 
-Claude Code writes **one line per content block**, all sharing the same `message.id`. Consecutive path lines with the same `message.id` form **one** assistant Message.
+Claude Code writes **one line per content block**, all sharing the same `message.id`. Consecutive path lines with the same `message.id` form **one** assistant Message. A user line holding only `tool_result` blocks doesn't break the run: with parallel tool calls, each `tool_use` line is followed by its result before the next block's line. Any other user line does.
 
 | Block | Part |
 |---|---|

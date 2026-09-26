@@ -7,13 +7,14 @@ import (
 	"errors"
 	"path"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/tedkulp/agent-history/internal/hub/parser"
 )
 
 // parseInterval is the least time between two parses of one Session (hub.md §3.8).
-const parseInterval = 10_000
+const parseInterval = 10 * time.Second
 
 type queryer interface {
 	execer
@@ -59,7 +60,7 @@ func liveEnqueue(ctx context.Context, tx execer, sessionID, now int64) error {
 		ON CONFLICT (session_id) DO UPDATE SET
 			priority = 0,
 			enqueued_at = max(excluded.enqueued_at, parse_queue.enqueued_at + 1)`,
-		now, parseInterval, sessionID)
+		now, parseInterval.Milliseconds(), sessionID)
 	return err
 }
 
@@ -83,6 +84,38 @@ func ProjectCwd(cwd, homeDir string) string {
 		}
 	}
 	return cwd
+}
+
+// reassignProjects recomputes project_cwd for every Session of a Machine.
+func reassignProjects(ctx context.Context, tx *sql.Tx, machineID, homeDir string) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id, cwd FROM sessions WHERE machine_id = ? AND cwd IS NOT NULL`, machineID)
+	if err != nil {
+		return err
+	}
+	type session struct {
+		id  int64
+		cwd string
+	}
+	var ss []session
+	for rows.Next() {
+		var s session
+		if err := rows.Scan(&s.id, &s.cwd); err != nil {
+			rows.Close()
+			return err
+		}
+		ss = append(ss, s)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, s := range ss {
+		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET project_cwd = ? WHERE id = ?`,
+			nullStr(ProjectCwd(s.cwd, homeDir)), s.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Job is one parse_queue row picked by the worker.
@@ -189,24 +222,31 @@ func (s *Store) LoadParseInput(ctx context.Context, sessionID int64) (in ParseIn
 // DropJob deletes a job whose Session has nothing to parse yet, unless new
 // data arrived since it was picked.
 func (s *Store) DropJob(ctx context.Context, job Job) error {
-	_, err := s.write.ExecContext(ctx, `
-		DELETE FROM parse_queue WHERE session_id = ? AND enqueued_at = ?`, job.SessionID, job.EnqueuedAt)
+	_, err := deleteJob(ctx, s.write, job)
 	return err
+}
+
+// deleteJob deletes the job's queue row if its enqueued_at is unchanged, and
+// reports whether it did.
+func deleteJob(ctx context.Context, db execer, job Job) (bool, error) {
+	res, err := db.ExecContext(ctx, `
+		DELETE FROM parse_queue WHERE session_id = ? AND enqueued_at = ?`, job.SessionID, job.EnqueuedAt)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // finishJob deletes the queue row if nothing arrived since the job was
 // picked, else pushes it back by the parse interval (hub.md §4.5 step 3).
 func finishJob(ctx context.Context, tx execer, job Job, now int64) error {
-	res, err := tx.ExecContext(ctx, `
-		DELETE FROM parse_queue WHERE session_id = ? AND enqueued_at = ?`, job.SessionID, job.EnqueuedAt)
-	if err != nil {
+	deleted, err := deleteJob(ctx, tx, job)
+	if err != nil || deleted {
 		return err
 	}
-	if n, _ := res.RowsAffected(); n > 0 {
-		return nil
-	}
 	_, err = tx.ExecContext(ctx, `
-		UPDATE parse_queue SET not_before = ? WHERE session_id = ?`, now+parseInterval, job.SessionID)
+		UPDATE parse_queue SET not_before = ? WHERE session_id = ?`, now+parseInterval.Milliseconds(), job.SessionID)
 	return err
 }
 

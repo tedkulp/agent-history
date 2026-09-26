@@ -432,7 +432,7 @@ CREATE TABLE parse_queue (
 ```
 
 - Keyed by Session, so repeated appends collapse into one job.
-- **Live enqueue** (on ingest): insert with `priority = 0`, `enqueued_at = now`, `not_before = max(now, sessions.parsed_at + 10 s)`. On conflict: set `priority = 0` and `enqueued_at = now`, keep `not_before`. A live append to a Session already queued at priority 1 therefore bumps it to 0, and the one job covers both. Each Session is parsed at most once every **10 s**.
+- **Live enqueue** (on ingest): insert with `priority = 0`, `enqueued_at = now`, `not_before = max(now, sessions.parsed_at + 10 s)`. On conflict: set `priority = 0` and `enqueued_at = max(now, enqueued_at + 1)`, keep `not_before`. `enqueued_at` always moves forward, so the worker's unchanged check (§4.5) sees data that arrived in the same millisecond as its pick. A live append to a Session already queued at priority 1 therefore bumps it to 0, and the one job covers both. Each Session is parsed at most once every **10 s**.
 - **Re-parse enqueue** (start-up check, `reparse` CLI, unattached-record mapping): insert with `priority = 1`, `not_before = now`. On conflict: leave the row alone (it's either already priority 1 or has the higher priority 0).
 
 Source: [Hub storage schema](https://github.com/tedkulp/agent-history/issues/12), [Re-parse flow when a parser changes](https://github.com/tedkulp/agent-history/issues/14); the exact upsert rules filled in while writing this spec

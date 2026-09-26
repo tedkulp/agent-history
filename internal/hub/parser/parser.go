@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"regexp"
+	"unicode/utf8"
 )
 
 // Roles a Raw record can have within its Session (hub.md §4.3).
@@ -19,7 +20,6 @@ const (
 const (
 	MessageUser      = "user"
 	MessageAssistant = "assistant"
-	MessageTool      = "tool"
 )
 
 // Part kinds (hub.md §3.5).
@@ -29,7 +29,6 @@ const (
 
 // Parse warning kinds (hub.md §3.6).
 const (
-	WarnUnknownType  = "unknown_type"
 	WarnBadLine      = "bad_line"
 	WarnMissingField = "missing_field"
 	WarnOrphan       = "orphan"
@@ -186,7 +185,12 @@ func (w *Warnings) Add(kind, sourceType, excerpt string) {
 		return
 	}
 	if len(excerpt) > 500 {
-		excerpt = excerpt[:500]
+		// Cut at a character boundary.
+		n := 500
+		for n > 0 && !utf8.RuneStart(excerpt[n]) {
+			n--
+		}
+		excerpt = excerpt[:n]
 	}
 	w.index[k] = len(w.list)
 	w.list = append(w.list, Warning{Kind: kind, SourceType: sourceType, Count: 1, FirstExcerpt: excerpt})

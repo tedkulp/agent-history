@@ -42,7 +42,7 @@ func openParsing(t *testing.T) (*Store, *fakeClock) {
 func appendTo(t *testing.T, s *Store, source, key string, data []byte) {
 	t.Helper()
 	prev, err := s.CurrentContent(context.Background(), "m1", source, key)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = s.Append(context.Background(), AppendRequest{
@@ -229,7 +229,7 @@ func TestSaveParseBuildsFeedAndTranscript(t *testing.T) {
 	for parseNext(t, s) {
 	}
 
-	feed, err := s.Feed(ctx, 0, 50)
+	feed, err := s.Feed(ctx, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +276,7 @@ func TestParentStubIsHiddenUntilParsed(t *testing.T) {
 	for parseNext(t, s) {
 	}
 	stub := sessionIDOf(t, s, sessUUID)
-	if feed, _ := s.Feed(ctx, 0, 50); len(feed) != 0 {
+	if feed, _ := s.Feed(ctx, 50); len(feed) != 0 {
 		t.Errorf("feed = %+v", feed)
 	}
 	if _, _, ok, _ := s.Transcript(ctx, stub); ok {
@@ -381,5 +381,30 @@ func TestProjectCwd(t *testing.T) {
 		if got := ProjectCwd(cwd, "/Users/ted/"); got != want {
 			t.Errorf("ProjectCwd(%q) = %q, want %q", cwd, got, want)
 		}
+	}
+}
+
+func TestHomeDirChangeReassignsProjects(t *testing.T) {
+	s, _ := openParsing(t)
+	ctx := context.Background()
+	homeLine := `{"type":"user","uuid":"u1","parentUuid":null,"timestamp":"2026-09-01T10:00:00.000Z","cwd":"/home/ted","message":{"role":"user","content":"hi"}}` + "\n"
+	appendTo(t, s, protocol.SourceClaudeCode, mainKey, []byte(homeLine))
+	parseNext(t, s)
+	project := func() sql.NullString {
+		var p sql.NullString
+		s.read.QueryRow(`SELECT project_cwd FROM sessions WHERE native_id = ?`, sessUUID).Scan(&p)
+		return p
+	}
+	if p := project(); p.String != "/home/ted" {
+		t.Fatalf("with home /Users/ted: project = %v", p)
+	}
+	if err := s.UpsertMachine(ctx, "m1", protocol.MachineInfo{Hostname: "laptop", HomeDir: "/home/ted"}); err != nil {
+		t.Fatal(err)
+	}
+	if p := project(); p.Valid {
+		t.Errorf("after home_dir change: project = %v, want No project", p)
+	}
+	if job, ok, _, _ := s.NextJob(ctx); ok {
+		t.Errorf("home_dir change queued a re-parse: %+v", job)
 	}
 }

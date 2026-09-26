@@ -66,8 +66,7 @@ type feedRow struct {
 }
 
 func (s *server) feed(w http.ResponseWriter, r *http.Request) {
-	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
-	rows, err := s.store.Feed(r.Context(), before, feedPageSize)
+	rows, err := s.store.Feed(r.Context(), feedPageSize)
 	if err != nil {
 		s.internal(w, r, err)
 		return
@@ -86,9 +85,7 @@ func groupByDay(rows []store.FeedRow, now time.Time) []feedDay {
 			days = append(days, feedDay{Label: label})
 		}
 		v := feedRow{FeedRow: row, Time: t.Format("15:04"), Prompt: oneLine(row.FirstPrompt)}
-		if v.Title == "" {
-			v.Title = row.NativeID
-		}
+		v.Title = titleOr(row.Title, row.NativeID)
 		v.Project, v.ProjectFull = projectName(row.ProjectCwd)
 		d := &days[len(days)-1]
 		d.Rows = append(d.Rows, v)
@@ -110,6 +107,22 @@ func dayLabel(t, now time.Time) string {
 		return t.Format("Mon, Jan 2")
 	}
 	return t.Format("Mon, Jan 2, 2006")
+}
+
+// titleOr is the Session's title, or its native id when it has none.
+func titleOr(title, nativeID string) string {
+	if title == "" {
+		return nativeID
+	}
+	return title
+}
+
+// localTime formats a Unix-millisecond time in the display zone, or "" for 0.
+func (s *server) localTime(ms int64, layout string) string {
+	if ms == 0 {
+		return ""
+	}
+	return time.UnixMilli(ms).In(s.now().Location()).Format(layout)
 }
 
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
@@ -151,20 +164,12 @@ func (s *server) transcript(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, http.StatusNotFound, notFoundPage())
 		return
 	}
-	hv := headerView{SessionHeader: h}
-	if hv.Title == "" {
-		hv.Title = h.NativeID
-	}
+	hv := headerView{SessionHeader: h, Started: s.localTime(h.StartedAt, "Jan 2, 2006 15:04")}
+	hv.Title = titleOr(h.Title, h.NativeID)
 	hv.Project, hv.ProjectFull = projectName(h.ProjectCwd)
-	if h.StartedAt != 0 {
-		hv.Started = time.UnixMilli(h.StartedAt).In(s.now().Location()).Format("Jan 2, 2006 15:04")
-	}
 	var views []messageView
 	for _, m := range msgs {
-		v := messageView{ID: m.ID, Role: m.Role}
-		if m.Timestamp != 0 {
-			v.Time = time.UnixMilli(m.Timestamp).In(s.now().Location()).Format("Jan 2 15:04")
-		}
+		v := messageView{ID: m.ID, Role: m.Role, Time: s.localTime(m.Timestamp, "Jan 2 15:04")}
 		for _, p := range m.Parts {
 			if p.Kind != parser.KindText {
 				continue

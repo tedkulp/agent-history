@@ -22,17 +22,15 @@ type FeedRow struct {
 // the id (hub.md §3.2).
 const machineLabel = `coalesce(nullif(m.display_name, ''), nullif(m.hostname, ''), substr(m.id, 1, 8))`
 
-// Feed lists parsed top-level Sessions, newest activity first. before, when
-// non-zero, returns only Sessions active before that time.
-func (s *Store) Feed(ctx context.Context, before int64, limit int) ([]FeedRow, error) {
+// Feed lists parsed top-level Sessions, newest activity first.
+func (s *Store) Feed(ctx context.Context, limit int) ([]FeedRow, error) {
 	rows, err := s.read.QueryContext(ctx, `
 		SELECT s.id, s.source, s.native_id, coalesce(s.title, ''), coalesce(s.first_prompt, ''),
 			coalesce(s.last_activity_at, 0), coalesce(s.project_cwd, ''), `+machineLabel+`
 		FROM sessions s JOIN machines m ON m.id = s.machine_id
 		WHERE s.parent_session_id IS NULL AND s.parsed_at IS NOT NULL
-			AND (?1 = 0 OR s.last_activity_at < ?1)
 		ORDER BY s.last_activity_at DESC, s.id DESC
-		LIMIT ?2`, before, limit)
+		LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}

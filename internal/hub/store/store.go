@@ -109,13 +109,25 @@ func (s *Store) signal() {
 }
 
 // UpsertMachine registers the Machine or replaces its metadata (hub.md §3.2).
+// When home_dir changes, it recomputes every Session's Project in the same
+// transaction, with no re-parse (hub.md §4.4).
 func (s *Store) UpsertMachine(ctx context.Context, id string, info protocol.MachineInfo) error {
 	sources, err := json.Marshal(info.Sources)
 	if err != nil {
 		return err
 	}
+	tx, err := s.write.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var oldHome sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT home_dir FROM machines WHERE id = ?`, id).Scan(&oldHome)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 	t := s.now()
-	_, err = s.write.ExecContext(ctx, `
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO machines (id, display_name, hostname, os, arch, home_dir, collector_version, sources_json, first_seen_at, last_seen_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (id) DO UPDATE SET
@@ -128,7 +140,15 @@ func (s *Store) UpsertMachine(ctx context.Context, id string, info protocol.Mach
 			sources_json = excluded.sources_json,
 			last_seen_at = excluded.last_seen_at`,
 		id, info.DisplayName, info.Hostname, info.OS, info.Arch, info.HomeDir, info.CollectorVersion, string(sources), t, t)
-	return err
+	if err != nil {
+		return err
+	}
+	if oldHome.String != info.HomeDir {
+		if err := reassignProjects(ctx, tx, id, info.HomeDir); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // TouchMachine registers an unknown Machine with only its id, or bumps
@@ -306,12 +326,15 @@ func marshalHash(h hash.Hash) (state []byte, sum string, err error) {
 }
 
 // CurrentContent returns a record's current version, decompressed and
-// concatenated in offset order.
+// concatenated in offset order. A missing record has empty content.
 func (s *Store) CurrentContent(ctx context.Context, machineID, source, recordKey string) ([]byte, error) {
 	var id int64
 	err := s.read.QueryRowContext(ctx, `
 		SELECT id FROM raw_records WHERE machine_id = ? AND source = ? AND record_key = ?`,
 		machineID, source, recordKey).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}

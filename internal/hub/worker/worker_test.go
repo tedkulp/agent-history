@@ -50,7 +50,7 @@ func TestRunParsesIngestedSession(t *testing.T) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		feed, err := s.Feed(ctx, 0, 10)
+		feed, err := s.Feed(ctx, 10)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -73,7 +73,7 @@ func TestParserPanicMarksSessionFailed(t *testing.T) {
 	if worked, _, _ := w.RunOnce(context.Background()); worked {
 		t.Error("failed job stayed in the queue")
 	}
-	if feed, _ := s.Feed(context.Background(), 0, 10); len(feed) != 0 {
+	if feed, _ := s.Feed(context.Background(), 10); len(feed) != 0 {
 		t.Errorf("never-parsed failed Session in the feed: %+v", feed)
 	}
 }

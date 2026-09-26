@@ -25,7 +25,7 @@ const (
 
 var (
 	uuidRe  = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
-	agentRe = regexp.MustCompile(`^agent-([^/.]+)\.(jsonl|meta\.json)$`)
+	childRe = regexp.MustCompile(`^agent-([^/.]+)\.(jsonl|meta\.json)$`)
 )
 
 // Parser is the claude-code parser.
@@ -68,7 +68,7 @@ func (*Parser) MapKey(key string) (parser.Mapping, bool) {
 		return parser.Mapping{}, false
 	}
 	if len(segs) == 4 && segs[2] == "subagents" {
-		if a := agentRe.FindStringSubmatch(segs[3]); a != nil {
+		if a := childRe.FindStringSubmatch(segs[3]); a != nil {
 			role := parser.RoleMain
 			if a[2] == "meta.json" {
 				role = parser.RoleAttachment
@@ -176,9 +176,13 @@ func (*Parser) Parse(in parser.Input) (parser.Result, error) {
 	if res.Session.Cwd == "" {
 		warn.Add(parser.WarnMissingField, "cwd", "")
 	}
-	res.Session.Title = firstNonEmpty(customTitle, titleFromFile(in), aiTitle, summary)
+	if isChild {
+		res.Session.Title = childTitle(in)
+	} else {
+		res.Session.Title = firstNonEmpty(customTitle, titleFromFile(in), aiTitle, summary)
+	}
 
-	res.Messages = buildMessages(transcriptPath(lines, isChild, &warn))
+	res.Messages = buildMessages(transcriptPath(lines, isChild, &warn), &warn)
 	res.Warnings = warn.List()
 	return res, nil
 }
@@ -201,6 +205,22 @@ func titleFromFile(in parser.Input) string {
 			}
 			if json.Unmarshal(b, &v) == nil {
 				return v.CustomTitle
+			}
+		}
+	}
+	return ""
+}
+
+// childTitle reads a Child Session's title, the description in its
+// .meta.json attachment (claude-code.md §3.6).
+func childTitle(in parser.Input) string {
+	for key, b := range in.Attachments {
+		if strings.HasSuffix(key, ".meta.json") {
+			var v struct {
+				Description string `json:"description"`
+			}
+			if json.Unmarshal(b, &v) == nil {
+				return v.Description
 			}
 		}
 	}
@@ -247,30 +267,32 @@ func transcriptPath(lines []*line, isChild bool, warn *parser.Warnings) []*line 
 }
 
 // buildMessages turns path lines into Messages (claude-code.md §3.3).
-// Assistant lines sharing a message.id form one Message; lines that produce
-// no Message (tool results, injected context) don't break the group.
-func buildMessages(path []*line) []parser.Message {
+// Assistant lines sharing a message.id form one Message. A tool-result-only
+// user line doesn't break the group: parallel tool calls interleave each
+// tool_use line with its result. Any other user line does.
+func buildMessages(path []*line, warn *parser.Warnings) []parser.Message {
 	var (
-		msgs      []parser.Message
-		cur       *parser.Message
-		curAPIID  string
-		lastUsage *parser.Usage
+		msgs     []parser.Message
+		cur      *parser.Message
+		curAPIID string
 	)
 	flush := func() {
 		if cur != nil {
-			cur.Usage = lastUsage
 			msgs = append(msgs, *cur)
 		}
-		cur, curAPIID, lastUsage = nil, "", nil
+		cur, curAPIID = nil, ""
 	}
 	for _, l := range path {
 		switch l.Type {
 		case "user":
-			texts, ok := userTexts(l)
-			if !ok {
+			kind, texts := classifyUser(l, warn)
+			if kind == userToolResults {
 				continue
 			}
 			flush()
+			if kind == userSkip {
+				continue
+			}
 			m := parser.Message{ID: parser.SafeID(l.UUID), Role: parser.MessageUser, Timestamp: l.ts}
 			for _, t := range texts {
 				addText(&m, t)
@@ -279,6 +301,7 @@ func buildMessages(path []*line) []parser.Message {
 		case "assistant":
 			var am apiMessage
 			if json.Unmarshal(l.Message, &am) != nil {
+				warn.Add(parser.WarnMissingField, "message", string(l.raw))
 				continue
 			}
 			if cur == nil || am.ID == "" || am.ID != curAPIID {
@@ -289,8 +312,10 @@ func buildMessages(path []*line) []parser.Message {
 			if am.Model != "" {
 				cur.Model = am.Model
 			}
+			// Usage comes from the group's last line.
+			cur.Usage = nil
 			if u := am.Usage; u != nil {
-				lastUsage = &parser.Usage{
+				cur.Usage = &parser.Usage{
 					Input:      u.InputTokens,
 					Output:     u.OutputTokens,
 					CacheRead:  u.CacheReadInputTokens,
@@ -317,17 +342,24 @@ func addText(m *parser.Message, text string) {
 	})
 }
 
-// userTexts returns the text of a user line that becomes a user Message, or
-// ok=false for one that doesn't (claude-code.md §3.3).
-func userTexts(l *line) (texts []string, ok bool) {
+// What a user line becomes (claude-code.md §3.3).
+const (
+	userMessage     = iota // a user Message
+	userToolResults        // only tool results: no Message
+	userSkip               // injected context or a command line: Raw only
+)
+
+// classifyUser classifies a user line and returns its text Parts.
+func classifyUser(l *line, warn *parser.Warnings) (kind int, texts []string) {
 	if l.IsMeta || l.IsCompactSummary {
-		return nil, false
+		return userSkip, nil
 	}
 	var m struct {
 		Content json.RawMessage `json:"content"`
 	}
 	if json.Unmarshal(l.Message, &m) != nil {
-		return nil, false
+		warn.Add(parser.WarnMissingField, "message", string(l.raw))
+		return userSkip, nil
 	}
 	var s string
 	if json.Unmarshal(m.Content, &s) == nil {
@@ -335,25 +367,26 @@ func userTexts(l *line) (texts []string, ok bool) {
 		// both are the same slash-command line.
 		for _, p := range []string{"<command-name>", "<command-message>", "<local-command-stdout>", "<local-command-stderr>", "<local-command-caveat>"} {
 			if strings.HasPrefix(s, p) {
-				return nil, false
+				return userSkip, nil
 			}
 		}
-		return []string{s}, true
+		return userMessage, []string{s}
 	}
-	blocks := contentBlocks(m.Content)
-	if len(blocks) == 0 {
-		return nil, false
+	var blocks []block
+	if json.Unmarshal(m.Content, &blocks) != nil || len(blocks) == 0 {
+		warn.Add(parser.WarnMissingField, "message.content", string(l.raw))
+		return userSkip, nil
 	}
-	onlyResults := true
+	kind = userToolResults
 	for _, b := range blocks {
 		if b.Type != "tool_result" {
-			onlyResults = false
+			kind = userMessage
 		}
 		if b.Type == "text" {
 			texts = append(texts, b.Text)
 		}
 	}
-	return texts, !onlyResults
+	return kind, texts
 }
 
 func contentBlocks(raw json.RawMessage) []block {

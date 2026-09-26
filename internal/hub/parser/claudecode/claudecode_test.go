@@ -257,15 +257,20 @@ func TestParseTitlePrecedence(t *testing.T) {
 func TestParseChildSessionParent(t *testing.T) {
 	line := asstLine("a1", "", "2026-09-01T10:00:01.000Z", "msg_1", text("child"), nil)
 	line["isSidechain"] = true
-	res, err := New().Parse(parser.Input{NativeID: sess + "/agent-a1b2", Main: jsonl(t, line)})
+	res, err := New().Parse(parser.Input{NativeID: sess + "/agent-a1b2", Main: jsonl(t, line), Attachments: map[string][]byte{
+		"-Users-ted-src-app/" + sess + "/subagents/agent-a1b2.meta.json": []byte(`{"agentType":"Explore","description":"Find the parser","toolUseId":"toolu_9"}`),
+	}})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if res.Session.Title != "Find the parser" {
+		t.Errorf("title = %q", res.Session.Title)
 	}
 	if res.Session.ParentNativeID != sess {
 		t.Errorf("parent = %q", res.Session.ParentNativeID)
 	}
 	if len(res.Messages) != 1 {
-		t.Errorf("sidechain lines in a sub-agent file must be on the path; messages = %d", len(res.Messages))
+		t.Errorf("every line of a Child Session file is on its path; messages = %d", len(res.Messages))
 	}
 }
 
@@ -286,5 +291,44 @@ func TestParseMissingCwd(t *testing.T) {
 	res := parse(t, jsonl(t, l), nil)
 	if res.Session.Cwd != "" || len(res.Warnings) != 1 || res.Warnings[0].Kind != "missing_field" || res.Warnings[0].SourceType != "cwd" {
 		t.Errorf("cwd = %q, warnings = %+v", res.Session.Cwd, res.Warnings)
+	}
+}
+
+func TestParseGroupingBreaksOnRealUserLines(t *testing.T) {
+	// The same message.id on both sides of a real user prompt is two Messages;
+	// across a tool result it is one, with usage from the group's last line.
+	meta := userLine("m1", "a2", "2026-09-01T10:00:03.000Z", "injected")
+	meta["isMeta"] = true
+	main := jsonl(t,
+		userLine("u1", "", "2026-09-01T10:00:00.000Z", "go"),
+		asstLine("a1", "u1", "2026-09-01T10:00:01.000Z", "msg_1", map[string]any{"type": "tool_use", "id": "t1", "name": "Bash", "input": map[string]any{}}, map[string]any{"output_tokens": 1}),
+		userLine("r1", "a1", "2026-09-01T10:00:01.500Z", []any{map[string]any{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}}),
+		asstLine("a2", "r1", "2026-09-01T10:00:02.000Z", "msg_1", text("one"), nil),
+		meta,
+		asstLine("a3", "m1", "2026-09-01T10:00:04.000Z", "msg_1", text("two"), map[string]any{"output_tokens": 9}),
+	)
+	res := parse(t, main, nil)
+	want := []flat{
+		{ID: "u1", Role: "user", Texts: []string{"go"}},
+		{ID: "a1", Role: "assistant", Texts: []string{"one"}},
+		{ID: "a3", Role: "assistant", Texts: []string{"two"}},
+	}
+	if got := flatten(res.Messages); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v", got)
+	}
+	if res.Messages[1].Usage != nil {
+		t.Errorf("usage taken from a line other than the group's last: %+v", res.Messages[1].Usage)
+	}
+	if u := res.Messages[2].Usage; u == nil || u.Output != 9 {
+		t.Errorf("usage = %+v", u)
+	}
+}
+
+func TestParseWarnsOnUndecodableMessage(t *testing.T) {
+	bad := asstLine("a1", "u1", "2026-09-01T10:00:01.000Z", "msg_1", text("x"), nil)
+	bad["message"] = "not an object"
+	res := parse(t, jsonl(t, userLine("u1", "", "2026-09-01T10:00:00.000Z", "go"), bad), nil)
+	if len(res.Warnings) != 1 || res.Warnings[0].Kind != "missing_field" || res.Warnings[0].SourceType != "message" {
+		t.Errorf("warnings = %+v", res.Warnings)
 	}
 }
