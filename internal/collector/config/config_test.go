@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeConfig(t *testing.T, body string) string {
@@ -21,6 +22,7 @@ func TestLoad(t *testing.T) {
 machine_id   = "3f6c2a4e-8d1b-4f7a-9c2e-5b0d7e1a9f33"
 display_name = "work-laptop"
 hub_url      = "http://hub.vpn:8080"
+rescan_interval = "15m"
 surprise     = 1
 
 [sources.claude-code]
@@ -42,6 +44,9 @@ enabled = false
 	if c.Sources["codex"].IsEnabled() {
 		t.Fatal("codex should be disabled")
 	}
+	if c.RescanInterval != 15*time.Minute {
+		t.Fatalf("rescan_interval %v", c.RescanInterval)
+	}
 	if len(c.Unknown) != 1 || c.Unknown[0] != "surprise" {
 		t.Fatalf("unknown keys %q", c.Unknown)
 	}
@@ -51,6 +56,7 @@ func TestLoadRejects(t *testing.T) {
 	cases := map[string]string{
 		"machine_id is required":   `hub_url = "http://h"`,
 		"hub_url is required":      `machine_id = "m"`,
+		"at least 1m":              "machine_id = \"m\"\nhub_url = \"http://h\"\nrescan_interval = \"30s\"",
 		"must be an absolute path": "machine_id = \"m\"\nhub_url = \"http://h\"\n[sources.claude-code]\nroot = \"~/.claude/projects\"",
 	}
 	for want, body := range cases {

@@ -168,7 +168,7 @@ func TestAppendConflictReturnsHubState(t *testing.T) {
 		if resp.StatusCode != http.StatusConflict {
 			t.Fatalf("status %d, want 409", resp.StatusCode)
 		}
-		e := decode[protocol.Error](t, resp)
+		e := decode[protocol.Conflict](t, resp)
 		if e.Error != protocol.ErrOffsetMismatch || e.Length != int64(len(data)) || e.Sha256 != hexSum(data) {
 			t.Fatalf("409 body %+v", e)
 		}
@@ -223,5 +223,20 @@ func TestPutMachine(t *testing.T) {
 	info.HomeDir = ""
 	if got := put(machine, machine, info); got != http.StatusBadRequest {
 		t.Fatalf("missing home_dir: status %d", got)
+	}
+}
+
+func TestConflictOnUnknownRecordCarriesZeroLength(t *testing.T) {
+	srv := newServer(t)
+	resp := postRecord(t, srv, recordReq{key: "new.jsonl", offset: 3, prefix: []byte("abc"), body: []byte("x\n")})
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	var raw map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if raw["length"] != float64(0) || raw["sha256"] != protocol.EmptySha256 {
+		t.Fatalf("409 body %v", raw)
 	}
 }

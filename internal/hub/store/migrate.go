@@ -65,22 +65,25 @@ func (s *Store) migrate(ctx context.Context) error {
 		return fmt.Errorf("database is from a newer Hub (schema %d, this Hub knows %d); restore a pre-migrate backup to roll back", current, len(migs))
 	}
 	for _, m := range migs[current:] {
-		tx, err := s.write.BeginTx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, m.sql); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("migration %s: %w", m.name, err)
-		}
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, m.version)); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("migration %s: %w", m.name, err)
-		}
-		if err := tx.Commit(); err != nil {
+		if err := s.apply(ctx, m); err != nil {
 			return fmt.Errorf("migration %s: %w", m.name, err)
 		}
 		s.log.Info("applied migration", "name", m.name)
 	}
 	return nil
+}
+
+func (s *Store) apply(ctx context.Context, m migration) error {
+	tx, err := s.write.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, m.sql); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, m.version)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

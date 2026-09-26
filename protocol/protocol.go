@@ -92,13 +92,17 @@ type RecordState struct {
 	Version int64  `json:"version"`
 }
 
-// Error is the body of every error response. Length and Sha256 are set on a
-// 409 and carry the Hub's current state for the record.
+// Error is the body of every error response.
 type Error struct {
 	Error   string `json:"error"`
 	Message string `json:"message,omitempty"`
-	Length  int64  `json:"length,omitempty"`
-	Sha256  string `json:"sha256,omitempty"`
+}
+
+// Conflict is the body of a 409: the Hub's current state for the record.
+type Conflict struct {
+	Error  string `json:"error"`
+	Length int64  `json:"length"`
+	Sha256 string `json:"sha256"`
 }
 
 // Error codes.

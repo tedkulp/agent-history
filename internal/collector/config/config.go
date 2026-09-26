@@ -5,18 +5,23 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
 
 // Config is the parsed collector.toml.
 type Config struct {
-	MachineID   string                  `toml:"machine_id"`
-	DisplayName string                  `toml:"display_name"`
-	HubURL      string                  `toml:"hub_url"`
-	LogLevel    string                  `toml:"log_level"`
-	Exclude     []string                `toml:"exclude"`
-	Sources     map[string]SourceConfig `toml:"sources"`
+	MachineID   string `toml:"machine_id"`
+	DisplayName string `toml:"display_name"`
+	HubURL      string `toml:"hub_url"`
+	// RescanInterval is parsed and validated; the rescan loop that uses it
+	// arrives with live shipping.
+	RescanInterval time.Duration           `toml:"-"`
+	RawRescan      string                  `toml:"rescan_interval"`
+	LogLevel       string                  `toml:"log_level"`
+	Exclude        []string                `toml:"exclude"`
+	Sources        map[string]SourceConfig `toml:"sources"`
 
 	// Unknown lists keys in the file that the Collector doesn't know.
 	// The caller logs them at warn.
@@ -56,6 +61,18 @@ func Load(path string) (*Config, error) {
 		c.LogLevel = "info"
 	}
 	var errs []error
+	c.RescanInterval = 10 * time.Minute
+	if c.RawRescan != "" {
+		d, err := time.ParseDuration(c.RawRescan)
+		switch {
+		case err != nil:
+			errs = append(errs, fmt.Errorf("rescan_interval: %w", err))
+		case d < time.Minute:
+			errs = append(errs, errors.New("rescan_interval must be at least 1m"))
+		default:
+			c.RescanInterval = d
+		}
+	}
 	if c.MachineID == "" {
 		errs = append(errs, errors.New("machine_id is required"))
 	}

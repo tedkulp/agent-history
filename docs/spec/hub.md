@@ -238,6 +238,7 @@ CREATE TABLE raw_record_versions (
   created_at   INTEGER NOT NULL,
   UNIQUE (record_id, version)
 );
+CREATE UNIQUE INDEX raw_record_versions_current ON raw_record_versions(record_id) WHERE is_current = 1;
 
 CREATE TABLE raw_chunks (
   version_id INTEGER NOT NULL REFERENCES raw_record_versions(id),

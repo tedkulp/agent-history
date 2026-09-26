@@ -84,12 +84,17 @@ func (c *Client) do(req *http.Request, want int, out any) error {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusConflict && want != http.StatusConflict {
+		var c protocol.Conflict
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&c); err != nil || c.Sha256 == "" {
+			return &StatusError{StatusCode: resp.StatusCode, Body: protocol.Error{Error: c.Error, Message: "409 without the Hub's record state"}}
+		}
+		return &ConflictError{Length: c.Length, Sha256: c.Sha256}
+	}
 	if resp.StatusCode != want {
 		var e protocol.Error
-		json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&e)
-		if resp.StatusCode == http.StatusConflict {
-			return &ConflictError{Length: e.Length, Sha256: e.Sha256}
-		}
+		// The body is best-effort detail; the status code is the error.
+		_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&e)
 		return &StatusError{StatusCode: resp.StatusCode, Body: e}
 	}
 	if out == nil {

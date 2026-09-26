@@ -92,12 +92,12 @@ func (s *server) manifest(w http.ResponseWriter, r *http.Request, id string) {
 	var out io.Writer = w
 	switch accept := r.Header.Get("Accept-Encoding"); {
 	case acceptsEncoding(accept, "zstd"):
-		w.Header().Set("Content-Encoding", "zstd")
 		enc, err := zstd.NewWriter(w)
 		if err != nil {
 			s.internal(w, r, err)
 			return
 		}
+		w.Header().Set("Content-Encoding", "zstd")
 		defer enc.Close()
 		out = enc
 	case acceptsEncoding(accept, "gzip"):
@@ -195,7 +195,7 @@ func (s *server) records(w http.ResponseWriter, r *http.Request, id string) {
 	var conflict *store.ConflictError
 	if errors.As(err, &conflict) {
 		s.log.Warn("append conflict", "machine", id, "source", source, "key", key, "offset", offset, "hub_length", conflict.Length)
-		writeJSON(w, http.StatusConflict, protocol.Error{Error: protocol.ErrOffsetMismatch, Length: conflict.Length, Sha256: conflict.Sha256})
+		writeJSON(w, http.StatusConflict, protocol.Conflict{Error: protocol.ErrOffsetMismatch, Length: conflict.Length, Sha256: conflict.Sha256})
 		return
 	}
 	if err != nil {
