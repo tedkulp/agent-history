@@ -35,18 +35,18 @@ type Source struct {
 
 // Result counts what a reconcile did, per record.
 type Result struct {
-	Uploaded  int   // records that had bytes appended
-	Replaced  int   // records sent as a new version
-	Unchanged int   // records the Hub already had
-	Failed    int   // records that hit an error; they are skipped until the next reconcile
-	Bytes     int64 // decompressed bytes sent
+	Uploaded   int   // records that had bytes appended
+	Replaced   int   // records sent as a new version
+	Unchanged  int   // records the Hub already had
+	Failed     int   // records that hit an error; they are skipped until the next reconcile
+	Mismatched int   // records whose ack disagreed with the local hash; the next reconcile replaces them
+	Bytes      int64 // decompressed bytes sent
 }
 
 // Reconcile registers the Machine, fetches the manifest and ships every
 // record the Hub is missing, holds only a prefix of, or holds a different
-// version of. Per-record errors are
-// logged and counted in Result; the returned error is for failures that stop
-// the whole reconcile.
+// version of. Per-record errors are logged and counted in Result; the
+// returned error is for failures that stop the whole reconcile.
 func Reconcile(ctx context.Context, hub Hub, info protocol.MachineInfo, sources []Source, log *slog.Logger) (Result, error) {
 	if log == nil {
 		log = slog.Default()
@@ -76,7 +76,11 @@ func Reconcile(ctx context.Context, hub Hub, info protocol.MachineInfo, sources 
 			rlog := log.With("source", src.ID, "key", rec.Key)
 			sent, outcome, err := ship(ctx, hub, src.ID, rec, h, rlog)
 			res.Bytes += sent
+			var mismatch *MismatchError
 			switch {
+			case errors.As(err, &mismatch):
+				res.Mismatched++
+				rlog.Warn("hub state differs from local content", "err", err)
 			case err != nil:
 				res.Failed++
 				rlog.Error("shipping record", "err", err)
@@ -138,8 +142,8 @@ func (e *MismatchError) Error() string {
 		e.HubLength, e.HubSha256, e.LocalLength, e.LocalSha256)
 }
 
-// ship brings one record up to date and returns the bytes sent and the first
-// decision. A 409 is re-decided against the state it carries (protocol.md
+// ship brings one record up to date and returns the bytes sent and the last
+// action it sent (doNothing when it sent none). A 409 is re-decided against the state it carries (protocol.md
 // §4.4); any other error skips the record until the next reconcile.
 func ship(ctx context.Context, hub Hub, sourceID string, rec source.Record, h *protocol.ManifestRecord, log *slog.Logger) (int64, actionKind, error) {
 	L, err := content(rec)
@@ -150,16 +154,17 @@ func ship(ctx context.Context, hub Hub, sourceID string, rec source.Record, h *p
 	if jsonl {
 		var cut bool
 		if L, cut = cutOversizedLine(L, protocol.MaxBodyBytes); cut {
-			log.Warn("a line is over the 64 MiB body limit; shipping the record only up to it", "offset", len(L))
+			log.Warn("a line is over the body size limit; shipping the record only up to it", "limit", protocol.MaxBodyBytes, "offset", len(L))
 		}
 	}
-	first := decide(h, L).kind
 	var sent int64
+	did := doNothing
 	for conflicts := 0; ; conflicts++ {
 		a := decide(h, L)
 		if a.kind == doNothing {
-			return sent, first, nil
+			return sent, did, nil
 		}
+		did = a.kind
 		n, err := upload(ctx, hub, sourceID, rec.Key, L, jsonl, a)
 		sent += n
 		var conflict *hubclient.ConflictError
@@ -167,7 +172,7 @@ func ship(ctx context.Context, hub Hub, sourceID string, rec source.Record, h *p
 			h = &protocol.ManifestRecord{Length: conflict.Length, Sha256: conflict.Sha256}
 			continue
 		}
-		return sent, first, err
+		return sent, did, err
 	}
 }
 

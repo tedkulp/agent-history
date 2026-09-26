@@ -23,12 +23,6 @@ const machine = "3f6c2a4e-8d1b-4f7a-9c2e-5b0d7e1a9f33"
 
 func newServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	srv, _ := newServerStore(t)
-	return srv
-}
-
-func newServerStore(t *testing.T) (*httptest.Server, *store.Store) {
-	t.Helper()
 	s, err := store.Open(context.Background(), t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -36,7 +30,7 @@ func newServerStore(t *testing.T) (*httptest.Server, *store.Store) {
 	t.Cleanup(func() { s.Close() })
 	srv := httptest.NewServer(New(s, nil))
 	t.Cleanup(srv.Close)
-	return srv, s
+	return srv
 }
 
 func hexSum(b []byte) string {
@@ -292,20 +286,6 @@ func TestBodyOverLimitIs413(t *testing.T) {
 	}
 	if e := decode[protocol.Error](t, resp); e.Error != protocol.ErrBodyTooLarge {
 		t.Fatalf("error %+v", e)
-	}
-}
-
-func TestRecordsFromUnknownMachineRegistersIt(t *testing.T) {
-	srv, s := newServerStore(t)
-	if resp := postRecord(t, srv, recordReq{key: "k.jsonl", body: []byte("x\n")}); resp.StatusCode != http.StatusOK {
-		t.Fatalf("status %d", resp.StatusCode)
-	}
-	ok, err := s.MachineExists(context.Background(), machine)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok {
-		t.Fatal("no machines row for the unknown Machine")
 	}
 }
 

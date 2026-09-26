@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"testing"
@@ -388,5 +389,26 @@ func TestRetriedAppendEndsInSameState(t *testing.T) {
 	got, _ := s.CurrentContent(ctx, "m1", protocol.SourceClaudeCode, "k.jsonl")
 	if string(got) != "a\nb\n" {
 		t.Fatalf("content = %q", got)
+	}
+}
+
+func TestRecordsFromUnknownMachineRegisterIt(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	if _, err := appendChunk(t, s, "m1", "a.jsonl", 0, nil, []byte("x\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := replaceWith(t, s, "m2", "b.jsonl", []byte("y\n")); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"m1", "m2"} {
+		var first int64
+		var name sql.NullString
+		if err := s.read.QueryRowContext(ctx, `SELECT first_seen_at, display_name FROM machines WHERE id = ?`, id).Scan(&first, &name); err != nil {
+			t.Fatalf("machine %s: %v", id, err)
+		}
+		if first == 0 || name.Valid {
+			t.Fatalf("machine %s: first_seen_at %d, display_name %v", id, first, name)
+		}
 	}
 }

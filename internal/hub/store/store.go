@@ -157,13 +157,6 @@ func (s *Store) TouchMachine(ctx context.Context, id string) error {
 	return touchMachine(ctx, s.write, id, s.now())
 }
 
-// MachineExists reports whether the Machine has a machines row.
-func (s *Store) MachineExists(ctx context.Context, id string) (bool, error) {
-	var n int
-	err := s.read.QueryRowContext(ctx, `SELECT count(*) FROM machines WHERE id = ?`, id).Scan(&n)
-	return n > 0, err
-}
-
 type execer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
@@ -280,7 +273,8 @@ func (s *Store) Append(ctx context.Context, req AppendRequest) (protocol.RecordS
 // Replace starts a new current version of a record holding Data, and keeps
 // the old one as superseded (protocol.md §3.4, §4.4). A body equal to the
 // current version is a no-op that returns the current state, so a retried
-// replace is safe.
+// replace is safe. The Collector always sends a replace as the first chunk,
+// so a match means that chunk already became a whole current version.
 func (s *Store) Replace(ctx context.Context, req ReplaceRequest) (protocol.RecordState, error) {
 	return s.ingest(ctx, req.MachineID, req.Source, req.RecordKey, func(tx *sql.Tx, cur *current, t int64) (protocol.RecordState, bool, error) {
 		h := sha256.New()
@@ -311,12 +305,17 @@ func (s *Store) Replace(ctx context.Context, req ReplaceRequest) (protocol.Recor
 	})
 }
 
+// applyFunc writes one chunk against the record's current version. changed
+// reports whether the record's content changed, which live-enqueues its
+// Session.
+type applyFunc func(tx *sql.Tx, cur *current, t int64) (st protocol.RecordState, changed bool, err error)
+
 // ingest runs one records request in a transaction on the writer
 // (protocol.md §4.4): it registers the Machine, loads the record's current
 // version (creating and attaching the record row if needed), lets apply
 // write the chunk, and live-enqueues the Session when apply reports the
 // content changed.
-func (s *Store) ingest(ctx context.Context, machineID, source, recordKey string, apply func(tx *sql.Tx, cur *current, t int64) (protocol.RecordState, bool, error)) (protocol.RecordState, error) {
+func (s *Store) ingest(ctx context.Context, machineID, source, recordKey string, apply applyFunc) (protocol.RecordState, error) {
 	tx, err := s.write.BeginTx(ctx, nil)
 	if err != nil {
 		return protocol.RecordState{}, err
