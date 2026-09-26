@@ -53,6 +53,14 @@ The Source's original on-disk data for a Session, kept verbatim alongside the pa
 The stable name of a Raw record within its Source on one Machine. It stays the same when the Source compresses or archives the underlying file.
 _Avoid_: path, filename
 
+**Layout**:
+One way a Source stores its history on disk, such as opencode's per-file JSON tree or its database. A Source can have several Layouts on one Machine at once.
+_Avoid_: era, format, backend
+
+**Parse warning**:
+Something in a Raw record the Hub didn't fully understand while still producing a Transcript: an unknown type, an unreadable line, a missing field, or an orphaned reference. Distinct from a parse failure, where no Transcript is produced.
+_Avoid_: error, drift
+
 ## Relationships
 
 - A **Machine** runs exactly one **Collector**
@@ -60,6 +68,8 @@ _Avoid_: path, filename
 - A **Session** belongs to exactly one **Source** and one **Machine**
 - A **Session** has one **Transcript** and one or more **Raw records**
 - A **Raw record** is identified by (**Machine**, **Source**, **Record key**)
+- A **Raw record** is found through exactly one **Layout** of its **Source**; when two **Layouts** hold the same **Session**, only the higher-ranked one is parsed
+- A **Session** has zero or more **Parse warnings** from its latest parse
 - A **Project** belongs to exactly one **Machine**; the same path on two Machines is two **Projects**
 - A **Session** belongs to at most one **Project**, fixed by where it started
 - A **Child Session** has exactly one parent **Session** and is spawned by one **Tool call** in it
