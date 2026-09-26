@@ -52,7 +52,7 @@ Every document follows the same sections:
   - [`oh-my-pi-format.md`](../research/oh-my-pi-format.md)
   - [`opencode-format.md`](../research/opencode-format.md)
   - [`mise-install-and-service.md`](../research/mise-install-and-service.md)
-- **Web UI prototype**: the [`prototype/web-ui-screens`](https://github.com/tedkulp/agent-history/tree/prototype/web-ui-screens/prototype/webui) branch, variant C (`hub.md` §4.7).
+- **Web UI prototype**: [`docs/prototype/webui/`](../prototype/webui/), variant C (`hub.md` §4.7). It is its own Go module, so the main module's `go test ./...` skips it.
 - **Decision history**: the map issue, [Agent History v1: find the way to a build-ready spec](https://github.com/tedkulp/agent-history/issues/1), lists every decision ticket.
 
 Source: [Spec assembly](https://github.com/tedkulp/agent-history/issues/18), [Merge research docs into main](https://github.com/tedkulp/agent-history/issues/19)
@@ -111,8 +111,8 @@ These span both components. The Collector-side and Hub-side details are in `coll
 
 ### 5.1 One lockstep tag
 
-- **One `vX.Y.Z` tag releases both** the Collector and the Hub, at the same version. A human pushes it. The tag workflow reruns the tests, then runs `goreleaser release` (GoReleaser OSS, on GitHub Actions).
-- Both binaries get the version through ldflags. `agent-history version` and `agent-history-hub version` print it without the `v`, e.g. `0.3.1`.
+- **One `vX.Y.Z` tag releases both** the Collector and the Hub, at the same version. A human pushes it. The tag workflow reruns the tests, checks the version floor against the tag (§5.4), then runs `goreleaser release` (GoReleaser OSS, on GitHub Actions).
+- Both binaries get the version through ldflags. `agent-history version` and `agent-history-hub version` print it without the `v`, e.g. `0.3.1`. A build without the release ldflags prints `0.0.0-dev` (`protocol.md` §4.6).
 - **Pre-release tags** `vX.Y.Z-rc.N` publish too. The GitHub Release is marked prerelease, and the image gets only the `vX.Y.Z-rc.N` tag. They never move `vX.Y` or `latest`.
 - Changelog: GoReleaser's commit list, grouped by `feat:` / `fix:` prefix when present.
 
@@ -132,7 +132,9 @@ On every PR and on `main`: `go vet`, `go test ./...`, `goreleaser check`, `gorel
 
 - `protocol.MinCollectorVersion` is a compiled-in constant, shared by both binaries.
 - It is bumped **by hand, in the same PR as an incompatible `/api/v1` change**, and at no other time. It is never an upgrade nudge.
-- A unit test asserts the floor is at most the version being built.
+- The tag workflow checks that the floor is at most the tag's version before it publishes anything.
+- Every comparison with the floor drops pre-release suffixes first, so `0.4.0-rc.1` counts as `0.4.0`. An rc cycle that raises the floor works without hand-editing.
+- `0.0.0-dev` builds (no ldflags) skip the floor on a dev Hub and always get `426` from a release Hub.
 - Operators can raise the floor, never lower it, with `AGENT_HISTORY_MIN_COLLECTOR_VERSION` on the Hub.
 - A Collector below the floor gets `426` on every request, stops uploading, and retries hourly (`protocol.md` §4.6).
 - When a release moves the floor, its release notes say **"⚠ requires Collector ≥ X"**, added by hand.
@@ -177,7 +179,7 @@ As one end-to-end run, M1 looks like this:
 - [ ] `docker compose up` on the Hub host. The container reports healthy.
 - [ ] On a Mac and a Linux Machine with existing Claude Code history: `mise use -g github:tedkulp/agent-history`, then `agent-history init --hub <url>`.
 - [ ] Within minutes, the Hub's feed shows both Machines' Sessions, grouped by day, with Machine and Project chips.
-- [ ] A new prompt in a live Claude Code Session appears on its Transcript page within about 15 s.
+- [ ] A new prompt in a live Claude Code Session appears on its Transcript page, after a reload, within about 15 s.
 - [ ] Searching a word from that prompt finds it, opens the Transcript at that Message, and highlights it.
 - [ ] A Session with a sub-agent shows its Tool call cluster with a working "↳ Child Session" link, and the child links back.
 - [ ] Tag `vX.Y.(Z+1)`. `mise upgrade` on a Machine; its Collector restarts on its own and reports the new version to the Hub.

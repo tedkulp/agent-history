@@ -129,10 +129,13 @@ For the full list of responses, see §4.7.
 #### `GET /api/v1/machines/{id}/health`
 
 ```json
-{ "sessions_with_warnings": 14 }
+{ "sessions_with_warnings": 14, "sessions_failed": 1 }
 ```
 
-Counts this Machine's Sessions whose latest parse recorded any Parse warning. Collector `status` prints it as "Hub: N Sessions with parse warnings". Fields may be added later.
+- `sessions_with_warnings` counts this Machine's Sessions whose latest parse recorded any Parse warning.
+- `sessions_failed` counts this Machine's Sessions whose `parse_status` is `failed`, whether or not an earlier parse succeeded.
+
+Collector `status` prints them as "Hub: N Sessions with parse warnings, M failed to parse". Fields may be added later.
 
 Source: [Collector → Hub ingestion protocol](https://github.com/tedkulp/agent-history/issues/10), [Source format drift](https://github.com/tedkulp/agent-history/issues/16), [What a project is across Machines](https://github.com/tedkulp/agent-history/issues/8)
 
@@ -271,7 +274,10 @@ Source: [Collector → Hub ingestion protocol](https://github.com/tedkulp/agent-
 - **Minimum Collector version.** The effective minimum is the higher of:
   - the compiled-in `protocol.MinCollectorVersion`
   - the `AGENT_HISTORY_MIN_COLLECTOR_VERSION` env var, which can only raise it
-- `MinCollectorVersion` is bumped by hand, in the same PR as an incompatible `/api/v1` change, and never as an upgrade nudge. A unit test asserts the floor is at most the version being built.
+- `MinCollectorVersion` is bumped by hand, in the same PR as an incompatible `/api/v1` change, and never as an upgrade nudge.
+- **Comparing with the floor.** Before any comparison with the floor, the pre-release and build suffixes are dropped from both versions: `0.4.0-rc.1` counts as `0.4.0`. An rc Collector is therefore accepted by an rc Hub from the same cycle, even when that cycle raised the floor.
+- **Floor check at release.** The tag workflow checks, before `goreleaser release`, that the floor is at most the tag's version, compared as above. A plain `go test` has no version, so this check lives in the tag workflow, not in a unit test.
+- **Non-release builds.** A binary built without the release ldflags (`go build`, `go run`, `go test`) reports the version `0.0.0-dev`. A Hub whose own version is `0.0.0-dev` skips the floor check, so a dev Collector and a dev Hub work together. A release Hub always returns `426` to a `0.0.0-dev` Collector, so dev builds can't write to a production Hub.
 - The Hub checks the version from `User-Agent` on **every** `/api/v1` request. If it is below the minimum or can't be parsed as semver, the Hub returns `426 Upgrade Required` with:
 
   ```json
@@ -331,4 +337,7 @@ M1 is Claude Code end to end.
 - [ ] `200` is returned only after the chunk and the parse-queue row are committed; a parser that panics does not affect the ack.
 - [ ] A Collector whose `User-Agent` version is below the effective minimum gets `426` with `min_collector_version`, and `status` shows it.
 - [ ] `AGENT_HISTORY_MIN_COLLECTOR_VERSION` raises the floor but cannot lower it below the compiled-in value.
-- [ ] `GET /health` returns `sessions_with_warnings` for the Machine.
+- [ ] A Collector at `0.4.0-rc.1` is accepted by a Hub whose floor is `0.4.0`.
+- [ ] A `0.0.0-dev` Collector is accepted by a `0.0.0-dev` Hub and gets `426` from a release Hub.
+- [ ] The tag workflow fails before publishing when the floor is above the tag's version.
+- [ ] `GET /health` returns `sessions_with_warnings` and `sessions_failed` for the Machine.

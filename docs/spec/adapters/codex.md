@@ -102,7 +102,7 @@ Source: [Normalized Transcript model](https://github.com/tedkulp/agent-history/i
 - A sub-agent's file starts with inherited parent context. Lines whose `ordinal` is below `session_meta.subagent_history_start_ordinal` are Raw only.
 - Duplicate `ordinal` values across stitched files: the later file wins.
 
-Source: [Normalized Transcript model](https://github.com/tedkulp/agent-history/issues/9), [Source format drift](https://github.com/tedkulp/agent-history/issues/16); the stitching and inherited-context rules filled in while writing this spec. The exact `history_base` field shape is to be confirmed against `codex-rs/rollout` when the parser is built.
+Source: [Normalized Transcript model](https://github.com/tedkulp/agent-history/issues/9), [Source format drift](https://github.com/tedkulp/agent-history/issues/16); the stitching and inherited-context rules filled in while writing this spec. The exact `history_base` field shape is to be confirmed against `codex-rs/rollout` when the parser is built (§6, first item).
 
 ### 3.3 Messages and Parts
 
@@ -195,6 +195,7 @@ Source: [Codex on-disk history format](https://github.com/tedkulp/agent-history/
 
 ## 6. Acceptance checklist (after M1)
 
+- [ ] **Build-time fact:** the `history_base` field shape used in §3.2 matches `codex-rs/rollout` in the Codex version being targeted. If it differs, fix §3.2 first.
 - [ ] `init` with `CODEX_HOME` set in the shell rc writes that root; without it, `~/.codex`.
 - [ ] A live rollout under `sessions/YYYY/MM/DD/` ships as appends under its basename key.
 - [ ] Compressing a shipped rollout to `.jsonl.zst`, or moving it to `archived_sessions/`, ships nothing and creates no second record.

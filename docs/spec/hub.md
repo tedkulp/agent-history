@@ -46,7 +46,7 @@ Source: [Hub language and web UI stack](https://github.com/tedkulp/agent-history
 | `agent-history-hub healthcheck` | `GET http://127.0.0.1:<port>/healthz`, using the port from `AGENT_HISTORY_LISTEN`. Exits `0` on `200`, else `1`. Used by the image's `HEALTHCHECK`, so the image needs no curl. |
 | `agent-history-hub backup` | Writes one backup now (§4.8) and exits |
 | `agent-history-hub reparse --all \| --source <source> \| --session <id>` | Enqueues Sessions at re-parse priority (§4.5) and exits. `<source>` is a Source identifier (`protocol.md` §3.1); `<id>` is the Session id from the Transcript URL. |
-| `agent-history-hub version` | Prints the version, e.g. `0.3.1`, and nothing else |
+| `agent-history-hub version` | Prints the version, e.g. `0.3.1` (`0.0.0-dev` without release ldflags), and nothing else |
 
 - The subcommands other than `serve` run in a second process next to the live Hub, via `docker exec <container> agent-history-hub …`. They open the same database file. WAL mode and `busy_timeout` make that safe.
 - Every config env var (§2.3) has a matching flag on `serve`, e.g. `--listen`, `--data`. A flag wins over the env var.
@@ -83,7 +83,7 @@ All on one listener, plain HTTP.
 | `PUT /api/v1/machines/{id}` | Upsert the `machines` row (§3.2). If `home_dir` changed, re-run Project assignment for that Machine (§4.4). |
 | `GET /api/v1/machines/{id}/manifest` | Current version of every Raw record for the Machine (§3.3) |
 | `POST /api/v1/machines/{id}/records` | Ingest one chunk (§4.2) |
-| `GET /api/v1/machines/{id}/health` | `{"sessions_with_warnings": N}`: this Machine's Sessions with at least one `parse_warnings` row |
+| `GET /api/v1/machines/{id}/health` | `{"sessions_with_warnings": N, "sessions_failed": M}`: this Machine's Sessions with at least one `parse_warnings` row, and those with `parse_status = 'failed'` |
 
 **Web UI** (HTML, §4.7):
 
@@ -533,7 +533,7 @@ Running a job:
 2. Call `Parse` **outside any write transaction**.
 3. In one write transaction:
    - **Success**: delete the Session's `messages`, `parts`, `tool_outputs`, `search` rows and `parse_warnings`; insert the new ones; insert new `blobs` (`INSERT OR IGNORE`); update the Session fields, `project_cwd` (§4.4), `usage_json`, `parse_status = 'ok'`, `parse_error = NULL`, `parsed_at = now`, `parser_version` and `parse_attempted_version` = current; create stub rows for an unknown parent or fork origin (§3.4).
-   - **Failure** (error or recovered panic): set `parse_status = 'failed'`, `parse_error`, `parse_attempted_version` = current. Leave the previous Transcript, search rows and warnings untouched.
+   - **Failure** (error or recovered panic): set `parse_status = 'failed'`, `parse_error`, `parse_attempted_version` = current. If `last_activity_at` is NULL (never parsed), set it to now, so the Session sorts in the feed. Leave the previous Transcript, search rows and warnings untouched.
    - Delete the queue row **only if its `enqueued_at` is unchanged** since step 1. If new data arrived meanwhile, keep the row and set its `not_before = now + 10 s`.
 4. After a Session's **first** successful parse, re-enqueue at priority 1 any Session that names it as parent and has an `orphan` warning, so a Child Session parsed before its parent clears its warning.
 
@@ -568,7 +568,7 @@ Source: [Hub language and web UI stack](https://github.com/tedkulp/agent-history
 
 ### 4.7 Web UI
 
-The UI is **search-first**: a search box over a feed of recent Sessions from every Machine. Machine, Source and Project are **filter chips**, not pages. The throwaway prototype is on the [`prototype/web-ui-screens`](https://github.com/tedkulp/agent-history/tree/prototype/web-ui-screens/prototype/webui) branch: run `go -C prototype/webui run .`, open http://127.0.0.1:8791/?v=C. Variant C is the chosen design.
+The UI is **search-first**: a search box over a feed of recent Sessions from every Machine. Machine, Source and Project are **filter chips**, not pages. The throwaway prototype is in [`docs/prototype/webui/`](../prototype/webui/): run `go -C docs/prototype/webui run .`, open http://127.0.0.1:8791/?v=C. Variant C is the chosen design.
 
 #### Home (`/`, no `q`)
 
@@ -577,8 +577,9 @@ The UI is **search-first**: a search box over a feed of recent Sessions from eve
   - A **Machine** row: one chip per Machine.
   - A **Source** row: one chip per Source that has Sessions.
   - Picking a Machine reveals that Machine's **Project** chips with Session counts (`GROUP BY project_cwd`), plus "No project". This is the Machine → Project → Session browse path.
-  - A **"has warnings"** chip: Sessions with any `parse_warnings` row.
-- **Feed**: top-level Sessions (`parent_session_id IS NULL`, `parsed_at IS NOT NULL`) matching the chips, newest `last_activity_at` first, grouped by day: "Today", "Yesterday", then the date.
+  - A **"has warnings"** chip: Sessions with any `parse_warnings` row, or with `parse_status = 'failed'`.
+- **Feed**: top-level Sessions (`parent_session_id IS NULL`) that have been parsed (`parsed_at IS NOT NULL`) **or** have failed (`parse_status = 'failed'`), matching the chips, newest `last_activity_at` first, grouped by day: "Today", "Yesterday", then the date.
+  - A Session whose parse failed and that never parsed successfully has no title or first prompt. Its row shows the native id and a **"parse failed"** badge, and links to its Transcript page, which shows only the failure note. So a parser bug can't hide a Session.
 - Each row: last-activity time, title, `first_prompt` (one line, truncated), a Source badge, and Machine › Project. The row links to `/sessions/{id}`.
 - 50 rows per page. A "Load more" button fetches the next page with htmx (`before=<last_activity_at of the last row>`).
 - **Banners** above the feed:
@@ -600,7 +601,7 @@ The UI is **search-first**: a search box over a feed of recent Sessions from eve
 - **Notes** under the header, collapsed by default:
   - Parse warnings: e.g. "12 items not understood (unknown_type: `foo_event` ×10, …)", with `source_version` and each `first_excerpt` on expand.
   - Parse failure: "parse failed" with `parse_error`, shown above the last good Transcript (or alone, if there never was one).
-- **Chat bubbles**: user Messages on the right, assistant Messages on the left, the timestamp under each. Every Message has the anchor `id="m-<message id>"`. All Messages render on one page (Ctrl-F works); there's no pagination.
+- **Chat bubbles**: user Messages on the right, assistant Messages on the left, the timestamp under each. Every Message has the anchor `id="m-<message id>"`. All Messages render on one page (Ctrl-F works); there's no pagination. The page doesn't update live: new Messages show on reload.
 - **Tool calls**: each run of consecutive `tool_call` Parts folds into one collapsed **cluster**, labelled like `⚙ 3 tool calls · Read, Edit, Bash`. A failed call is marked ✗ in the label. Opening the cluster lists each call as its own collapsible row. An open row shows the input and the output, or the rendered diff (§4.6).
 - **Large output**: output over 4 KB stays collapsed as a stub showing its size and `output_preview`. Clicking loads `/sessions/{id}/parts/{part id}/output` with htmx. The endpoint serves `tool_outputs` when the output was split out, else the inline `output`.
 - `thinking` Parts are collapsed (💭). `marker` Parts are centred pills. `unknown` Parts are a visible warning bubble with the Source type. `attachment` Parts are a 📎 label.
@@ -674,6 +675,7 @@ Source: [Release pipeline](https://github.com/tedkulp/agent-history/issues/17), 
 - Indexing tool output or thinking for search.
 - A re-parse button, a failed-Sessions page, or any admin UI.
 - A JSON API for the Web UI.
+- Live updates of an open Transcript page (polling or push). A reload shows new Messages.
 - Reading Codex's `thread_history_*.sqlite` store. Its records never reach the Hub in v1.
 - Chunk compaction and any storage reclaim.
 - Litestream or other replication built into the Hub.
@@ -691,6 +693,7 @@ M1 is Claude Code end to end. Only the `claude-code` parser needs to exist.
 - [ ] A live append is parsed within about 10 s; a burst of appends to one Session causes at most one parse per 10 s.
 - [ ] Re-parsing a Session reproduces the same Message and Part ids.
 - [ ] A parser panic marks the Session `failed`, keeps its previous Transcript, and does not affect ingest acks.
+- [ ] A Session whose first parse fails appears in the feed with a "parse failed" badge, matches the "has warnings" chip, and counts in `sessions_failed` on `GET /health`.
 - [ ] Bumping the `claude-code` `parser_version` and restarting re-queues every Claude Code Session at priority 1; the home banner counts them down; live ingest is still parsed first.
 - [ ] A Session that failed at the current `parser_version` is not re-queued on restart, but `reparse --session <id>` retries it.
 - [ ] Sessions started in the home dir or `/tmp` land in "No project"; changing `home_dir` via `PUT /machines/{id}` reassigns Projects without a re-parse.

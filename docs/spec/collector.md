@@ -51,7 +51,7 @@ Source: [Installing the Collector via mise and running it as a user service](htt
 | `agent-history service install` | Writes the service definition and loads it. Idempotent: rewrites and reloads (§4.8). |
 | `agent-history service uninstall` | Stops the service and removes its definition. Config and state are kept. |
 | `agent-history service start` / `stop` / `restart` / `status` | Controls the service through `launchctl` or `systemctl --user` |
-| `agent-history version` | Prints the version, e.g. `0.3.1`, and nothing else. Self-restart relies on this output (§4.9). |
+| `agent-history version` | Prints the version, e.g. `0.3.1` (`0.0.0-dev` without release ldflags), and nothing else. Self-restart relies on this output (§4.9). |
 
 - `status` and `sync` talk to the running service over the control socket (§2.4), so two processes never upload at the same time.
 - If no service is running, `sync` does a one-shot reconcile itself, holding the state-dir lock (§3.2) for its duration. `status` prints what it can without a service (config, detected Sources, whether the Hub is reachable) and says "service not running".
@@ -142,7 +142,7 @@ Source: [Collector design](https://github.com/tedkulp/agent-history/issues/11); 
 `status` reports:
 
 - **Collector**: version, Machine id, display name, Hub URL, and whether the service is running.
-- **Hub**: reachable or not, time of the last successful sync, last error, the "upgrade Collector (Hub requires ≥ X)" line after a `426`, and "Hub: N Sessions with parse warnings" from `GET /api/v1/machines/{id}/health`.
+- **Hub**: reachable or not, time of the last successful sync, last error, the "upgrade Collector (Hub requires ≥ X)" line after a `426`, and "Hub: N Sessions with parse warnings, M failed to parse" from `GET /api/v1/machines/{id}/health`.
 - **Uploads**: the number of pending uploads.
 - **Service**: a warning "service definition outdated, run `agent-history service install`" when the installed definition's template version is older than this binary's (§4.8).
 - **Per Source**:
@@ -158,7 +158,7 @@ Example:
 ```text
 agent-history 0.3.1   machine 3f6c2a4e…  "work-laptop"   service: running
 Hub      http://hub.vpn:8080  reachable, last sync 12s ago
-         Hub: 3 Sessions with parse warnings
+         Hub: 3 Sessions with parse warnings, 0 failed to parse
 Uploads  0 pending
 
 claude-code  detected   /Users/ted/.claude/projects

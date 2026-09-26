@@ -35,7 +35,7 @@ If none contains `sessions/`, the root is `~/.omp/agent` (reported "not detected
 | `Detect(root)` | `root/sessions` or `root/archive/sessions` is a directory |
 | `Version(root)` | empty |
 
-The XDG sub-paths in step 3 follow the research reading of `packages/utils/src/dirs.ts`. Confirm them against that file when the adapter is built.
+The XDG sub-paths in step 3 follow the research reading of `packages/utils/src/dirs.ts`. Confirm them against that file when the adapter is built (§6, first item).
 
 Source: [oh-my-pi on-disk history format](https://github.com/tedkulp/agent-history/issues/4), [Collector design](https://github.com/tedkulp/agent-history/issues/11); the search order filled in while writing this spec
 
@@ -233,6 +233,7 @@ Source: [oh-my-pi on-disk history format](https://github.com/tedkulp/agent-histo
 
 ## 6. Acceptance checklist (after M1)
 
+- [ ] **Build-time fact:** the XDG sub-paths in §2.1 step 3 match `packages/utils/src/dirs.ts` in the omp version being targeted. If they differ, fix §2.1 first.
 - [ ] `init` finds the root through `PI_CODING_AGENT_DIR`, `OMP_PROFILE`, or XDG on macOS when those are set in the shell rc.
 - [ ] A Session file and its nested sub-agent files ship under the keys in §2.2; lock files, `.bak` files and artifact outputs are known-ignored.
 - [ ] `omp gc` archiving a shipped Session ships nothing and creates no second record.
