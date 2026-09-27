@@ -21,14 +21,17 @@ import (
 	"github.com/tedkulp/agent-history/internal/buildinfo"
 	"github.com/tedkulp/agent-history/internal/collector/cache"
 	"github.com/tedkulp/agent-history/internal/collector/config"
+	"github.com/tedkulp/agent-history/internal/collector/control"
 	"github.com/tedkulp/agent-history/internal/collector/exclude"
 	"github.com/tedkulp/agent-history/internal/collector/hubclient"
+	"github.com/tedkulp/agent-history/internal/collector/reconcile"
 	"github.com/tedkulp/agent-history/internal/collector/runner"
 	"github.com/tedkulp/agent-history/internal/collector/service"
 	"github.com/tedkulp/agent-history/internal/collector/setup"
 	"github.com/tedkulp/agent-history/internal/collector/source"
 	"github.com/tedkulp/agent-history/internal/collector/source/claudecode"
 	"github.com/tedkulp/agent-history/internal/collector/state"
+	"github.com/tedkulp/agent-history/internal/collector/status"
 	"github.com/tedkulp/agent-history/protocol"
 )
 
@@ -39,6 +42,8 @@ commands:
             set up this Machine: write collector.toml, register with the Hub,
             and install and start the service
   run       ship every Source's records to the Hub and keep it current
+  status    show what the Collector is doing
+  sync      reconcile every record with the Hub now
   set-name <display>
             change this Machine's display name
   service install [--shim <path>] | uninstall | start | stop | restart | status
@@ -60,6 +65,10 @@ func main() {
 		err = initCmd(os.Args[2:])
 	case "run":
 		err = run()
+	case "status":
+		err = statusCmd(os.Args[2:])
+	case "sync":
+		err = syncCmd(os.Args[2:])
 	case "set-name":
 		err = setName(os.Args[2:])
 	case "service":
@@ -101,33 +110,54 @@ func run() error {
 	for _, k := range cfg.Unknown {
 		log.Warn("unknown config key ignored", "key", k)
 	}
-	excludeFilter, err := exclude.New(cfg.Exclude)
+	rc, err := runnerConfig(cfg, home, dir, log)
 	if err != nil {
 		return err
+	}
+	if installed, outdated, err := service.Outdated(newServiceManager(os.Getenv, home).Path()); err == nil && installed && outdated {
+		log.Warn("service definition outdated, run `agent-history service install`")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	ln, err := control.Listen(socketPath(home))
+	if err != nil {
+		return fmt.Errorf("opening the control socket: %w", err)
+	}
+	rc.Control = runner.NewControl()
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		if err := control.Serve(ctx, ln, backend{rc.Control, cfg}); err != nil {
+			log.Error("control socket", "err", err)
+		}
+	}()
+
+	log.Info("collector starting", "version", buildinfo.Version, "hub", cfg.HubURL, "state_dir", dir)
+	err = runner.Run(ctx, rc)
+	stop()
+	<-served
+	return err
+}
+
+// runnerConfig sets up a Run, or a one-shot sync, from cfg.
+func runnerConfig(cfg *config.Config, home, dir string, log *slog.Logger) (runner.Config, error) {
+	excludeFilter, err := exclude.New(cfg.Exclude)
+	if err != nil {
+		return runner.Config{}, err
+	}
 	var sources []runner.Source
 	for _, a := range adapters {
-		sc := cfg.Sources[a.ID()]
-		if !sc.IsEnabled() {
-			continue
+		if sc := cfg.Sources[a.ID()]; sc.IsEnabled() {
+			sources = append(sources, runner.Source{Adapter: a, Root: sourceRoot(a, sc, home)})
 		}
-		root := sc.Root
-		if root == "" {
-			root = a.DefaultRoot(os.Getenv, home)
-		}
-		sources = append(sources, runner.Source{Adapter: a, Root: root})
 	}
-
 	hub, err := hubclient.New(cfg.HubURL, cfg.MachineID, buildinfo.Version, &http.Client{Timeout: 5 * time.Minute})
 	if err != nil {
-		return err
+		return runner.Config{}, err
 	}
-	log.Info("collector starting", "version", buildinfo.Version, "hub", cfg.HubURL, "state_dir", dir)
-	return runner.Run(ctx, runner.Config{
+	return runner.Config{
 		Hub:            hub,
 		Info:           setup.MachineInfo(cfg, adapters, hostname(), home, buildinfo.Version),
 		Sources:        sources,
@@ -135,7 +165,186 @@ func run() error {
 		Log:            log,
 		Exclude:        excludeFilter,
 		RescanInterval: cfg.RescanInterval,
-	})
+	}, nil
+}
+
+// sourceRoot is the configured root, or the adapter's default.
+func sourceRoot(a source.Adapter, sc config.SourceConfig, home string) string {
+	if sc.Root != "" {
+		return sc.Root
+	}
+	return a.DefaultRoot(os.Getenv, home)
+}
+
+func socketPath(home string) string {
+	return filepath.Join(state.DefaultDir(os.Getenv, home), control.SocketName)
+}
+
+// backend serves the control socket from a running Collector.
+type backend struct {
+	ctl *runner.Control
+	cfg *config.Config
+}
+
+func (b backend) Status(ctx context.Context) (status.Report, error) {
+	rep, err := b.ctl.Status(ctx)
+	if err != nil {
+		return rep, err
+	}
+	rep.MachineID, rep.HubURL = b.cfg.MachineID, b.cfg.HubURL
+	// The runner knows only the enabled Sources.
+	var all []status.Source
+	for _, a := range adapters {
+		sc := b.cfg.Sources[a.ID()]
+		if !sc.IsEnabled() {
+			all = append(all, status.Source{ID: a.ID(), Root: sc.Root})
+			continue
+		}
+		for _, s := range rep.Sources {
+			if s.ID == a.ID() {
+				all = append(all, s)
+			}
+		}
+	}
+	rep.Sources = all
+	return rep, nil
+}
+
+func (b backend) Sync(ctx context.Context, progress func(string)) (string, error) {
+	res, err := b.ctl.Sync(ctx, progress)
+	if err != nil {
+		return "", err
+	}
+	return summary(res), nil
+}
+
+func (b backend) SetName(ctx context.Context, name string) error { return b.ctl.SetName(ctx, name) }
+
+func summary(r reconcile.Result) string {
+	s := fmt.Sprintf("synced: %d uploaded, %d replaced, %d unchanged, %d failed", r.Uploaded, r.Replaced, r.Unchanged, r.Failed)
+	if r.Mismatched > 0 {
+		s += fmt.Sprintf(", %d mismatched", r.Mismatched)
+	}
+	return s
+}
+
+func statusCmd(args []string) error {
+	if len(args) > 0 {
+		return errors.New("usage: agent-history status")
+	}
+	home, path, err := configPath()
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	rep, err := control.NewClient(socketPath(home)).Status(ctx)
+	if errors.Is(err, control.ErrNotRunning) {
+		rep = localReport(ctx, cfg, home)
+	} else if err != nil {
+		return fmt.Errorf("asking the service: %w", err)
+	}
+	if rep.ServiceInstalled, rep.ServiceOutdated, err = service.Outdated(newServiceManager(os.Getenv, home).Path()); err != nil {
+		return err
+	}
+	status.Format(os.Stdout, rep, time.Now())
+	return nil
+}
+
+// localReport is what status can tell without a running service: config,
+// detected Sources and whether the Hub answers.
+func localReport(ctx context.Context, cfg *config.Config, home string) status.Report {
+	rep := status.Report{
+		Version:     buildinfo.Version,
+		MachineID:   cfg.MachineID,
+		DisplayName: cfg.DisplayName,
+		HubURL:      cfg.HubURL,
+	}
+	if rep.DisplayName == "" {
+		rep.DisplayName = setup.ShortHostname(hostname())
+	}
+	now := time.Now()
+	hub, err := hubclient.New(cfg.HubURL, cfg.MachineID, buildinfo.Version, &http.Client{Timeout: 5 * time.Second})
+	if err == nil {
+		err = hub.Ping(ctx)
+	}
+	var se *hubclient.StatusError
+	reachable := err == nil || errors.As(err, &se) && se.StatusCode < 500
+	rep.Hub.Reachable = &reachable
+	if err != nil {
+		rep.Hub.LastError = &status.Failure{Message: err.Error(), At: now}
+	}
+	for _, a := range adapters {
+		sc := cfg.Sources[a.ID()]
+		s := status.Source{ID: a.ID(), Root: sourceRoot(a, sc, home), Enabled: sc.IsEnabled()}
+		if s.Enabled {
+			s.Detected = a.Detect(s.Root)
+		}
+		if s.Detected {
+			for _, l := range a.Layouts() {
+				recs, err := l.Discover(s.Root)
+				if err != nil {
+					s.LastError = &status.Failure{Message: "discovering " + l.Name() + " records: " + err.Error(), At: now}
+					continue
+				}
+				s.Layouts = append(s.Layouts, l.Name())
+				s.Records += len(recs)
+			}
+		}
+		rep.Sources = append(rep.Sources, s)
+	}
+	return rep
+}
+
+func syncCmd(args []string) error {
+	if len(args) > 0 {
+		return errors.New("usage: agent-history sync")
+	}
+	home, path, err := configPath()
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	progress := func(line string) { fmt.Println(line) }
+
+	// The service owns uploads while it runs, so a sync goes through it.
+	done, err := control.NewClient(socketPath(home)).Sync(ctx, progress)
+	if !errors.Is(err, control.ErrNotRunning) {
+		if err == nil {
+			fmt.Println(done)
+		}
+		return err
+	}
+
+	fmt.Println("service not running, syncing directly")
+	dir := state.DefaultDir(os.Getenv, home)
+	unlock, err := state.Lock(dir)
+	if errors.Is(err, state.ErrLocked) {
+		return errors.New("another agent-history holds collector.lock: the service is starting or another sync is running; try again")
+	} else if err != nil {
+		return err
+	}
+	defer unlock()
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	rc, err := runnerConfig(cfg, home, dir, log)
+	if err != nil {
+		return err
+	}
+	res, err := runner.Once(ctx, rc, progress)
+	if err != nil {
+		return err
+	}
+	fmt.Println(summary(res))
+	return nil
 }
 
 func initCmd(args []string) error {
@@ -322,11 +531,25 @@ func setName(args []string) error {
 	if len(args) != 1 {
 		return errors.New("usage: agent-history set-name <display>")
 	}
-	_, path, err := configPath()
+	home, path, err := configPath()
 	if err != nil {
 		return err
 	}
-	return setup.SetName(path, args[0])
+	name := args[0]
+	if err := setup.SetName(path, name); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	switch err := control.NewClient(socketPath(home)).SetName(ctx, name); {
+	case errors.Is(err, control.ErrNotRunning):
+		fmt.Printf("display name set to %q; the service isn't running, so the Hub gets it when the service next starts\n", name)
+	case err != nil:
+		return fmt.Errorf("display name saved to config, but sending it to the Hub failed: %w", err)
+	default:
+		fmt.Printf("display name set to %q\n", name)
+	}
+	return nil
 }
 
 // configPath returns the home directory and the collector.toml path.

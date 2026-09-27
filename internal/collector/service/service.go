@@ -192,6 +192,20 @@ func InstalledVersion(path string) (int, error) {
 	return 0, sc.Err()
 }
 
+// Outdated reports whether a service definition is installed at path and,
+// if so, whether its template version is older than this binary's, which
+// `status` warns about (collector.md §4.8).
+func Outdated(path string) (installed, outdated bool, err error) {
+	v, err := InstalledVersion(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, err
+	}
+	return true, v < TemplateVersion, nil
+}
+
 // RunFunc runs a command and returns its combined output.
 type RunFunc func(ctx context.Context, name string, args ...string) ([]byte, error)
 

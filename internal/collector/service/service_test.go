@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -324,5 +325,41 @@ func TestCheckShim(t *testing.T) {
 	os.WriteFile(shim, nil, 0o755)
 	if err := CheckShim(shim); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestOutdatedUntilReinstalled(t *testing.T) {
+	for _, goos := range []string{"darwin", "linux"} {
+		t.Run(goos, func(t *testing.T) {
+			m, _ := newManager(t, goos)
+			if installed, _, err := Outdated(m.Path()); err != nil || installed {
+				t.Fatalf("nothing installed: installed=%v err=%v", installed, err)
+			}
+			// A definition written by a binary with an older template.
+			old := Plist(m.def())
+			if goos == "linux" {
+				old = Unit(m.def())
+			}
+			cur, prev := strconv.Itoa(TemplateVersion), strconv.Itoa(TemplateVersion-1)
+			old = []byte(strings.NewReplacer(
+				"service template "+cur+" -->", "service template "+prev+" -->",
+				"X-AgentHistoryTemplate="+cur+"\n", "X-AgentHistoryTemplate="+prev+"\n",
+			).Replace(string(old)))
+			if err := os.MkdirAll(filepath.Dir(m.Path()), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(m.Path(), old, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if installed, outdated, err := Outdated(m.Path()); err != nil || !installed || !outdated {
+				t.Fatalf("older template: installed=%v outdated=%v err=%v", installed, outdated, err)
+			}
+			if err := m.Install(context.Background(), m.def()); err != nil {
+				t.Fatal(err)
+			}
+			if installed, outdated, err := Outdated(m.Path()); err != nil || !installed || outdated {
+				t.Fatalf("after install: installed=%v outdated=%v err=%v", installed, outdated, err)
+			}
+		})
 	}
 }

@@ -22,6 +22,7 @@ import (
 	"github.com/tedkulp/agent-history/internal/collector/hubclient"
 	"github.com/tedkulp/agent-history/internal/collector/reconcile"
 	"github.com/tedkulp/agent-history/internal/collector/source"
+	"github.com/tedkulp/agent-history/internal/collector/status"
 	"github.com/tedkulp/agent-history/protocol"
 )
 
@@ -46,6 +47,9 @@ type Config struct {
 	RescanInterval time.Duration // 10m
 	// NoWatch turns off fsnotify, leaving the rescan to find changes.
 	NoWatch bool
+	// Control, when set, lets other goroutines ask Run for its status, a
+	// sync or a rename.
+	Control *Control
 
 	Debounce     time.Duration // 2s after a record's last event
 	DebounceCap  time.Duration // 30s: a record that keeps changing still ships this often
@@ -54,6 +58,9 @@ type Config struct {
 	BackoffMin   time.Duration // 1s, doubling after each failed reconcile
 	BackoffMax   time.Duration // 5m
 	MaxUploads   int           // 4 in flight across all records
+
+	// firstSync waits on the startup reconcile (see Once).
+	firstSync *syncWaiter
 }
 
 func (c *Config) setDefaults() {
@@ -112,6 +119,8 @@ type job struct {
 // result is what an upload goroutine reports back.
 type result struct {
 	key        string
+	acked      bool      // the Hub acknowledged the record's state
+	err        error     // why the record wasn't shipped, if it failed
 	failedAt   *fileStat // skip the record until its stat differs from this
 	unreadable bool      // the file couldn't be read; the next rescan retries it
 	transient  bool      // the Hub is unreachable
@@ -147,6 +156,18 @@ type runner struct {
 	watched     map[string]bool
 	watchWarned map[string]bool
 
+	// What `status` reports.
+	infos     map[string]protocol.SourceInfo // from the last discover
+	records   map[string]int                 // every discovered record, per Source
+	srcErr    map[string]*status.Failure
+	contacted bool // a reconcile has reached the Hub or failed to
+	lastSync  time.Time
+	hubErr    *status.Failure
+
+	// Syncs waiting for the next reconcile, and those the running one will answer.
+	syncQueued  []*syncWaiter
+	syncRunning []*syncWaiter
+
 	results    chan result
 	reconciled chan reconciled
 }
@@ -166,9 +187,20 @@ func Run(ctx context.Context, cfg Config) error {
 		needReconcile: true,
 		watched:       map[string]bool{},
 		watchWarned:   map[string]bool{},
+		infos:         map[string]protocol.SourceInfo{},
+		records:       map[string]int{},
+		srcErr:        map[string]*status.Failure{},
 		results:       make(chan result, cfg.MaxUploads),
 		reconciled:    make(chan reconciled, 1),
 		lastSave:      time.Now(),
+	}
+	if cfg.firstSync != nil {
+		r.syncQueued = append(r.syncQueued, cfg.firstSync)
+	}
+	var controls <-chan func(*runner)
+	if cfg.Control != nil {
+		controls = cfg.Control.reqs
+		defer close(cfg.Control.stopped)
 	}
 	if !cfg.NoWatch {
 		w, err := fsnotify.NewWatcher()
@@ -218,6 +250,8 @@ func Run(ctx context.Context, cfg Config) error {
 			r.handleResult(res)
 		case rc := <-r.reconciled:
 			r.handleReconciled(rc)
+		case fn := <-controls:
+			fn(r)
 		case <-rescan.C:
 			r.rescan()
 		case <-wake.C:
@@ -299,6 +333,7 @@ func (r *runner) ship(ctx context.Context, j job) result {
 			log.Warn("can't stat record, retrying on the next rescan", "err", err)
 		}
 		res.unreadable = true
+		res.err = err
 		return res
 	}
 	st := statOf(fi)
@@ -319,31 +354,47 @@ func (r *runner) ship(ctx context.Context, j job) result {
 	switch {
 	case err == nil:
 		r.Cache.Set(j.key, out.Entry)
+		res.acked = true
 		if out.Sent > 0 {
 			log.Debug("shipped record", "bytes", out.Sent, "length", out.Entry.Length)
 		}
 	case hubclient.Transient(err):
 		log.Warn("hub unreachable", "err", err)
 		res.transient = true
+		res.err = err
 	case errors.Is(err, context.Canceled):
 		// Shutdown gave up on the drain; the next start reconciles.
 	case errors.As(err, &mismatch):
 		log.Warn("hub state differs from local content", "err", err)
 		r.Cache.Set(j.key, mismatch.Entry())
+		res.acked = true
 	case errors.As(err, &pathErr):
 		if !j.warned {
 			log.Warn("can't read record, retrying on the next rescan", "err", err)
 		}
 		res.unreadable = true
+		res.err = err
 	default:
 		log.Error("shipping record, skipping it until it next changes", "err", err)
 		res.failedAt = &st
+		res.err = err
 	}
 	return res
 }
 
 func (r *runner) handleResult(res result) {
 	delete(r.inFlight, res.key)
+	now := time.Now()
+	if res.acked {
+		r.lastSync = now
+	}
+	switch {
+	case res.transient:
+		r.hubErr = &status.Failure{Message: res.err.Error(), At: now}
+	case res.err != nil:
+		src, _ := cache.Split(res.key)
+		r.srcErr[src] = &status.Failure{Message: res.err.Error(), At: now}
+	}
 	if res.failedAt != nil {
 		r.failed[res.key] = *res.failedAt
 	} else {
@@ -374,7 +425,12 @@ func (r *runner) startReconcile(ctx, uploadCtx context.Context) {
 	info := r.Info
 	info.Sources = infos
 	r.reconciling = true
+	waiters := r.syncQueued
+	r.syncRunning, r.syncQueued = waiters, nil
 	opts := reconcile.Options{Cache: r.Cache, Log: r.Log, Stop: ctx.Done()}
+	if len(waiters) > 0 {
+		opts.Progress = progressReporter(waiters)
+	}
 	go func() {
 		start := time.Now()
 		res, err := reconcile.Reconcile(uploadCtx, r.Hub, info, sources, opts)
@@ -388,14 +444,23 @@ func (r *runner) startReconcile(ctx, uploadCtx context.Context) {
 
 func (r *runner) handleReconciled(rc reconciled) {
 	r.reconciling = false
+	for _, w := range r.syncRunning {
+		w.done <- rc
+	}
+	r.syncRunning = nil
 	switch {
 	case rc.err == nil:
 		r.online = true
-		r.needReconcile = false
+		r.contacted = true
+		r.needReconcile = len(r.syncQueued) > 0
 		r.attempt = 0
+		r.lastSync = time.Now()
+		r.hubErr = nil
 	case errors.Is(rc.err, reconcile.ErrStopped), errors.Is(rc.err, context.Canceled):
 		// Shutting down.
 	default:
+		r.contacted = true
+		r.hubErr = &status.Failure{Message: rc.err.Error(), At: time.Now()}
 		d := r.scheduleReconcile()
 		r.Log.Warn("reconcile failed, backing off", "err", rc.err, "retry_in", d.Round(time.Millisecond))
 	}
@@ -494,6 +559,7 @@ func (r *runner) discover() ([]reconcile.Source, []protocol.SourceInfo) {
 				recs, err := l.Discover(s.Root)
 				if err != nil {
 					r.Log.Error("discovering records", "source", a.ID(), "layout", l.Name(), "err", err)
+					r.srcErr[a.ID()] = &status.Failure{Message: "discovering " + l.Name() + " records: " + err.Error(), At: time.Now()}
 					ok = false
 					break
 				}
@@ -506,6 +572,7 @@ func (r *runner) discover() ([]reconcile.Source, []protocol.SourceInfo) {
 				}
 			}
 			if ok {
+				r.records[a.ID()] = len(present)
 				r.Exclude.Forget(a.ID(), present)
 				for k, w := range r.waitingIn(a.ID()) {
 					if !present[w.rec.Key] {
@@ -515,6 +582,7 @@ func (r *runner) discover() ([]reconcile.Source, []protocol.SourceInfo) {
 				sources = append(sources, src)
 			}
 		}
+		r.infos[a.ID()] = si
 		infos = append(infos, si)
 	}
 	return sources, infos
@@ -696,5 +764,9 @@ func (r *runner) shutdown(cancelUploads context.CancelFunc) error {
 		}
 	}
 	r.saveCache()
+	for _, w := range r.syncQueued {
+		w.done <- reconciled{err: reconcile.ErrStopped}
+	}
+	r.syncQueued = nil
 	return nil
 }

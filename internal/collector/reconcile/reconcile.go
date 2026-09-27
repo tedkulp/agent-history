@@ -51,6 +51,9 @@ type Options struct {
 	Log   *slog.Logger
 	// Stop, when closed, ends the reconcile before its next record.
 	Stop <-chan struct{}
+	// Progress, when set, is called after each record with how many of
+	// the total have been handled.
+	Progress func(done, total int)
 }
 
 // ErrStopped is returned when Options.Stop closes mid-reconcile.
@@ -83,6 +86,10 @@ func Reconcile(ctx context.Context, hub Hub, info protocol.MachineInfo, sources 
 		onHub[cache.Key(m.Source, m.RecordKey)] = m
 	}
 
+	total, done := 0, 0
+	for _, src := range sources {
+		total += len(src.Records)
+	}
 	for _, src := range sources {
 		for _, rec := range src.Records {
 			select {
@@ -133,6 +140,10 @@ func Reconcile(ctx context.Context, hub Hub, info protocol.MachineInfo, sources 
 					res.Uploaded++
 					rlog.Debug("shipped record", "bytes", out.Sent)
 				}
+			}
+			done++
+			if opts.Progress != nil {
+				opts.Progress(done, total)
 			}
 		}
 	}
