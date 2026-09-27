@@ -74,7 +74,7 @@ func TestParserBumpRequeuesStaleSessionsAtReparsePriority(t *testing.T) {
 	if _, ok := queueOf(t, s, failed); ok {
 		t.Error("Session that failed at the current version was re-queued")
 	}
-	if n, _ := s.Reparsing(ctx); n != 2 {
+	if n, _ := s.QueuedReparses(ctx); n != 2 {
 		t.Errorf("Reparsing = %d, want 2", n)
 	}
 
@@ -179,12 +179,33 @@ func TestHealthCountsWarningsAndFailures(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	w, f, err := s.Health(context.Background(), "m1")
-	if err != nil || w != 1 || f != 2 {
-		t.Errorf("Health(m1) = %d, %d, %v; want 1, 2", w, f, err)
+	if h, err := s.Health(context.Background(), "m1"); err != nil || h != (protocol.Health{SessionsWithWarnings: 1, SessionsFailed: 2}) {
+		t.Errorf("Health(m1) = %+v, %v; want 1, 2", h, err)
 	}
-	w, f, err = s.Health(context.Background(), "nobody")
-	if err != nil || w != 0 || f != 0 {
-		t.Errorf("Health(nobody) = %d, %d, %v", w, f, err)
+	if h, err := s.Health(context.Background(), "nobody"); err != nil || h != (protocol.Health{}) {
+		t.Errorf("Health(nobody) = %+v, %v", h, err)
+	}
+}
+
+func TestAttachmentBeforeMainParsesOnceMainArrives(t *testing.T) {
+	s, _ := openParsing(t)
+	ctx := context.Background()
+	appendTo(t, s, protocol.SourceClaudeCode, resultKey, []byte("out"))
+	id := sessionIDOf(t, s, sessUUID)
+	if !parseNext(t, s) {
+		t.Fatal("attachment did not enqueue its Session")
+	}
+	if _, ok := queueOf(t, s, id); ok {
+		t.Fatal("job without a main stayed queued")
+	}
+	if _, _, ok, _ := s.Transcript(ctx, id); ok {
+		t.Fatal("Session parsed without a main")
+	}
+	appendTo(t, s, protocol.SourceClaudeCode, mainKey, []byte(line1))
+	if !parseNext(t, s) {
+		t.Fatal("main did not enqueue its Session")
+	}
+	if _, msgs, ok, _ := s.Transcript(ctx, id); !ok || len(msgs) != 1 {
+		t.Errorf("Transcript ok=%v msgs=%d", ok, len(msgs))
 	}
 }

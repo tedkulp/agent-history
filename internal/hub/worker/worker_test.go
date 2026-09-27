@@ -78,8 +78,8 @@ func TestFirstParsePanicListsSessionAsFailed(t *testing.T) {
 	if len(feed) != 1 || !feed[0].Failed || feed[0].Title != "" {
 		t.Fatalf("has-warnings feed = %+v, want the failed Session", feed)
 	}
-	if _, failed, _ := s.Health(ctx, "m1"); failed != 1 {
-		t.Errorf("sessions_failed = %d", failed)
+	if h, _ := s.Health(ctx, "m1"); h.SessionsFailed != 1 {
+		t.Errorf("sessions_failed = %d", h.SessionsFailed)
 	}
 	h, msgs, ok, err := s.Transcript(ctx, feed[0].ID)
 	if err != nil || !ok || h.Parsed || h.ParseError != "parser panic: boom" || len(msgs) != 0 {

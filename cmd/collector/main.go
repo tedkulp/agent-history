@@ -297,7 +297,7 @@ func statusCmd(args []string) error {
 	} else if err != nil {
 		return fmt.Errorf("asking the service: %w", err)
 	}
-	if !rep.Hub.UpgradeRequired {
+	if r := rep.Hub.Reachable; r != nil && *r && !rep.Hub.UpgradeRequired {
 		rep.Hub.Parsing = hubHealth(ctx, cfg)
 	}
 	if rep.ServiceInstalled, rep.ServiceOutdated, err = service.Outdated(newServiceManager(os.Getenv, home).Path()); err != nil {

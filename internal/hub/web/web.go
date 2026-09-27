@@ -287,7 +287,7 @@ func (s *server) driftBanners(ctx context.Context) ([]driftBanner, error) {
 // reparseBanner is "Re-parsing N Sessions…" while re-parse jobs remain
 // queued, else "" (hub.md §4.7).
 func (s *server) reparseBanner(ctx context.Context) (string, error) {
-	n, err := s.store.Reparsing(ctx)
+	n, err := s.store.QueuedReparses(ctx)
 	if err != nil || n == 0 {
 		return "", err
 	}

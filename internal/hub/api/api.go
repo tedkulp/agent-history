@@ -149,9 +149,8 @@ func (s *server) health(w http.ResponseWriter, r *http.Request, id string) {
 		s.internal(w, r, err)
 		return
 	}
-	var h protocol.Health
-	var err error
-	if h.SessionsWithWarnings, h.SessionsFailed, err = s.store.Health(r.Context(), id); err != nil {
+	h, err := s.store.Health(r.Context(), id)
+	if err != nil {
 		s.internal(w, r, err)
 		return
 	}

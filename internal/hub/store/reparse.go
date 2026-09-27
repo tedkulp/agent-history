@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+
+	"github.com/tedkulp/agent-history/protocol"
 )
 
 // reparseEnqueue queues the Sessions a SELECT of ids returns at re-parse
@@ -124,8 +126,9 @@ type ReparseScope struct {
 	SessionID int64
 }
 
-// ErrNoSession is returned by Reparse for a Session id that doesn't exist.
-var ErrNoSession = errors.New("no such Session")
+// ErrNoSession is returned by Reparse for a Session id that doesn't exist or
+// has nothing to parse yet, such as a stub.
+var ErrNoSession = errors.New("no such Session with a main Raw record")
 
 // Reparse queues the Sessions in scope at re-parse priority, including ones
 // that failed at the running parser version (hub.md §4.5). It returns how
@@ -162,9 +165,9 @@ func (s *Store) Reparse(ctx context.Context, scope ReparseScope) (int64, error) 
 	return n, tx.Commit()
 }
 
-// Reparsing counts the Sessions queued at re-parse priority, for the home
+// QueuedReparses counts the Sessions queued at re-parse priority, for the home
 // banner (hub.md §4.7).
-func (s *Store) Reparsing(ctx context.Context) (int, error) {
+func (s *Store) QueuedReparses(ctx context.Context) (int, error) {
 	var n int
 	err := s.read.QueryRowContext(ctx, `SELECT count(*) FROM parse_queue WHERE priority = 1`).Scan(&n)
 	return n, err
@@ -172,10 +175,10 @@ func (s *Store) Reparsing(ctx context.Context) (int, error) {
 
 // Health counts a Machine's Sessions with Parse warnings and those whose
 // parse failed (protocol.md §2.3).
-func (s *Store) Health(ctx context.Context, machineID string) (withWarnings, failed int, err error) {
+func (s *Store) Health(ctx context.Context, machineID string) (protocol.Health, error) {
 	var w, f sql.NullInt64
-	err = s.read.QueryRowContext(ctx, `
+	err := s.read.QueryRowContext(ctx, `
 		SELECT sum(`+hasParseWarnings+`), sum(s.parse_status = 'failed')
 		FROM sessions s WHERE s.machine_id = ?`, machineID).Scan(&w, &f)
-	return int(w.Int64), int(f.Int64), err
+	return protocol.Health{SessionsWithWarnings: int(w.Int64), SessionsFailed: int(f.Int64)}, err
 }
