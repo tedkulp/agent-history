@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -25,6 +26,7 @@ import (
 	"github.com/tedkulp/agent-history/internal/collector/drift"
 	"github.com/tedkulp/agent-history/internal/collector/exclude"
 	"github.com/tedkulp/agent-history/internal/collector/hubclient"
+	"github.com/tedkulp/agent-history/internal/collector/logfile"
 	"github.com/tedkulp/agent-history/internal/collector/reconcile"
 	"github.com/tedkulp/agent-history/internal/collector/runner"
 	"github.com/tedkulp/agent-history/internal/collector/service"
@@ -108,6 +110,8 @@ func run() error {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(log)
+	rotateLog := logRotation(dir, log)
+	rotateLog()
 	for _, k := range cfg.Unknown {
 		log.Warn("unknown config key ignored", "key", k)
 	}
@@ -115,9 +119,12 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if installed, outdated, err := service.Outdated(newServiceManager(os.Getenv, home).Path()); err == nil && installed && outdated {
+	rc.OnRescan = rotateLog
+	svcPath := newServiceManager(os.Getenv, home).Path()
+	if installed, outdated, err := service.Outdated(svcPath); err == nil && installed && outdated {
 		log.Warn("service definition outdated, run `agent-history service install`")
 	}
+	rc.CheckVersion = versionCheck(svcPath, log)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -140,6 +147,43 @@ func run() error {
 	stop()
 	<-served
 	return err
+}
+
+// logRotation returns what rotates collector.log on macOS, where launchd
+// points stderr at it and never rotates it (collector.md §4.10). It does
+// nothing elsewhere, or when stderr is not that file.
+func logRotation(dir string, log *slog.Logger) func() {
+	if runtime.GOOS != "darwin" {
+		return func() {}
+	}
+	r := logfile.Stderr(filepath.Join(dir, "collector.log"))
+	if r == nil {
+		return func() {}
+	}
+	return func() {
+		if rotated, err := r.Rotate(); err != nil {
+			log.Warn("rotating the log", "path", r.Path, "err", err)
+		} else if rotated {
+			log.Info("rotated the log", "path", r.Path)
+		}
+	}
+}
+
+// versionCheck runs the installed service's shim with `version`, so the
+// runner can restart into a new version after `mise upgrade` (collector.md
+// §4.9). Without an installed service there is nothing to restart it, so
+// there is no check.
+func versionCheck(svcPath string, log *slog.Logger) func(context.Context) (string, error) {
+	shim, err := service.InstalledShim(svcPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		log.Info("no service installed, not checking for new versions")
+		return nil
+	}
+	if err != nil {
+		log.Warn("reading the service definition, not checking for new versions", "err", err)
+		return nil
+	}
+	return func(ctx context.Context) (string, error) { return service.ShimVersion(ctx, shim) }
 }
 
 // runnerConfig sets up a Run, or a one-shot sync, from cfg.

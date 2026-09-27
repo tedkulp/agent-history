@@ -363,3 +363,46 @@ func TestOutdatedUntilReinstalled(t *testing.T) {
 		})
 	}
 }
+
+func TestInstalledShimRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	for _, shim := range []string{
+		"/Users/ted/.local/share/mise/shims/agent-history",
+		"/Users/a&b/<shims>/agent-history",
+		`/home/ted/my tools/100%/$bin/"q"\agent-history`,
+	} {
+		d := Definition{Shim: shim, Home: "/h", LogPath: "/h/collector.log"}
+		for name, b := range map[string][]byte{"a.plist": Plist(d), "a.service": Unit(d)} {
+			p := filepath.Join(dir, name)
+			os.WriteFile(p, b, 0o644)
+			if got, err := InstalledShim(p); err != nil || got != shim {
+				t.Fatalf("%s: shim %q, %v; want %q", name, got, err, shim)
+			}
+		}
+	}
+	if _, err := InstalledShim(filepath.Join(dir, "missing")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("missing definition: err %v, want ErrNotExist", err)
+	}
+	bad := filepath.Join(dir, "bad.service")
+	os.WriteFile(bad, []byte("[Service]\n"), 0o644)
+	if _, err := InstalledShim(bad); err == nil {
+		t.Fatal("no error for a definition without ExecStart")
+	}
+}
+
+func TestShimVersion(t *testing.T) {
+	dir := t.TempDir()
+	shim := filepath.Join(dir, "agent-history")
+	os.WriteFile(shim, []byte("#!/bin/sh\n[ \"$1\" = version ] && echo 0.4.0\n"), 0o755)
+	if v, err := ShimVersion(context.Background(), shim); err != nil || v != "0.4.0" {
+		t.Fatalf("version %q, %v", v, err)
+	}
+	failing := filepath.Join(dir, "failing")
+	os.WriteFile(failing, []byte("#!/bin/sh\necho boom >&2\nexit 3\n"), 0o755)
+	if _, err := ShimVersion(context.Background(), failing); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("err %v, want the shim's stderr", err)
+	}
+	if _, err := ShimVersion(context.Background(), filepath.Join(dir, "missing")); err == nil {
+		t.Fatal("no error for a missing shim")
+	}
+}

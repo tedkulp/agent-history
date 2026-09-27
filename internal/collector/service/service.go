@@ -206,6 +206,113 @@ func Outdated(path string) (installed, outdated bool, err error) {
 	return true, v < TemplateVersion, nil
 }
 
+// InstalledShim reads the shim path from the definition at path, the
+// binary the service runs. It returns an error wrapping fs.ErrNotExist when
+// no definition is installed.
+func InstalledShim(path string) (string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var shim string
+	var ok bool
+	if strings.HasSuffix(path, ".plist") {
+		shim, ok = plistShim(b)
+	} else {
+		shim, ok = unitShim(b)
+	}
+	if !ok {
+		return "", fmt.Errorf("no program in %s", path)
+	}
+	return shim, nil
+}
+
+// plistShim is the first string of ProgramArguments.
+func plistShim(b []byte) (string, bool) {
+	dec := xml.NewDecoder(bytes.NewReader(b))
+	dec.Strict = false
+	var inKey, inString, afterKey bool
+	var key strings.Builder
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return "", false
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			switch t.Name.Local {
+			case "key":
+				inKey, afterKey = true, false
+				key.Reset()
+			case "string":
+				inString = afterKey
+				key.Reset()
+			}
+		case xml.CharData:
+			if inKey || inString {
+				key.Write(t)
+			}
+		case xml.EndElement:
+			switch {
+			case inKey:
+				inKey = false
+				afterKey = key.String() == "ProgramArguments"
+			case inString:
+				return key.String(), true
+			}
+		}
+	}
+}
+
+// unitShim is the first word of ExecStart, undoing Unit's quoting.
+func unitShim(b []byte) (string, bool) {
+	for line := range strings.Lines(string(b)) {
+		v, ok := strings.CutPrefix(strings.TrimRight(line, "\r\n"), "ExecStart=")
+		if !ok {
+			continue
+		}
+		var word string
+		if rest, quoted := strings.CutPrefix(v, `"`); quoted {
+			var w strings.Builder
+			for i := 0; i < len(rest); i++ {
+				switch c := rest[i]; {
+				case c == '\\' && i+1 < len(rest):
+					i++
+					w.WriteByte(rest[i])
+				case c == '"':
+					word, ok = w.String(), true
+					i = len(rest)
+				default:
+					w.WriteByte(c)
+				}
+			}
+			if !ok {
+				return "", false
+			}
+		} else {
+			word, _, _ = strings.Cut(v, " ")
+		}
+		word = strings.ReplaceAll(word, "$$", "$")
+		return strings.ReplaceAll(word, "%%", "%"), word != ""
+	}
+	return "", false
+}
+
+// ShimVersion runs `<shim> version` and returns what it prints.
+func ShimVersion(ctx context.Context, shim string) (string, error) {
+	cmd := exec.CommandContext(ctx, shim, "version")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return "", fmt.Errorf("%s version: %w: %s", shim, err, msg)
+		}
+		return "", fmt.Errorf("%s version: %w", shim, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // RunFunc runs a command and returns its combined output.
 type RunFunc func(ctx context.Context, name string, args ...string) ([]byte, error)
 

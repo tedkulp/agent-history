@@ -62,6 +62,16 @@ type Config struct {
 	UpgradeRetry time.Duration // 1h between retries after a 426 (protocol.md §4.6)
 	MaxUploads   int           // 4 in flight across all records
 
+	// CheckVersion, when set, runs `<shim> version` on each rescan. When it
+	// prints a version other than Info.CollectorVersion, Run drains for up
+	// to RestartDrain, writes the cache and returns nil, so that the service
+	// manager restarts the Collector on the new binary (collector.md §4.9).
+	CheckVersion   func(context.Context) (string, error)
+	VersionTimeout time.Duration // 10s for one CheckVersion
+	RestartDrain   time.Duration // 30s for in-flight uploads before a restart
+	// OnRescan, when set, runs on the Run goroutine at each rescan.
+	OnRescan func()
+
 	// firstSync waits on the startup reconcile (see Once).
 	firstSync *syncWaiter
 }
@@ -80,6 +90,8 @@ func (c *Config) setDefaults() {
 	def(&c.BackoffMin, time.Second)
 	def(&c.BackoffMax, 5*time.Minute)
 	def(&c.UpgradeRetry, time.Hour)
+	def(&c.VersionTimeout, 10*time.Second)
+	def(&c.RestartDrain, 30*time.Second)
 	if c.MaxUploads == 0 {
 		c.MaxUploads = 4
 	}
@@ -180,12 +192,23 @@ type runner struct {
 	syncQueued  []*syncWaiter
 	syncRunning []*syncWaiter
 
+	checkingVersion bool
+	versions        chan versionCheck
+
 	results    chan result
 	reconciled chan reconciled
 }
 
+// versionCheck is what CheckVersion reported.
+type versionCheck struct {
+	version string
+	err     error
+}
+
 // Run ships changes to the Hub until ctx is cancelled, then drains in-flight
-// uploads for up to DrainTimeout, writes the cache and returns nil.
+// uploads for up to DrainTimeout, writes the cache and returns nil. It does
+// the same, draining for up to RestartDrain, when CheckVersion finds a new
+// version.
 func Run(ctx context.Context, cfg Config) error {
 	cfg.setDefaults()
 	r := &runner{
@@ -206,6 +229,7 @@ func Run(ctx context.Context, cfg Config) error {
 		uploadErr:     map[string]*status.Failure{},
 		results:       make(chan result, cfg.MaxUploads),
 		reconciled:    make(chan reconciled, 1),
+		versions:      make(chan versionCheck, 1),
 		lastSave:      time.Now(),
 	}
 	if cfg.firstSync != nil {
@@ -235,6 +259,9 @@ func Run(ctx context.Context, cfg Config) error {
 	// ends them once the drain times out.
 	uploadCtx, cancelUploads := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancelUploads()
+	// workCtx ends with ctx, or when a restart stops taking new work.
+	workCtx, stopWork := context.WithCancel(ctx)
+	defer stopWork()
 
 	r.discover()
 	r.updateWatches()
@@ -247,7 +274,7 @@ func Run(ctx context.Context, cfg Config) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return r.shutdown(cancelUploads)
+			return r.shutdown(cancelUploads, r.DrainTimeout)
 		case ev, ok := <-events:
 			if !ok {
 				events = nil
@@ -267,10 +294,19 @@ func Run(ctx context.Context, cfg Config) error {
 		case fn := <-controls:
 			fn(r)
 		case <-rescan.C:
+			if r.OnRescan != nil {
+				r.OnRescan()
+			}
 			r.rescan()
+			r.checkVersion(workCtx)
+		case vc := <-r.versions:
+			if r.newVersion(vc) {
+				stopWork()
+				return r.shutdown(cancelUploads, r.RestartDrain)
+			}
 		case <-wake.C:
 		}
-		if next := r.step(ctx, uploadCtx, time.Now()); next.IsZero() {
+		if next := r.step(workCtx, uploadCtx, time.Now()); next.IsZero() {
 			wake.Stop()
 		} else {
 			wake.Reset(time.Until(next))
@@ -819,13 +855,44 @@ func (r *runner) saveCache() {
 	}
 }
 
-// shutdown stops taking new work, waits up to DrainTimeout for in-flight
-// uploads (and a running reconcile's current record), then writes the cache.
-func (r *runner) shutdown(cancelUploads context.CancelFunc) error {
+// checkVersion starts a CheckVersion unless one is still running.
+func (r *runner) checkVersion(ctx context.Context) {
+	if r.CheckVersion == nil || r.checkingVersion {
+		return
+	}
+	r.checkingVersion = true
+	go func() {
+		ctx, cancel := context.WithTimeout(ctx, r.VersionTimeout)
+		defer cancel()
+		v, err := r.CheckVersion(ctx)
+		r.versions <- versionCheck{strings.TrimSpace(v), err}
+	}()
+}
+
+// newVersion reports whether vc found a version to restart into.
+func (r *runner) newVersion(vc versionCheck) bool {
+	r.checkingVersion = false
+	if vc.err == nil && vc.version == "" {
+		vc.err = errors.New("printed no version")
+	}
+	switch {
+	case vc.err != nil:
+		r.Log.Warn("checking for a new version, retrying on the next rescan", "err", vc.err)
+		return false
+	case vc.version == r.Info.CollectorVersion:
+		return false
+	}
+	r.Log.Info(fmt.Sprintf("new version %s found, restarting", vc.version), "version", r.Info.CollectorVersion, "new_version", vc.version)
+	return true
+}
+
+// shutdown stops taking new work, waits up to drain for in-flight uploads
+// (and a running reconcile's current record), then writes the cache.
+func (r *runner) shutdown(cancelUploads context.CancelFunc, drain time.Duration) error {
 	if len(r.inFlight) > 0 || r.reconciling {
 		r.Log.Info("shutting down, draining uploads", "in_flight", len(r.inFlight), "reconciling", r.reconciling)
 	}
-	deadline := time.After(r.DrainTimeout)
+	deadline := time.After(drain)
 	for len(r.inFlight) > 0 || r.reconciling {
 		select {
 		case res := <-r.results:
