@@ -161,15 +161,24 @@ func (c *Client) Ping(ctx context.Context) error {
 	err = c.do(req, http.StatusOK, nil)
 	var tooOld *TooOldError
 	if errors.As(err, &tooOld) {
-		// A 426 to HEAD has no body. The Hub answers GET with the same
-		// 426, before any manifest is built, so ask again for the minimum.
-		if req, err2 := c.newRequest(ctx, http.MethodGet, "/manifest", nil); err2 == nil {
-			if err2 := c.do(req, http.StatusOK, nil); errors.As(err2, &tooOld) && tooOld.MinVersion != "" {
-				return tooOld
-			}
-		}
+		return c.tooOldWithMinimum(ctx, tooOld)
 	}
 	return err
+}
+
+// tooOldWithMinimum fills in the minimum a 426 to HEAD couldn't carry. The
+// Hub answers GET with the same 426 before building any manifest, so the
+// GET costs no more than the HEAD.
+func (c *Client) tooOldWithMinimum(ctx context.Context, headErr *TooOldError) error {
+	req, err := c.newRequest(ctx, http.MethodGet, "/manifest", nil)
+	if err != nil {
+		return headErr
+	}
+	var tooOld *TooOldError
+	if err := c.do(req, http.StatusOK, nil); errors.As(err, &tooOld) && tooOld.MinVersion != "" {
+		return tooOld
+	}
+	return headErr
 }
 
 // Append sends data as an append at offset. prefixSha256 is the hex sha256

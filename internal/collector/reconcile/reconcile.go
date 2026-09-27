@@ -65,9 +65,10 @@ var ErrStopped = errors.New("reconcile stopped")
 // ignoring the cache, and rewrites the cache from the results.
 //
 // Per-record errors are logged and counted in Result. The returned error is
-// for failures that stop the whole reconcile, including a transient Hub
-// error on any record (hubclient.Transient), after which the caller backs
-// off and reconciles again, and a 426 (hubclient.TooOldError).
+// for failures that stop the whole reconcile: a transient Hub error on any
+// record (hubclient.Transient), after which the caller backs off and
+// reconciles again, or a 426 (hubclient.TooOldError), after which it waits
+// for the Hub to accept this Collector.
 func Reconcile(ctx context.Context, hub Hub, info protocol.MachineInfo, sources []Source, opts Options) (Result, error) {
 	log := opts.Log
 	if log == nil {

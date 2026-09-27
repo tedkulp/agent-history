@@ -85,6 +85,7 @@ func TestFloor(t *testing.T) {
 		{"dev Collector, dev Hub", Floor{protocol.DevVersion, "0.1.0"}, protocol.DevVersion, http.StatusNoContent},
 		{"old Collector, dev Hub", Floor{protocol.DevVersion, "0.4.0"}, "0.1.0", http.StatusNoContent},
 		{"zero Floor skips the check", Floor{}, "", http.StatusNoContent},
+		{"no minimum skips the check", Floor{"0.4.0", ""}, "0.1.0", http.StatusNoContent},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := newFloorServer(t, tc.floor, slog.New(slog.DiscardHandler))

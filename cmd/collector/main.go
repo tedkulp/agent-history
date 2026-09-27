@@ -278,15 +278,14 @@ func localReport(ctx context.Context, cfg *config.Config, home string) status.Re
 	}
 	var se *hubclient.StatusError
 	var tooOld *hubclient.TooOldError
-	errors.As(err, &tooOld)
-	reachable := err == nil || tooOld != nil || errors.As(err, &se) && se.StatusCode < 500
-	rep.Hub.Reachable = &reachable
-	switch {
-	case tooOld != nil:
-		rep.Hub.UpgradeRequired = true
-		rep.Hub.MinCollectorVersion = tooOld.MinVersion
-	case err != nil:
-		rep.Hub.LastError = status.NewFailure(err, now)
+	if errors.As(err, &tooOld) {
+		rep.Hub.SetUpgradeRequired(tooOld.MinVersion)
+	} else {
+		reachable := err == nil || errors.As(err, &se) && se.StatusCode < 500
+		rep.Hub.Reachable = &reachable
+		if err != nil {
+			rep.Hub.LastError = status.NewFailure(err, now)
+		}
 	}
 	for _, a := range adapters {
 		sc := cfg.Sources[a.ID()]

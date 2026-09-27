@@ -34,8 +34,8 @@ type server struct {
 	floor Floor
 }
 
-// Floor is the minimum Collector version check (protocol.md §4.6). The zero
-// Floor skips the check, as a dev Hub does.
+// Floor is the minimum Collector version check (protocol.md §4.6). A Floor
+// without both fields skips the check, as a dev Hub does.
 type Floor struct {
 	// HubVersion is the Hub's own version. A dev Hub (protocol.DevVersion)
 	// accepts every Collector.
@@ -46,7 +46,7 @@ type Floor struct {
 
 // allows reports whether a Collector sending userAgent may use the API.
 func (f Floor) allows(userAgent string) bool {
-	if f.HubVersion == "" || f.HubVersion == protocol.DevVersion {
+	if f.HubVersion == "" || f.HubVersion == protocol.DevVersion || f.Min == "" {
 		return true
 	}
 	v := protocol.CollectorVersion(userAgent)

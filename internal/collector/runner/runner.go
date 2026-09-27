@@ -408,8 +408,11 @@ func (r *runner) handleResult(res result) {
 		delete(r.uploadErr, src)
 	case res.transient:
 		r.hubErr = status.NewFailure(res.err, now)
-	case res.tooOld != nil:
+	case res.tooOld != nil && !r.needReconcile:
+		// Other in-flight uploads may get the same 426; the first one
+		// decides.
 		r.upgradeRequired(res.tooOld)
+	case res.tooOld != nil:
 	case res.err != nil:
 		r.uploadErr[src] = status.NewFailure(res.err, now)
 	}
@@ -483,6 +486,12 @@ func (r *runner) handleReconciled(rc reconciled) {
 		// Shutting down.
 	case errors.As(rc.err, &tooOld):
 		r.upgradeRequired(tooOld)
+	case r.tooOld != nil:
+		// The hourly retry hit an outage: still too old, as far as we
+		// know, so keep to the hourly cadence rather than the backoff.
+		r.hubErr = status.NewFailure(rc.err, time.Now())
+		r.nextReconcile = time.Now().Add(r.UpgradeRetry)
+		r.Log.Warn("retry after 426 failed", "err", rc.err, "retry_in", r.UpgradeRetry)
 	default:
 		r.contacted = true
 		r.hubErr = status.NewFailure(rc.err, time.Now())
@@ -491,11 +500,17 @@ func (r *runner) handleReconciled(rc reconciled) {
 	}
 }
 
-// upgradeRequired stops shipping after a 426 and retries the reconcile,
-// which starts with PUT /machines/{id}, after UpgradeRetry (protocol.md §4.6).
+// upgradeRequired stops shipping after a 426 and retries after UpgradeRetry
+// (protocol.md §4.6). The retry is a full reconcile: it starts with
+// PUT /machines/{id} and goes on to reconcile only once that succeeds. A
+// sync retries at once.
 func (r *runner) upgradeRequired(e *hubclient.TooOldError) {
-	r.Log.Error("hub requires a newer Collector, stopped uploading until it is upgraded (mise upgrade)",
-		"min_collector_version", e.MinVersion, "retry_in", r.UpgradeRetry)
+	if r.tooOld == nil || r.tooOld.MinVersion != e.MinVersion {
+		r.Log.Error("hub requires a newer Collector, stopped uploading until it is upgraded (mise upgrade)",
+			"min_collector_version", e.MinVersion, "retry_in", r.UpgradeRetry)
+	} else {
+		r.Log.Info("hub still requires a newer Collector", "min_collector_version", e.MinVersion, "retry_in", r.UpgradeRetry)
+	}
 	r.tooOld = e
 	r.contacted = true
 	r.hubErr = nil

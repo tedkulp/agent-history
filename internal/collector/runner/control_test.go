@@ -62,6 +62,15 @@ func (g *gaugeHub) lastPut() protocol.MachineInfo {
 	return g.puts[len(g.puts)-1]
 }
 
+func (f *fixture) status(c *Control) status.Report {
+	f.t.Helper()
+	rep, err := c.Status(ctx5s(f.t))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return rep
+}
+
 func ctx5s(t *testing.T) context.Context {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)

@@ -45,6 +45,15 @@ type Hub struct {
 	MinCollectorVersion string `json:"min_collector_version,omitempty"`
 }
 
+// SetUpgradeRequired records a 426 from the Hub, which answered and so is
+// reachable. min is the minimum it asked for, or "".
+func (h *Hub) SetUpgradeRequired(min string) {
+	reachable := true
+	h.Reachable = &reachable
+	h.UpgradeRequired = true
+	h.MinCollectorVersion = min
+}
+
 // Source is one Source's line in the report.
 type Source struct {
 	ID       string   `json:"id"`

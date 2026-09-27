@@ -9,15 +9,6 @@ import (
 	"github.com/tedkulp/agent-history/internal/collector/status"
 )
 
-func (f *fixture) status(c *Control) status.Report {
-	f.t.Helper()
-	rep, err := c.Status(ctx5s(f.t))
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	return rep
-}
-
 func TestTooOldAtStartStopsAndRetriesHourly(t *testing.T) {
 	f := newFixture(t)
 	f.write(key, "{\"n\":1}\n")
@@ -83,5 +74,29 @@ func TestSyncWhileTooOldReportsIt(t *testing.T) {
 	var tooOld *hubclient.TooOldError
 	if !errors.As(err, &tooOld) || tooOld.MinVersion != "0.5.0" {
 		t.Fatalf("sync err = %v, want TooOldError", err)
+	}
+}
+
+func TestOutageWhileTooOldKeepsHourlyRetry(t *testing.T) {
+	f := newFixture(t)
+	f.tooOld.Store(true)
+	cfg := f.config()
+	cfg.Control = NewControl()
+	f.start(cfg)
+	waitFor(t, 5*time.Second, "the 426", func() bool { return f.status(cfg.Control).Hub.UpgradeRequired })
+
+	// A sync retries at once and hits an outage.
+	f.down.Store(true)
+	if _, err := cfg.Control.Sync(ctx5s(t), func(string) {}); !hubclient.Transient(err) {
+		t.Fatalf("sync err = %v, want a transient error", err)
+	}
+	before := f.requests.Load()
+	// Far longer than the outage backoff (BackoffMin 20ms).
+	time.Sleep(300 * time.Millisecond)
+	if n := f.requests.Load() - before; n != 0 {
+		t.Fatalf("%d requests after the failed retry, want none before the hour is up", n)
+	}
+	if !f.status(cfg.Control).Hub.UpgradeRequired {
+		t.Fatal("upgrade line dropped after an outage")
 	}
 }
