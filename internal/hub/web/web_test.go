@@ -569,6 +569,8 @@ func TestTranscriptShellCommands(t *testing.T) {
 		`<div class="marker shell_command">$ true &amp;&amp;` + "\n  " + strings.Repeat("z", 130) + `</div>`,
 		`<summary>$ cat big</summary><pre class="out">` + strings.Repeat("x", 4<<10) + `</pre><p class="dim">… 2.0 KB more</p>`,
 		`<a href="#m-u1">Real prompt <span class="n">`,
+		// The row isn't itself a .marker, or it would get the pill's style.
+		`<div class="msg user marker-row" id="m-b1">`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("transcript lacks %q", want)

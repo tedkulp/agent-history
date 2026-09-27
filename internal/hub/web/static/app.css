@@ -68,7 +68,7 @@ a.img{display:block;max-width:78%;margin:3px 0} a.img img{max-width:100%;max-hei
 
 /* Drift banners, markers, thinking, unknown Parts and attachments. */
 .banner{display:block;background:var(--warn);border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin-bottom:8px;color:var(--ink);font-size:13px}
-.msg.marker{align-items:center}
+.msg.marker-row{align-items:center}
 .marker{font-size:12px;color:var(--dim);background:var(--tool);padding:2px 12px;border-radius:999px;margin:8px 0;max-width:78%;overflow-wrap:anywhere}
 details.marker{border-radius:12px} details.marker>summary{cursor:pointer;text-align:center}
 details.marker .bubble{max-width:none;margin:6px 0 4px;color:var(--ink);font-size:13px}

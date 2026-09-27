@@ -1423,7 +1423,7 @@ func transcriptPage(h headerView, outline []outlineEntry, children []childEntry,
 				return templ_7745c5c3_Err
 			}
 			for _, m := range msgs {
-				var templ_7745c5c3_Var74 = []any{"msg", m.Role, templ.KV("marker", m.Marker)}
+				var templ_7745c5c3_Var74 = []any{"msg", m.Role, templ.KV("marker-row", m.Marker)}
 				templ_7745c5c3_Err = templ.RenderCSSItems(ctx, templ_7745c5c3_Buffer, templ_7745c5c3_Var74...)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
@@ -1448,7 +1448,7 @@ func transcriptPage(h headerView, outline []outlineEntry, children []childEntry,
 				var templ_7745c5c3_Var76 string
 				templ_7745c5c3_Var76, templ_7745c5c3_Err = templ.ResolveAttributeValue("m-" + m.ID)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages.templ`, Line: 230, Col: 80}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages.templ`, Line: 230, Col: 84}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var76)
 				if templ_7745c5c3_Err != nil {

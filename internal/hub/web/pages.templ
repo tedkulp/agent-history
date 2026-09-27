@@ -227,7 +227,7 @@ templ transcriptPage(h headerView, outline []outlineEntry, children []childEntry
 					}
 				</div>
 				for _, m := range msgs {
-					<div class={ "msg", m.Role, templ.KV("marker", m.Marker) } id={ "m-" + m.ID }>
+					<div class={ "msg", m.Role, templ.KV("marker-row", m.Marker) } id={ "m-" + m.ID }>
 						for _, c := range m.Chunks {
 							@chunk(c)
 						}
