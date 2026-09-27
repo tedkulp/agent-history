@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -55,6 +56,7 @@ func New(s *store.Store, b *live.Broadcaster, log *slog.Logger) http.Handler {
 	static, _ := fs.Sub(staticFS, "static")
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", srv.feed)
+	mux.HandleFunc("GET /events", srv.feedEvents)
 	mux.HandleFunc("GET /sessions/{id}", srv.transcript)
 	mux.HandleFunc("GET /sessions/{id}/events", srv.events)
 	mux.HandleFunc("GET /sessions/{id}/messages", srv.transcriptTail)
@@ -125,6 +127,8 @@ type feedView struct {
 	Filtered bool
 	Days     []feedDay
 	More     string // "Load more" URL, "" on the last page
+	Events   string // where the first page hears of live Sessions; "" on later pages
+	Reload   string // the first page, which the "Sessions updated" pill reloads
 }
 
 // noProject is the project param value for "No project".
@@ -135,6 +139,24 @@ type feedParams struct {
 	Q                        string // the search box input
 	Machine, Project, Source string
 	Warnings                 bool
+}
+
+// feedParamsFrom reads the feed's or search's state from its URL query. A
+// Project needs its Machine.
+func feedParamsFrom(q url.Values) feedParams {
+	p := feedParams{Q: q.Get("q"), Machine: q.Get("machine"), Project: q.Get("project"), Source: q.Get("source"), Warnings: q.Get("warnings") == "1"}
+	if p.Machine == "" {
+		p.Project = ""
+	}
+	return p
+}
+
+// shows reports whether the feed with p's chips lists the live Session s.
+func (p feedParams) shows(s live.FeedSession) bool {
+	return (p.Machine == "" || p.Machine == s.Machine) &&
+		(p.Source == "" || p.Source == s.Source) &&
+		(p.Project == "" || p.Project == projectParam(s.Project)) &&
+		(!p.Warnings || s.Warnings)
 }
 
 func (p feedParams) filter() store.FeedFilter {
@@ -203,10 +225,7 @@ func projectParam(cwd string) string {
 
 func (s *server) feed(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	p := feedParams{Q: q.Get("q"), Machine: q.Get("machine"), Project: q.Get("project"), Source: q.Get("source"), Warnings: q.Get("warnings") == "1"}
-	if p.Machine == "" {
-		p.Project = ""
-	}
+	p := feedParamsFrom(q)
 	// Input that leaves no terms shows the feed (hub.md §3.7).
 	if terms := store.ParseQuery(p.Q); len(terms) > 0 {
 		s.search(w, r, p, terms)
@@ -235,6 +254,11 @@ func (s *server) feed(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("HX-Request") == "true" {
 		s.render(w, r, http.StatusOK, feedRows(v))
 		return
+	}
+	if f.Before == nil {
+		// Input that left no terms isn't worth keeping on reload.
+		v.Reload = p.withQ("").url()
+		v.Events = "/events" + strings.TrimPrefix(v.Reload, "/")
 	}
 	if v.Chips, err = s.chips(r.Context(), p); err != nil {
 		s.internal(w, r, err)
@@ -567,13 +591,8 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	}
 	changed, stop := s.live.Subscribe(id)
 	defer stop()
-	rc := http.NewResponseController(w)
-	h := w.Header()
-	h.Set("Content-Type", "text/event-stream")
-	h.Set("Cache-Control", "no-cache")
-	h.Set("X-Accel-Buffering", "no")
-	w.WriteHeader(http.StatusOK)
-	if rc.Flush() != nil {
+	send, ok := startStream(w)
+	if !ok {
 		return
 	}
 	beat := time.NewTicker(heartbeatEvery)
@@ -589,15 +608,101 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 			}
 			msg = "event: changed\ndata: changed\n\n"
 		case <-beat.C:
-			msg = ": heartbeat\n\n"
+			msg = heartbeat
 		}
-		if _, err := io.WriteString(w, msg); err != nil {
-			return
-		}
-		if rc.Flush() != nil {
+		if !send(msg) {
 			return
 		}
 	}
+}
+
+// feedDebounce is the least time between two events on one feed's stream.
+var feedDebounce = 2 * time.Second
+
+// feedEvents streams a "changed" event naming the Sessions, among those the
+// feed with the query's chips lists, that were parsed from live data since
+// the last event, at most one event per feedDebounce (hub.md §4.7). It reads
+// nothing from the store, so an idle open feed costs no queries.
+func (s *server) feedEvents(w http.ResponseWriter, r *http.Request) {
+	p := feedParamsFrom(r.URL.Query())
+	sub, stop := s.live.SubscribeFeed()
+	defer stop()
+	send, ok := startStream(w)
+	if !ok {
+		return
+	}
+	beat := time.NewTicker(heartbeatEvery)
+	defer beat.Stop()
+	var (
+		last time.Time
+		wait <-chan time.Time // set while an event waits out the debounce
+	)
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case _, open := <-sub.Ready():
+			if !open {
+				return // shutting down
+			}
+			if wait != nil {
+				continue
+			}
+			if d := feedDebounce - time.Since(last); d > 0 {
+				wait = time.After(d)
+				continue
+			}
+		case <-wait:
+			wait = nil
+		case <-beat.C:
+			if !send(heartbeat) {
+				return
+			}
+			continue
+		}
+		var ids []int64
+		for _, fs := range sub.Take() {
+			if p.shows(fs) {
+				ids = append(ids, fs.ID)
+			}
+		}
+		if len(ids) == 0 {
+			continue
+		}
+		slices.Sort(ids)
+		data := make([]string, len(ids))
+		for i, id := range ids {
+			data[i] = strconv.FormatInt(id, 10)
+		}
+		last = time.Now()
+		if !send("event: changed\ndata: " + strings.Join(data, ",") + "\n\n") {
+			return
+		}
+	}
+}
+
+// heartbeat is the comment an event stream sends every heartbeatEvery.
+const heartbeat = ": heartbeat\n\n"
+
+// startStream answers with an event stream and returns a function that sends
+// and flushes one message, reporting whether the client is still there. It
+// sets X-Accel-Buffering: no so a proxy passes each message on at once.
+func startStream(w http.ResponseWriter) (send func(msg string) bool, ok bool) {
+	rc := http.NewResponseController(w)
+	h := w.Header()
+	h.Set("Content-Type", "text/event-stream")
+	h.Set("Cache-Control", "no-cache")
+	h.Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	if rc.Flush() != nil {
+		return nil, false
+	}
+	return func(msg string) bool {
+		if _, err := io.WriteString(w, msg); err != nil {
+			return false
+		}
+		return rc.Flush() == nil
+	}, true
 }
 
 // transcriptView turns a Session's header and Messages into what the

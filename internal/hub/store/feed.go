@@ -335,15 +335,29 @@ func (s *Store) TranscriptTail(ctx context.Context, id int64, after string, coun
 	return h, msgs, true, nil
 }
 
-// ParentSession returns a Session's parent id, or ok=false for a top-level
-// Session.
-func (s *Store) ParentSession(ctx context.Context, id int64) (parent int64, ok bool, err error) {
+// LiveSession is who hears of a Session's live parse (hub.md §4.5): its
+// parent's Transcript pages, and open feeds whose chips match it.
+type LiveSession struct {
+	Parent     int64 // 0 for a top-level Session
+	InFeed     bool  // the home feed lists it
+	MachineID  string
+	Source     string
+	ProjectCwd string // "" = No project
+	Warnings   bool   // the "has warnings" chip matches it
+}
+
+// LiveSession loads what the worker publishes after a live parse, with ok
+// false for an unknown Session.
+func (s *Store) LiveSession(ctx context.Context, id int64) (l LiveSession, ok bool, err error) {
 	var p sql.NullInt64
-	err = s.read.QueryRowContext(ctx, `SELECT parent_session_id FROM sessions WHERE id = ?`, id).Scan(&p)
+	err = s.read.QueryRowContext(ctx, `
+		SELECT s.parent_session_id, `+feedVisible+`, s.machine_id, s.source, coalesce(s.project_cwd, ''), `+hasWarnings+`
+		FROM sessions s WHERE s.id = ?`, id).Scan(&p, &l.InFeed, &l.MachineID, &l.Source, &l.ProjectCwd, &l.Warnings)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, false, nil
+		return l, false, nil
 	}
-	return p.Int64, p.Valid, err
+	l.Parent = p.Int64
+	return l, err == nil, err
 }
 
 // HasTranscript reports whether a Session has a Transcript page: it exists

@@ -96,7 +96,7 @@ history.example.com {
 
 Run Caddy in the same compose project so it reaches the Hub as `hub`, and drop the Hub's `ports:` mapping so only Caddy is exposed. Collectors then use `hub_url = "https://history.example.com"`.
 
-Each open Transcript page keeps one connection to the Hub for live updates. Over plain HTTP/1.1 a browser allows about 6 connections per host, so with 6 Transcript tabs open a 7th page waits. Caddy serves HTTP/2 by default, which removes the limit.
+Each open Transcript page, and the feed's first page, keeps one connection to the Hub for live updates. Over plain HTTP/1.1 a browser allows about 6 connections per host, so with 6 such tabs open a 7th page waits. Caddy serves HTTP/2 by default, which removes the limit.
 
 ## Litestream (optional)
 

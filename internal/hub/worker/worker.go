@@ -127,17 +127,21 @@ func (w *Worker) RunOnce(ctx context.Context) (worked bool, nextAt int64, err er
 	return true, 0, nil
 }
 
-// publish tells the Session's open pages, and its parent's, whose Child
-// Session list may have gained it.
+// publish tells the Session's open pages, its parent's, whose Child Session
+// list may have gained it, and open feeds when the feed lists it.
 func (w *Worker) publish(ctx context.Context, sessionID int64) {
 	w.live.Publish(sessionID)
-	parent, ok, err := w.store.ParentSession(ctx, sessionID)
+	l, ok, err := w.store.LiveSession(ctx, sessionID)
 	if err != nil {
-		w.log.Warn("looking up parent to publish", "session", sessionID, "err", err)
+		w.log.Warn("looking up Session to publish", "session", sessionID, "err", err)
 		return
 	}
-	if ok {
-		w.live.Publish(parent)
+	switch {
+	case !ok:
+	case l.Parent != 0:
+		w.live.Publish(l.Parent)
+	case l.InFeed:
+		w.live.PublishFeed(live.FeedSession{ID: sessionID, Machine: l.MachineID, Source: l.Source, Project: l.ProjectCwd, Warnings: l.Warnings})
 	}
 }
 

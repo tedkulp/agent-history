@@ -88,3 +88,84 @@ func TestUnsubscribeAndClose(t *testing.T) {
 	}
 	b.Publish(1) // no panic on a closed broadcaster
 }
+
+func TestFeedSubscribersGetEachSessionOnceWithoutBlocking(t *testing.T) {
+	b := New()
+	f, stop := b.SubscribeFeed() // not read while the publishes run
+	defer stop()
+	f2, stop2 := b.SubscribeFeed()
+	defer stop2()
+	done := make(chan struct{})
+	go func() {
+		for i := range 1000 {
+			b.PublishFeed(FeedSession{ID: int64(i%3 + 1), Source: "codex"})
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("PublishFeed blocked on a subscriber that never reads")
+	}
+	if !received(f.Ready()) {
+		t.Fatal("no feed event")
+	}
+	if !empty(f.Ready()) {
+		t.Error("ready signals weren't coalesced into one")
+	}
+	got := map[int64]bool{}
+	for _, s := range f.Take() {
+		if got[s.ID] || s.Source != "codex" {
+			t.Errorf("Take repeated or garbled %+v", s)
+		}
+		got[s.ID] = true
+	}
+	if len(got) != 3 {
+		t.Errorf("Take = %v, want Sessions 1, 2 and 3", got)
+	}
+	if s := f.Take(); len(s) != 0 {
+		t.Errorf("a second Take = %v", s)
+	}
+	if !received(f2.Ready()) || len(f2.Take()) != 3 {
+		t.Error("the second subscriber missed Sessions")
+	}
+
+	// Transcript subscribers don't hear feed events, and vice versa.
+	c, stopC := b.Subscribe(1)
+	defer stopC()
+	b.PublishFeed(FeedSession{ID: 1})
+	if !empty(c) {
+		t.Error("a Transcript subscriber got a feed event")
+	}
+	if !received(f.Ready()) || len(f.Take()) != 1 {
+		t.Fatal("the feed event didn't arrive")
+	}
+	b.Publish(1)
+	if !empty(f.Ready()) {
+		t.Error("a feed subscriber got a Transcript event")
+	}
+}
+
+func TestFeedUnsubscribeAndClose(t *testing.T) {
+	b := New()
+	f, stop := b.SubscribeFeed()
+	stop()
+	stop()
+	b.PublishFeed(FeedSession{ID: 1})
+	if !empty(f.Ready()) {
+		t.Error("an unsubscribed feed got an event")
+	}
+
+	f2, stop2 := b.SubscribeFeed()
+	defer stop2()
+	b.Close()
+	if _, ok := <-f2.Ready(); ok {
+		t.Error("Close didn't close a feed subscriber")
+	}
+	f3, stop3 := b.SubscribeFeed()
+	defer stop3()
+	if _, ok := <-f3.Ready(); ok {
+		t.Error("SubscribeFeed after Close returned an open subscription")
+	}
+	b.PublishFeed(FeedSession{ID: 1})
+}

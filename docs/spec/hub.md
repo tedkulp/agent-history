@@ -90,6 +90,7 @@ All on one listener, plain HTTP.
 | Route | Serves |
 |---|---|
 | `GET /` | Home: the feed, or search results when `q` is set. Query params: `q`, `machine`, `project` (`-` = "No project"), `source`, `warnings=1`, `before` and `before_id` (feed cursor), `offset` (search paging: hits are ranked, not dated). |
+| `GET /events` | `text/event-stream` for the feed's first page: a `changed` event naming the Sessions the feed lists (with the chips in the query: `machine`, `project`, `source`, `warnings`) that were parsed from live data since the last event (§4.7) |
 | `GET /sessions/{id}` | A Transcript page. Optional `hl=<terms>` highlights search terms. Messages carry anchors `#m-<message id>`. |
 | `GET /sessions/{id}/events` | `text/event-stream`: a `changed` event each time the Session is parsed again from live data (§4.7). `404` for a stub or unknown id. |
 | `GET /sessions/{id}/messages?after=<message id>&count=<n>` | htmx fragment: what an open Transcript page needs to catch up after a re-parse (§4.7), or `409` when earlier Messages moved |
@@ -540,7 +541,7 @@ Running a job:
    - **Failure** (error or recovered panic): set `parse_status = 'failed'`, `parse_error`, `parse_attempted_version` = current. If `last_activity_at` is NULL (never parsed), set it to now, so the Session sorts in the feed. Leave the previous Transcript, search rows and warnings untouched.
    - Delete the queue row **only if its `enqueued_at` is unchanged** since step 1. If new data arrived meanwhile, keep the row and set its `not_before = now + 10 s`.
 4. After a Session's **first** successful parse, re-enqueue at priority 1 any Session that names it as parent and has an `orphan` warning, so a Child Session parsed before its parent clears its warning.
-5. After a successful save of a **priority 0** job, publish the Session, and its parent if it is a Child Session (whose Child Session list may have gained it), to the in-process broadcaster, which tells their open Transcript pages (§4.7). Priority 1 re-parses publish nothing, so a re-parse storm after a `parser_version` bump doesn't hit open tabs. Publishing never blocks the worker: each subscriber has a buffered channel of one, events coalesce, and a subscriber that isn't reading misses only duplicates.
+5. After a successful save of a **priority 0** job, publish the Session, and its parent if it is a Child Session (whose Child Session list may have gained it), to the in-process broadcaster, which tells their open Transcript pages (§4.7). A top-level Session the feed lists is also published to open feeds, with its Machine, Source, Project and whether it has warnings, so each feed matches it against its chips without a query. Priority 1 re-parses publish nothing, so a re-parse storm after a `parser_version` bump doesn't hit open tabs. Publishing never blocks the worker: each subscriber has a buffered channel of one, events coalesce, and a subscriber that isn't reading misses only duplicates.
 
 Only the delete+insert holds the single writer. An ingest ack waits for at most one Session's write, never for the backlog.
 
@@ -588,6 +589,10 @@ The UI is **search-first**: a search box over a feed of recent Sessions from eve
   - A Session whose parse failed and that never parsed successfully has no title or first prompt. Its row shows the native id and a **"parse failed"** badge, and links to its Transcript page, which shows only the failure note. So a parser bug can't hide a Session.
 - Each row: last-activity time, title, `first_prompt` (one line, truncated), a Source badge, and Machine › Project. The row links to `/sessions/{id}`.
 - 50 rows per page. A "Load more" button fetches the next page with htmx (`before=<last_activity_at of the last row>&before_id=<its id>`; the id breaks ties so paging neither skips nor repeats rows).
+- **Live updates**: the first page (no `before`) opens an `EventSource` on `/events` with its chips, and a "↑ N Sessions updated" pill appears above the feed when Sessions it lists are parsed from live data. The rows never move until the pill is clicked; it links to the first page with the same chips. "Load more" pages and search results don't listen.
+  - The stream sends `event: changed` with `data: <id>,<id>,…`, the Sessions since its last event, at most one event every **2 s**. Child Sessions, Sessions with no Messages, Sessions the chips hide and priority 1 re-parses send nothing. Heartbeat, flushing and shutdown work as on the Transcript page.
+  - N counts distinct Session ids from the events since the page loaded, so the same Session twice counts once.
+  - The stream reads nothing from the database, so an idle feed tab costs no queries; only clicking the pill refetches.
 - **Banners** above the feed:
   - **Re-parse**: "Re-parsing N Sessions…" while priority 1 rows remain in `parse_queue`. N is the current count.
   - **Drift**: one banner per `(source, source_version)` with warnings, e.g. "Codex 0.52: 14 Sessions have unrecognised data". It shows only when at least one Session active in the last **7 days** has warnings for that pair, so old noise fades. It links to `/?warnings=1&source=<source>`.

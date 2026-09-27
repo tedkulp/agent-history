@@ -156,3 +156,24 @@
     document.body.appendChild(b);
   }
 })();
+
+// Live feed (hub.md §4.7): the first page of the feed hears which of its
+// Sessions were parsed from live data and shows "↑ N Sessions updated", N
+// counting each Session once. The rows stay put; the pill links to the first
+// page with the same chips.
+(function () {
+  "use strict";
+  var pill = document.querySelector(".pill-updated[data-events]");
+  if (!pill || !window.EventSource) return;
+  var seen = new Set();
+  var es = new EventSource(pill.dataset.events);
+  es.addEventListener("changed", function (e) {
+    e.data.split(",").forEach(function (id) { if (id) seen.add(id); });
+    if (!seen.size) return;
+    pill.textContent = "↑ " + seen.size + (seen.size === 1 ? " Session" : " Sessions") + " updated";
+    pill.hidden = false;
+  });
+  // Leaving the page closes the stream, so it doesn't count against the
+  // browser's connection limit while the next page loads.
+  pill.addEventListener("click", function () { es.close(); });
+})();

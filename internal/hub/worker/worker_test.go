@@ -193,6 +193,8 @@ func TestLiveParsePublishesAndReparseStaysSilent(t *testing.T) {
 	defer stopDeaf()
 	events, stop := b.Subscribe(1)
 	defer stop()
+	feedSub, stopFeed := b.SubscribeFeed()
+	defer stopFeed()
 
 	// Live ingest (priority 0) publishes.
 	if worked, _, err := w.RunOnce(ctx); !worked || err != nil {
@@ -206,6 +208,15 @@ func TestLiveParsePublishesAndReparseStaysSilent(t *testing.T) {
 	default:
 		t.Fatal("a live parse published no event")
 	}
+	select {
+	case <-feedSub.Ready():
+	default:
+		t.Fatal("a live parse told no feed")
+	}
+	want := live.FeedSession{ID: 1, Machine: "m1", Source: "claude-code", Project: "/x"}
+	if got := feedSub.Take(); len(got) != 1 || got[0] != want {
+		t.Errorf("feed got %+v, want %+v", got, want)
+	}
 
 	// A re-parse (priority 1) is silent.
 	if n, err := s.Reparse(ctx, store.ReparseScope{}); err != nil || n != 1 {
@@ -217,6 +228,8 @@ func TestLiveParsePublishesAndReparseStaysSilent(t *testing.T) {
 	select {
 	case <-events:
 		t.Fatal("a re-parse published an event")
+	case <-feedSub.Ready():
+		t.Fatal("a re-parse told the feed")
 	default:
 	}
 }
@@ -233,6 +246,8 @@ func TestLiveChildParsePublishesItsParent(t *testing.T) {
 	w.WithLive(b)
 	parent, stop := b.Subscribe(1)
 	defer stop()
+	feedSub, stopFeed := b.SubscribeFeed()
+	defer stopFeed()
 
 	data := []byte(`{"type":"user","uuid":"c1","parentUuid":null,"isSidechain":true,"timestamp":"2026-09-01T10:00:05.000Z","cwd":"/x","message":{"role":"user","content":"child task"}}` + "\n")
 	enc, _ := zstd.NewWriter(nil)
@@ -250,5 +265,10 @@ func TestLiveChildParsePublishesItsParent(t *testing.T) {
 	case <-parent:
 	default:
 		t.Fatal("a live Child Session parse didn't tell its parent's pages")
+	}
+	select {
+	case <-feedSub.Ready():
+		t.Errorf("a Child Session reached the feed: %+v", feedSub.Take())
+	default:
 	}
 }

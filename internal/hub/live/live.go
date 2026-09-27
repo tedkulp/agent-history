@@ -1,6 +1,6 @@
 // Package live tells open Transcript pages that their Session was parsed again
-// from live data (hub.md §4.5, §4.7). It is an in-process pub/sub keyed by
-// Session id.
+// from live data, and open home feeds which of their Sessions were (hub.md
+// §4.5, §4.7). It is an in-process pub/sub.
 package live
 
 import "sync"
@@ -11,12 +11,81 @@ import "sync"
 type Broadcaster struct {
 	mu     sync.Mutex
 	subs   map[int64]map[chan struct{}]struct{}
+	feeds  map[*FeedSub]struct{}
 	closed bool
 }
 
 // New returns an empty Broadcaster.
 func New() *Broadcaster {
-	return &Broadcaster{subs: map[int64]map[chan struct{}]struct{}{}}
+	return &Broadcaster{subs: map[int64]map[chan struct{}]struct{}{}, feeds: map[*FeedSub]struct{}{}}
+}
+
+// FeedSession is a Session the home feed lists, just parsed from live data,
+// with what the feed's chips match on (hub.md §4.7).
+type FeedSession struct {
+	ID       int64
+	Machine  string
+	Source   string
+	Project  string // "" = No project
+	Warnings bool   // the "has warnings" chip matches it
+}
+
+// FeedSub is one open feed's subscription. Published Sessions wait in it,
+// once each, until taken, so a slow reader loses none and publishing never
+// blocks.
+type FeedSub struct {
+	ready   chan struct{}
+	mu      sync.Mutex
+	pending map[int64]FeedSession
+}
+
+// Ready receives when Sessions are waiting to be taken. It is closed by the
+// Broadcaster's Close.
+func (f *FeedSub) Ready() <-chan struct{} { return f.ready }
+
+// Take returns the waiting Sessions and forgets them.
+func (f *FeedSub) Take() []FeedSession {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]FeedSession, 0, len(f.pending))
+	for _, s := range f.pending {
+		out = append(out, s)
+	}
+	clear(f.pending)
+	return out
+}
+
+// SubscribeFeed returns a subscription to every published FeedSession, and a
+// function that unsubscribes. After Close, its Ready channel is closed.
+func (b *Broadcaster) SubscribeFeed() (*FeedSub, func()) {
+	f := &FeedSub{ready: make(chan struct{}, 1), pending: map[int64]FeedSession{}}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		close(f.ready)
+		return f, func() {}
+	}
+	b.feeds[f] = struct{}{}
+	return f, func() {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		delete(b.feeds, f)
+	}
+}
+
+// PublishFeed hands s to every feed subscriber.
+func (b *Broadcaster) PublishFeed(s FeedSession) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for f := range b.feeds {
+		f.mu.Lock()
+		f.pending[s.ID] = s
+		f.mu.Unlock()
+		select {
+		case f.ready <- struct{}{}:
+		default:
+		}
+	}
 }
 
 // Subscribe returns a channel that receives an event each time the Session is
@@ -73,5 +142,8 @@ func (b *Broadcaster) Close() {
 			close(c)
 		}
 	}
-	b.subs = nil
+	for f := range b.feeds {
+		close(f.ready)
+	}
+	b.subs, b.feeds = nil, nil
 }

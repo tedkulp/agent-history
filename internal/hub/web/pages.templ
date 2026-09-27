@@ -82,6 +82,10 @@ templ feedPage(v feedView) {
 			<a class="banner" href={ templ.SafeURL(b.Href) }>⚠ { b.Text }</a>
 		}
 		@chipRows(v.Chips)
+		if v.Events != "" {
+			// app.js shows the "Sessions updated" pill here (hub.md §4.7).
+			<a class="pill-updated" hidden data-events={ v.Events } data-reload={ v.Reload } href={ templ.SafeURL(v.Reload) }></a>
+		}
 		if len(v.Days) == 0 {
 			if v.Filtered {
 				<p class="dim">No Sessions match.</p>

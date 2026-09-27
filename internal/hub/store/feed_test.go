@@ -220,3 +220,34 @@ func TestFeedWarningsAndDriftBanners(t *testing.T) {
 		t.Errorf("drift = %+v", drift)
 	}
 }
+
+func TestLiveSessionSaysWhetherTheFeedListsIt(t *testing.T) {
+	s := seedFeed(t, []feedSession{
+		{machine: "m1", source: "claude-code", project: "/Users/ted/src/app", last: 100}, // 1
+		{machine: "m1", source: "claude-code", last: 200, child: true},                   // 2: child of 1
+		{machine: "m1", source: "codex", last: 300, empty: true},                         // 3: no Messages
+		{machine: "m2-0123456789", source: "codex", last: 400},                           // 4: No project
+	})
+	ctx := context.Background()
+	if _, err := s.write.Exec(`INSERT INTO parse_warnings (session_id, kind, source_type, count, first_excerpt) VALUES (4, 'unknown_type', 'x', 1, '')`); err != nil {
+		t.Fatal(err)
+	}
+	want := map[int64]LiveSession{
+		1: {InFeed: true, MachineID: "m1", Source: "claude-code", ProjectCwd: "/Users/ted/src/app"},
+		2: {Parent: 1, MachineID: "m1", Source: "claude-code"},
+		3: {MachineID: "m1", Source: "codex"},
+		4: {InFeed: true, MachineID: "m2-0123456789", Source: "codex", Warnings: true},
+	}
+	for id, w := range want {
+		got, ok, err := s.LiveSession(ctx, id)
+		if err != nil || !ok {
+			t.Fatalf("LiveSession(%d) = %v, %v", id, ok, err)
+		}
+		if got != w {
+			t.Errorf("LiveSession(%d) = %+v, want %+v", id, got, w)
+		}
+	}
+	if _, ok, err := s.LiveSession(ctx, 99); ok || err != nil {
+		t.Errorf("LiveSession(99) = %v, %v", ok, err)
+	}
+}

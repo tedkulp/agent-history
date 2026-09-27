@@ -205,9 +205,16 @@ func TestTranscriptTailRefusesAReshuffle(t *testing.T) {
 // of its lines.
 func events(t *testing.T, srvURL string, id string) (*http.Response, *bufio.Reader) {
 	t.Helper()
+	return stream(t, srvURL+"/sessions/"+id+"/events")
+}
+
+// stream opens an event stream and returns its status and a reader of its
+// lines.
+func stream(t *testing.T, u string) (*http.Response, *bufio.Reader) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srvURL+"/sessions/"+id+"/events", nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -216,32 +223,38 @@ func events(t *testing.T, srvURL string, id string) (*http.Response, *bufio.Read
 	return resp, bufio.NewReader(resp.Body)
 }
 
-// nextEvent reads stream lines until one starts with prefix, failing after
-// a timeout.
-func nextEvent(t *testing.T, r *bufio.Reader, prefix string) {
+// nextEvent reads stream lines until one starts with prefix and returns it
+// without its newline, failing after a timeout.
+func nextEvent(t *testing.T, r *bufio.Reader, prefix string) string {
 	t.Helper()
-	got := make(chan error, 1)
+	type read struct {
+		line string
+		err  error
+	}
+	got := make(chan read, 1)
 	go func() {
 		for {
 			l, err := r.ReadString('\n')
 			if err != nil {
-				got <- err
+				got <- read{err: err}
 				return
 			}
 			if strings.HasPrefix(l, prefix) {
-				got <- nil
+				got <- read{line: strings.TrimSuffix(l, "\n")}
 				return
 			}
 		}
 	}()
 	select {
-	case err := <-got:
-		if err != nil {
-			t.Fatalf("stream ended before %q: %v", prefix, err)
+	case g := <-got:
+		if g.err != nil {
+			t.Fatalf("stream ended before %q: %v", prefix, g.err)
 		}
+		return g.line
 	case <-time.After(5 * time.Second):
 		t.Fatalf("no %q on the stream", prefix)
 	}
+	return ""
 }
 
 func TestEventsStreamLiveParsesWithoutReadingTheStore(t *testing.T) {
