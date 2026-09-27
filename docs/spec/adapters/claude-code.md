@@ -94,7 +94,7 @@ Every line is a JSON object with a `type`. Conversation lines also carry `uuid`,
 |---|---|
 | `user`, `assistant` | Messages (§3.3) |
 | `system` | By `subtype`: `compact_boundary` → `marker` (`compaction`). `turn_duration`, `local_command`, `away_summary`, `stop_hook_summary`, `informational`, `api_error` → Raw only. Any other subtype → `unknown`. |
-| `attachment` | Raw only (context Claude Code injects: reminders, tool listings, environment), with one exception: subtype `queued_command` whose `attachment.isMeta` is not `true` becomes a user Message with `attachment.prompt` as its text (a block list gives its `text` and `image` blocks) |
+| `attachment` | Raw only (context Claude Code injects: reminders, tool listings, environment), with one exception: subtype `queued_command` whose `attachment.isMeta` is not `true` becomes a user Message with `attachment.prompt` as its text (a block list gives its `text` and `image` blocks), or a `task_notification` marker (§3.3) when its `commandMode` is `task-notification` or its prompt is a string starting with `<task-notification>` |
 | `summary` | Raw only; used for the title fallback (§3.6) |
 | `custom-title`, `ai-title` | Raw only; used for the title (§3.6) |
 | `file-history-snapshot`, `file-history-delta`, `last-prompt`, `mode`, `permission-mode`, `queue-operation`, `progress`, `atis-latch`, `bridge-session`, `cost-state`, `agent-name`, `pr-link`, `frame-link`, `artifact-autoreact-ledger`, `artifact-comment-monitor` | Raw only (bookkeeping) |
@@ -138,7 +138,23 @@ Walking the path in order:
 | A string starting with `<bash-stdout>` or `<bash-stderr>` that directly follows a `<bash-input>` line on the path | No Message. It is that marker's `output`: the `<bash-stdout>` body, then the `<bash-stderr>` body, each only when non-empty, joined with a newline. Claude Code writes both bodies HTML-escaped (`-&gt;`), so they are unescaped; the `<bash-input>` body is written raw. A command with no output line, or with both bodies empty, has no `output`. |
 | A string starting with `<bash-stdout>` or `<bash-stderr>` with no command before it | Raw only |
 | A string starting with `<local-command-stdout>`, `<local-command-stderr>` or `<local-command-caveat>` | Raw only |
+| A string, with `origin.kind: "task-notification"` or starting with `<task-notification>` (a background task or sub-agent finished). Block-list content is an ordinary `user` Message. | `marker` Part (`task_notification`), see **Task notifications** below |
 | Anything else | A `user` Message |
+
+**Task notifications**
+
+Claude Code tells the model a background task (an agent, a background shell command, a Monitor) has something to report with a `<task-notification>` block, written either as a `user` line or as a `queued_command` attachment (§3.1). Both become one `marker` Part with `marker: "task_notification"`:
+
+| Tag | Payload field |
+|---|---|
+| `<summary>` | `text`, e.g. `Agent "Spec review" finished` |
+| `<status>` | `task.status`: `completed`, `failed`, `killed`, or absent (a Monitor event) |
+| `<tool-use-id>` | `task.tool_use_id`. When a `tool_call` Part in the Session has that `call_id`, `task.call_part` is its Part id, and that call's `notifications` lists this marker's Part id. |
+| `<result>` | `task.result`, trimmed (Markdown) |
+| `<event>` | `output`, trimmed: a Monitor event's text, shown preformatted like a `shell_command`'s output |
+| `<usage>` | `task.tokens` (`<subagent_tokens>`), `task.tool_uses` (`<tool_uses>`), `task.duration_ms` (`<duration_ms>`), each only when present and a whole number |
+
+`<task-id>`, `<note>`, `<output-file>`, `<worktree>`, text outside the tags, and any tag not listed are Raw only. `<result>` and `<event>` are free text that can quote the block's own tags, so each runs from its first opening tag to its last closing tag, the block ends at its last `</task-notification>`, the other tags are read only before them, and `<usage>` only after them. A block without its closing `</task-notification>` or without a non-empty `<summary>` is malformed: it is a Parse warning (`missing_field`, source type `task-notification`) and the line keeps its ordinary rendering (a `user` Message with the text).
 
 In a `user` Message: a string content is one `text` Part. In a block list, `text` → `text`, `image` with a `base64` source → `image` (bytes decoded, MIME from `media_type`), `document` → `attachment` (label = its title or MIME type), any other block type → `unknown`. `tool_result` blocks mixed in still merge into their calls.
 

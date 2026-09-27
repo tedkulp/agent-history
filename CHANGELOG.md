@@ -9,6 +9,10 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+### Added
+
+- Background task and sub-agent notifications (`<task-notification>`) show in the Transcript as a compact marker with status, summary and usage, linked to the tool call that started the task, instead of raw text in a user bubble. Existing Sessions pick this up when they re-parse.
+
 ### Changed
 
 - The sample `compose.yaml` pins the Hub image to `v0.1` instead of `latest`, so `docker compose pull` takes patch releases but not a new minor version.

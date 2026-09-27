@@ -41,6 +41,9 @@ const (
 	MarkerThinkingLevel = "thinking_level"
 	MarkerSlashCommand  = "slash_command"
 	MarkerShellCommand  = "shell_command"
+	// MarkerTaskNotification is a background task or sub-agent reporting
+	// back: its text is the task's summary.
+	MarkerTaskNotification = "task_notification"
 )
 
 // CompactionText is a compaction marker's text when the Source gives no
@@ -139,11 +142,33 @@ type AttachmentPayload struct {
 }
 
 // MarkerPayload is the payload of a marker Part. Output is a shell_command's
-// output, "" when it has none.
+// output or a task_notification's event, "" when it has none. Task is set on
+// a task_notification only.
 type MarkerPayload struct {
-	Marker string `json:"marker"`
-	Text   string `json:"text"`
-	Output string `json:"output,omitempty"`
+	Marker string       `json:"marker"`
+	Text   string       `json:"text"`
+	Output string       `json:"output,omitempty"`
+	Task   *TaskPayload `json:"task,omitempty"`
+}
+
+// Task notification statuses.
+const (
+	TaskCompleted = "completed"
+	TaskFailed    = "failed"
+	TaskKilled    = "killed"
+)
+
+// TaskPayload is what a task_notification marker knows about its task. Each
+// field is empty or 0 when the Source doesn't say. CallPart is the id of the
+// tool_call Part that started the task, when it is in the Session.
+type TaskPayload struct {
+	Status     string `json:"status,omitempty"`
+	ToolUseID  string `json:"tool_use_id,omitempty"`
+	CallPart   string `json:"call_part,omitempty"`
+	Result     string `json:"result,omitempty"`
+	Tokens     int64  `json:"tokens,omitempty"`
+	ToolUses   int64  `json:"tool_uses,omitempty"`
+	DurationMS int64  `json:"duration_ms,omitempty"`
 }
 
 // UnknownPayload is the payload of an unknown Part: the Source type name and
@@ -172,6 +197,9 @@ type ToolCallPayload struct {
 	OutputPreview string          `json:"output_preview,omitempty"`
 	ChildSessions []string        `json:"child_sessions"`
 	Diff          *Diff           `json:"diff"`
+	// Notifications are the Part ids of the task_notification markers
+	// about this call.
+	Notifications []string `json:"notifications,omitempty"`
 }
 
 // Diff is a file edit a tool call made.

@@ -40,8 +40,17 @@ type markerView struct {
 	Kind   string
 	Label  string
 	Body   string // rendered Markdown
-	Output string // a shell_command's output, preformatted
+	Output string // a shell_command's output or a task's event, preformatted
 	More   string // "… 2.0 KB more" when Output was cut
+	Task   *taskView
+}
+
+// taskView is what a task_notification pill adds to its label.
+type taskView struct {
+	ID       string // the Part id, as the pill's anchor
+	Status   string
+	Usage    string // "52.7k tokens · 6 tools · 47 s"; "" when unknown
+	CallHref string // the call that started the task; "" when not in the Session
 }
 
 // markerLabelMax is the most characters a marker pill shows.
@@ -63,7 +72,8 @@ type toolView struct {
 	Stub      string // "Output collapsed · 5.2 KB"; "" when inline
 	Preview   string
 	OutputURL string
-	ChildHref string // the Child Session it spawned; "" when none
+	ChildHref string   // the Child Session it spawned; "" when none
+	NoteHrefs []string // the task_notification pills about this call
 }
 
 type diffView struct {
@@ -93,7 +103,7 @@ func (s *server) chunks(sessionID int64, parts []store.TranscriptPart, childHref
 			}
 		case parser.KindMarker:
 			if mp, ok := decodePayload[parser.MarkerPayload](s, sessionID, p); ok {
-				out = append(out, chunkView{Marker: newMarkerView(mp)})
+				out = append(out, chunkView{Marker: newMarkerView(p.ID, mp)})
 			}
 		case parser.KindUnknown:
 			if up, ok := decodePayload[parser.UnknownPayload](s, sessionID, p); ok {
@@ -156,10 +166,26 @@ const compactionSummaryLabel = "Compaction summary"
 // newMarkerView labels a marker pill. A compaction summary, and any other
 // marker text over one line, opens below the pill as Markdown. A
 // shell_command pill shows its whole command, and its output, cut to 4 KB,
-// opens below it as preformatted text.
-func newMarkerView(mp parser.MarkerPayload) *markerView {
+// opens below it as preformatted text. A task_notification pill shows its
+// summary, and its result opens below it as Markdown, or its event as
+// preformatted text.
+func newMarkerView(partID string, mp parser.MarkerPayload) *markerView {
 	v := &markerView{Kind: mp.Marker, Label: mp.Text}
-	if mp.Marker == parser.MarkerShellCommand {
+	if mp.Marker == parser.MarkerTaskNotification {
+		var task parser.TaskPayload
+		if mp.Task != nil {
+			task = *mp.Task
+		}
+		v.Label = cut(mp.Text, markerLabelMax)
+		v.Task = &taskView{ID: partID, Status: task.Status, Usage: taskUsage(task)}
+		if task.CallPart != "" {
+			v.Task.CallHref = "#p-" + task.CallPart
+		}
+		if task.Result != "" {
+			v.Body = renderMarkdown(task.Result)
+		}
+	}
+	if mp.Marker == parser.MarkerShellCommand || mp.Marker == parser.MarkerTaskNotification {
 		// A command and its output are never Markdown.
 		v.Output = parser.CutBytes(mp.Output, stubOver)
 		if n := len(mp.Output) - len(v.Output); n > 0 {
@@ -182,6 +208,9 @@ func newMarkerView(mp parser.MarkerPayload) *markerView {
 
 func newToolView(sessionID int64, partID string, tc parser.ToolCallPayload) toolView {
 	v := toolView{ID: partID, Name: tc.Name, Status: tc.Status, Summary: inputSummary(tc.Input), Input: prettyJSON(tc.Input)}
+	for _, n := range tc.Notifications {
+		v.NoteHrefs = append(v.NoteHrefs, "#p-"+n)
+	}
 	if tc.Diff != nil {
 		v.Diff = &diffView{Path: tc.Diff.Path, Lines: lineDiff(tc.Diff.Old, tc.Diff.New)}
 	}
@@ -287,6 +316,40 @@ func lineDiff(old, new string) []diffLine {
 		}
 	}
 	return out
+}
+
+// taskUsage is a task's usage, e.g. "52.7k tokens · 6 tools · 47 s", with
+// each part left out when unknown.
+func taskUsage(t parser.TaskPayload) string {
+	var parts []string
+	switch {
+	case t.Tokens >= 1_000_000:
+		parts = append(parts, fmt.Sprintf("%.1fM tokens", float64(t.Tokens)/1e6))
+	case t.Tokens >= 1000:
+		parts = append(parts, fmt.Sprintf("%.1fk tokens", float64(t.Tokens)/1e3))
+	case t.Tokens > 0:
+		parts = append(parts, fmt.Sprintf("%d tokens", t.Tokens))
+	}
+	switch {
+	case t.ToolUses == 1:
+		parts = append(parts, "1 tool")
+	case t.ToolUses > 1:
+		parts = append(parts, fmt.Sprintf("%d tools", t.ToolUses))
+	}
+	if t.DurationMS > 0 {
+		sec := t.DurationMS / 1000
+		switch {
+		case sec == 0:
+			parts = append(parts, "<1 s")
+		case sec < 60:
+			parts = append(parts, fmt.Sprintf("%d s", sec))
+		case sec < 3600:
+			parts = append(parts, fmt.Sprintf("%d min %d s", sec/60, sec%60))
+		default:
+			parts = append(parts, fmt.Sprintf("%d h %d min", sec/3600, sec%3600/60))
+		}
+	}
+	return strings.Join(parts, " · ")
 }
 
 func byteSize(n int) string {

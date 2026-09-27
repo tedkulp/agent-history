@@ -583,6 +583,80 @@ func TestTranscriptShellCommands(t *testing.T) {
 	}
 }
 
+func TestTranscriptTaskNotifications(t *testing.T) {
+	now := time.Now().UTC()
+	ts := func(s int) string {
+		return now.Add(time.Duration(s-100) * time.Second).Format("2006-01-02T15:04:05.000Z")
+	}
+	agentDone := "<task-notification>\n<task-id>ab5</task-id>\n<tool-use-id>t_agent</tool-use-id>\n<status>completed</status>\n" +
+		"<summary>Agent Review finished</summary>\n<result>## Findings\nAll <b>good</b>.</result>\n" +
+		"<usage><subagent_tokens>52749</subagent_tokens><tool_uses>6</tool_uses><duration_ms>47425</duration_ms></usage>\n</task-notification>"
+	cmdFailed := "<task-notification>\n<tool-use-id>t_gone</tool-use-id>\n<status>failed</status>\n<summary>Background command failed</summary>\n</task-notification>"
+	event := "<task-notification>\n<summary>Monitor event: rebuild</summary>\n<event>step 1 &lt;done&gt;</event>\n</task-notification>"
+	lines := []map[string]any{
+		{"type": "user", "uuid": "u1", "parentUuid": nil, "timestamp": ts(0), "cwd": "/Users/ted/src/app",
+			"message": map[string]any{"role": "user", "content": "Real prompt"}},
+		{"type": "assistant", "uuid": "a1", "parentUuid": "u1", "timestamp": ts(1),
+			"message": map[string]any{"id": "msg_1", "model": "m", "content": []any{map[string]any{"type": "tool_use", "id": "t_agent", "name": "Agent", "input": map[string]any{}}}}},
+		{"type": "user", "uuid": "r1", "parentUuid": "a1", "timestamp": ts(2),
+			"message": map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": "t_agent", "content": "launched"}}}},
+		{"type": "user", "uuid": "n1", "parentUuid": "r1", "timestamp": ts(3), "origin": map[string]any{"kind": "task-notification"},
+			"message": map[string]any{"role": "user", "content": agentDone}},
+		{"type": "attachment", "uuid": "n2", "parentUuid": "n1", "timestamp": ts(4),
+			"attachment": map[string]any{"type": "queued_command", "prompt": cmdFailed, "commandMode": "task-notification"}},
+		{"type": "attachment", "uuid": "n3", "parentUuid": "n2", "timestamp": ts(5),
+			"attachment": map[string]any{"type": "queued_command", "prompt": event, "commandMode": "task-notification"}},
+	}
+	var main strings.Builder
+	enc := json.NewEncoder(&main)
+	enc.SetEscapeHTML(false)
+	for _, l := range lines {
+		if err := enc.Encode(l); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srv := newSiteRecords(t, []record{{"m1", "-Users-ted-src-app/" + sess + ".jsonl", main.String()}})
+	_, feed := get(t, srv.URL+"/")
+	i := strings.Index(feed, `href="/sessions/`)
+	link := feed[i+len(`href="`):]
+	_, page := get(t, srv.URL+link[:strings.Index(link, `"`)])
+	for _, want := range []string{
+		`<div class="msg user marker-row" id="m-n1">`,
+		`<details class="marker task_notification completed" id="p-n1.0"><summary><span class="st completed">✓</span> Agent Review finished <span class="dim">· 52.7k tokens · 6 tools · 47 s</span> <a class="call" href="#p-a1.0">↑ call</a></summary>`,
+		"<h2>Findings</h2>", "&lt;b&gt;good&lt;/b&gt;",
+		`<div class="marker task_notification failed" id="p-n2.0"><span class="st failed">✗</span> Background command failed </div>`,
+		`<details class="marker task_notification" id="p-n3.0"><summary><span class="st">•</span> Monitor event: rebuild </summary> <pre class="out">step 1 &amp;lt;done&amp;gt;</pre>`,
+		// The call links to its notification.
+		`<a class="call" href="#p-n1.0">↓ notified</a>`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("transcript lacks %q", want)
+		}
+	}
+	for _, bad := range []string{"task-notification&gt;", "<b>good</b>", `href="#m-n1"`, `href="#m-n2"`, `href="#m-n3"`, `href="#p-t_gone"`} {
+		if strings.Contains(page, bad) {
+			t.Errorf("transcript shows %q", bad)
+		}
+	}
+}
+
+func TestTaskUsage(t *testing.T) {
+	for _, c := range []struct {
+		task parser.TaskPayload
+		want string
+	}{
+		{parser.TaskPayload{}, ""},
+		{parser.TaskPayload{Tokens: 812, ToolUses: 1, DurationMS: 900}, "812 tokens · 1 tool · <1 s"},
+		{parser.TaskPayload{Tokens: 52749, ToolUses: 6, DurationMS: 47425}, "52.7k tokens · 6 tools · 47 s"},
+		{parser.TaskPayload{Tokens: 1_260_000, DurationMS: 353506}, "1.3M tokens · 5 min 53 s"},
+		{parser.TaskPayload{DurationMS: 3_723_000}, "1 h 2 min"},
+	} {
+		if got := taskUsage(c.task); got != c.want {
+			t.Errorf("taskUsage(%+v) = %q, want %q", c.task, got, c.want)
+		}
+	}
+}
+
 func TestTranscriptChildSessionsLinkBothWays(t *testing.T) {
 	jsonLines := func(lines ...map[string]any) string {
 		var b strings.Builder

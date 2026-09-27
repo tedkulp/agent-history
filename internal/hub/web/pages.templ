@@ -331,6 +331,8 @@ templ chunk(c chunkView) {
 		<a class="img" href={ templ.SafeURL(c.Image.Src) } target="_blank">
 			<img src={ c.Image.Src } alt={ c.Image.Alt } loading="lazy"/>
 		</a>
+	} else if c.Marker != nil && c.Marker.Task != nil {
+		@taskMarker(c.Marker)
 	} else if c.Marker != nil {
 		if c.Marker.Output != "" {
 			<details class={ "marker", c.Marker.Kind }>
@@ -369,6 +371,55 @@ templ chunk(c chunkView) {
 	}
 }
 
+// taskMarker is a task_notification pill: status, summary, usage and a link
+// to the call that started the task. Its result or event opens below it
+// (hub.md §4.7).
+templ taskMarker(m *markerView) {
+	if m.Body != "" || m.Output != "" {
+		<details class={ "marker", m.Kind, templ.KV(m.Task.Status, m.Task.Status != "") } id={ "p-" + m.Task.ID }>
+			<summary>
+				@taskLine(m)
+			</summary>
+			if m.Body != "" {
+				<div class="bubble">
+					@templ.Raw(m.Body)
+				</div>
+			}
+			if m.Output != "" {
+				<pre class="out">{ m.Output }</pre>
+				if m.More != "" {
+					<p class="dim">{ m.More }</p>
+				}
+			}
+		</details>
+	} else {
+		<div class={ "marker", m.Kind, templ.KV(m.Task.Status, m.Task.Status != "") } id={ "p-" + m.Task.ID }>
+			@taskLine(m)
+		</div>
+	}
+}
+
+templ taskLine(m *markerView) {
+	<span class={ "st", templ.KV(m.Task.Status, m.Task.Status != "") }>
+		switch m.Task.Status {
+			case parser.TaskCompleted:
+				✓
+			case parser.TaskFailed:
+				✗
+			case parser.TaskKilled:
+				■
+			default:
+				•
+		}
+	</span> { m.Label }
+	if m.Task.Usage != "" {
+		<span class="dim">· { m.Task.Usage }</span>
+	}
+	if m.Task.CallHref != "" {
+		<a class="call" href={ templ.SafeURL(m.Task.CallHref) }>↑ call</a>
+	}
+}
+
 // toolCluster is a run of consecutive tool calls, folded into one collapsed
 // row (hub.md §4.7).
 templ toolCluster(c chunkView) {
@@ -380,6 +431,9 @@ templ toolCluster(c chunkView) {
 					<b>{ t.Name }</b>
 					if t.ChildHref != "" {
 						<a class="child" href={ templ.SafeURL(t.ChildHref) }>↳ Child Session</a>
+					}
+					for _, h := range t.NoteHrefs {
+						<a class="call" href={ templ.SafeURL(h) }>↓ notified</a>
 					}
 					if t.Summary != "" {
 						<span class="dim">{ t.Summary }</span>

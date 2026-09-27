@@ -836,3 +836,146 @@ func TestParseParallelCallResultsOffThePath(t *testing.T) {
 		t.Errorf("warnings = %+v", res.Warnings)
 	}
 }
+
+// notification is a <task-notification> block with the given inner lines.
+func notification(inner ...string) string {
+	return "<task-notification>\n" + strings.Join(inner, "\n") + "\n</task-notification>"
+}
+
+func TestParseTaskNotifications(t *testing.T) {
+	agentDone := notification(
+		"<task-id>ab5a75fccc3622763</task-id>",
+		"<tool-use-id>t_agent</tool-use-id>",
+		"<output-file>/tmp/tasks/ab5a75fccc3622763.output</output-file>",
+		"<status>completed</status>",
+		`<summary>Agent "Standards review" finished</summary>`,
+		"<note>It may notify more than once.</note>",
+		"<result>## Findings\nNone.\n</result>",
+		"<usage><subagent_tokens>52749</subagent_tokens><tool_uses>6</tool_uses><duration_ms>47425</duration_ms></usage>",
+		"<worktree><worktreePath>/tmp/wt</worktreePath></worktree>",
+	)
+	cmdFailed := notification(
+		"<task-id>b9r9tn0o3</task-id>",
+		"<tool-use-id>t_gone</tool-use-id>",
+		"<status>failed</status>",
+		`<summary>Background command "Render PDF" failed with exit code 144</summary>`,
+	)
+	killed := notification(
+		"<task-id>bttwowpoo</task-id>",
+		"<tool-use-id>t_agent</tool-use-id>",
+		"<status>killed</status>",
+		`<summary>Background command "Wait" was stopped</summary>`,
+	)
+	event := notification(
+		"<task-id>bwlkc6esw</task-id>",
+		`<summary>Monitor event: "rebuild progress"</summary>`,
+		"<event>\nstep 1 done\nstep 2 done\n</event>",
+		"If this event is something the user would act on now, send a PushNotification.",
+	)
+	fromOrigin := userLine("n1", "r1", "2026-09-01T10:00:03.000Z", agentDone)
+	fromOrigin["origin"] = map[string]any{"kind": "task-notification"}
+	queued := func(uuid, parent, prompt string) map[string]any {
+		return map[string]any{"type": "attachment", "uuid": uuid, "parentUuid": parent, "timestamp": "2026-09-01T10:00:04.000Z",
+			"attachment": map[string]any{"type": "queued_command", "prompt": prompt, "commandMode": "task-notification"}}
+	}
+	main := jsonl(t,
+		userLine("u1", "", "2026-09-01T10:00:00.000Z", "go"),
+		asstLine("a1", "u1", "2026-09-01T10:00:01.000Z", "msg_1", map[string]any{"type": "tool_use", "id": "t_agent", "name": "Agent", "input": map[string]any{}}, nil),
+		userLine("r1", "a1", "2026-09-01T10:00:02.000Z", []any{map[string]any{"type": "tool_result", "tool_use_id": "t_agent", "content": "launched"}}),
+		fromOrigin,
+		queued("n2", "n1", cmdFailed),
+		// No origin: the text alone marks it.
+		userLine("n3", "n2", "2026-09-01T10:00:05.000Z", killed),
+		queued("n4", "n3", event),
+		userLine("u2", "n4", "2026-09-01T10:00:06.000Z", "thanks"),
+	)
+	res := parse(t, main, nil)
+	want := []flat{
+		{ID: "u1", Role: "user", Texts: []string{"go"}},
+		{ID: "a1", Role: "assistant", Texts: []string{"[tool Agent ok]"}},
+		{ID: "n1", Role: "user", Texts: []string{`[task_notification Agent "Standards review" finished]`}},
+		{ID: "n2", Role: "user", Texts: []string{`[task_notification Background command "Render PDF" failed with exit code 144]`}},
+		{ID: "n3", Role: "user", Texts: []string{`[task_notification Background command "Wait" was stopped]`}},
+		{ID: "n4", Role: "user", Texts: []string{`[task_notification Monitor event: "rebuild progress"]`}},
+		{ID: "u2", Role: "user", Texts: []string{"thanks"}},
+	}
+	if got := flatten(res.Messages); !reflect.DeepEqual(got, want) {
+		t.Fatalf("messages:\n got %+v\nwant %+v", got, want)
+	}
+	if len(res.Warnings) != 0 {
+		t.Errorf("warnings = %+v", res.Warnings)
+	}
+
+	marker := func(i int) parser.MarkerPayload { return res.Messages[i].Parts[0].Payload.(parser.MarkerPayload) }
+	tasks := []parser.TaskPayload{
+		{Status: "completed", ToolUseID: "t_agent", CallPart: "a1.0", Result: "## Findings\nNone.", Tokens: 52749, ToolUses: 6, DurationMS: 47425},
+		{Status: "failed", ToolUseID: "t_gone"},
+		{Status: "killed", ToolUseID: "t_agent", CallPart: "a1.0"},
+		{},
+	}
+	for i, w := range tasks {
+		if got := marker(i + 2).Task; got == nil || *got != w {
+			t.Errorf("message %d task = %+v, want %+v", i+2, got, w)
+		}
+	}
+	if got := marker(5).Output; got != "step 1 done\nstep 2 done" {
+		t.Errorf("event output = %q", got)
+	}
+	if got := marker(2).Output; got != "" {
+		t.Errorf("agent output = %q", got)
+	}
+	call := res.Messages[1].Parts[0].Payload.(parser.ToolCallPayload)
+	if want := []string{"n1.0", "n3.0"}; !reflect.DeepEqual(call.Notifications, want) {
+		t.Errorf("call notifications = %v, want %v", call.Notifications, want)
+	}
+	j, _ := json.Marshal(marker(3))
+	if want := `{"marker":"task_notification","text":"Background command \"Render PDF\" failed with exit code 144","task":{"status":"failed","tool_use_id":"t_gone"}}`; string(j) != want {
+		t.Errorf("payload = %s\nwant      %s", j, want)
+	}
+}
+
+func TestParseMalformedTaskNotifications(t *testing.T) {
+	unclosed := "<task-notification>\n<status>completed</status>\n<summary>Agent finished</summary>"
+	noSummary := notification("<status>completed</status>", "<summary> </summary>")
+	fromOrigin := userLine("n1", "u1", "2026-09-01T10:00:01.000Z", unclosed)
+	fromOrigin["origin"] = map[string]any{"kind": "task-notification"}
+	main := jsonl(t,
+		userLine("u1", "", "2026-09-01T10:00:00.000Z", "go"),
+		fromOrigin,
+		map[string]any{"type": "attachment", "uuid": "n2", "parentUuid": "n1", "timestamp": "2026-09-01T10:00:02.000Z",
+			"attachment": map[string]any{"type": "queued_command", "prompt": noSummary, "commandMode": "task-notification"}},
+	)
+	res := parse(t, main, nil)
+	want := []flat{
+		{ID: "u1", Role: "user", Texts: []string{"go"}},
+		{ID: "n1", Role: "user", Texts: []string{unclosed}},
+		{ID: "n2", Role: "user", Texts: []string{noSummary}},
+	}
+	if got := flatten(res.Messages); !reflect.DeepEqual(got, want) {
+		t.Fatalf("messages:\n got %+v\nwant %+v", got, want)
+	}
+	if len(res.Warnings) != 1 || res.Warnings[0] != (parser.Warning{Kind: "missing_field", SourceType: "task-notification", Count: 2, FirstExcerpt: res.Warnings[0].FirstExcerpt}) {
+		t.Errorf("warnings = %+v", res.Warnings)
+	}
+}
+
+func TestParseTaskNotificationResultQuotingTags(t *testing.T) {
+	// A sub-agent's report can quote the very tags the block is made of.
+	quoted := "Found `</task-notification>` and <status>failed</status> and <usage>x</usage> in the diff."
+	block := notification(
+		"<tool-use-id>t_1</tool-use-id>",
+		"<status>completed</status>",
+		"<summary>Agent Review finished</summary>",
+		"<result>"+quoted+"\n</result>",
+		"<usage><subagent_tokens>10</subagent_tokens><tool_uses>2</tool_uses><duration_ms>3000</duration_ms></usage>",
+	)
+	res := parse(t, jsonl(t, userLine("n1", "", "2026-09-01T10:00:00.000Z", block)), nil)
+	mp, ok := res.Messages[0].Parts[0].Payload.(parser.MarkerPayload)
+	if !ok {
+		t.Fatalf("not a marker: %+v", flatten(res.Messages))
+	}
+	want := parser.TaskPayload{Status: "completed", ToolUseID: "t_1", Result: quoted, Tokens: 10, ToolUses: 2, DurationMS: 3000}
+	if mp.Task == nil || *mp.Task != want {
+		t.Errorf("task = %+v\nwant   %+v", mp.Task, want)
+	}
+}

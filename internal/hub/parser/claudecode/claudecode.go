@@ -20,7 +20,7 @@ import (
 
 // version is the parser_version. Bump it whenever output changes for
 // existing data (hub.md §4.5).
-const version = 7
+const version = 8
 
 const (
 	layout     = "jsonl"
@@ -104,6 +104,9 @@ type line struct {
 	AITitle           string          `json:"aiTitle"`
 	Summary           string          `json:"summary"`
 	ToolUseResult     json.RawMessage `json:"toolUseResult"`
+	Origin            struct {
+		Kind string `json:"kind"`
+	} `json:"origin"`
 
 	raw []byte
 	ts  int64
@@ -468,17 +471,26 @@ func buildMessages(in parser.Input, path []*line, warn *parser.Warnings) ([]pars
 		case "attachment":
 			// Injected context is Raw only, except a queued prompt.
 			var a struct {
-				Type   string          `json:"type"`
-				IsMeta bool            `json:"isMeta"`
-				Prompt json.RawMessage `json:"prompt"`
+				Type        string          `json:"type"`
+				IsMeta      bool            `json:"isMeta"`
+				Prompt      json.RawMessage `json:"prompt"`
+				CommandMode string          `json:"commandMode"`
 			}
 			if json.Unmarshal(l.Attachment, &a) != nil || a.Type != "queued_command" || a.IsMeta {
 				continue
 			}
 			flush()
-			m := parser.Message{ID: parser.SafeID(l.UUID), Role: parser.MessageUser, Timestamp: l.ts}
 			var prompt string
-			if json.Unmarshal(a.Prompt, &prompt) == nil {
+			isText := json.Unmarshal(a.Prompt, &prompt) == nil
+			if isText && (a.CommandMode == taskMode || strings.HasPrefix(prompt, taskOpen)) {
+				if mp, ok := taskNotification(prompt); ok {
+					marker(l, parser.MessageUser, mp)
+					continue
+				}
+				warn.Add(parser.WarnMissingField, taskMode, string(l.raw))
+			}
+			m := parser.Message{ID: parser.SafeID(l.UUID), Role: parser.MessageUser, Timestamp: l.ts}
+			if isText {
 				addText(&m, prompt)
 			} else {
 				// A queued prompt with images is a block list.
@@ -524,6 +536,14 @@ func buildMessages(in parser.Input, path []*line, warn *parser.Warnings) ([]pars
 				}
 				marker(l, parser.MessageUser, parser.MarkerPayload{Marker: parser.MarkerShellCommand, Text: text, Output: out})
 				continue
+			case userTask:
+				if mp, ok := taskNotification(text); ok {
+					marker(l, parser.MessageUser, mp)
+					continue
+				}
+				// Malformed: shown as the text it is.
+				warn.Add(parser.WarnMissingField, taskMode, string(l.raw))
+				blocks = []block{{Type: "text", Text: text}}
 			}
 			m := parser.Message{ID: parser.SafeID(l.UUID), Role: parser.MessageUser, Timestamp: l.ts}
 			for _, bl := range blocks {
@@ -593,6 +613,7 @@ func buildMessages(in parser.Input, path []*line, warn *parser.Warnings) ([]pars
 		}
 	}
 	flush()
+	linkTaskNotifications(msgs)
 
 	// Results whose call isn't on the path, in path order for a stable excerpt.
 	var orphans []*result
@@ -606,6 +627,126 @@ func buildMessages(in parser.Input, path []*line, warn *parser.Warnings) ([]pars
 		warn.Add(parser.WarnOrphan, "tool_result", string(r.raw))
 	}
 	return msgs, b.images
+}
+
+const (
+	// taskMode is a task notification's origin.kind and commandMode, and
+	// the source type of its Parse warning.
+	taskMode  = "task-notification"
+	taskOpen  = "<task-notification>"
+	taskClose = "</task-notification>"
+)
+
+// taskNotification reads a <task-notification> block (claude-code.md §3.3).
+// ok is false when it is malformed: unclosed, or without a summary.
+//
+// A <result> or <event> is free text that can quote any of the block's own
+// tags, so each runs from its first opening tag to its last closing one, the
+// short tags are read only before them, and <usage> only after them.
+func taskNotification(s string) (mp parser.MarkerPayload, ok bool) {
+	body, found := strings.CutPrefix(strings.TrimSpace(s), taskOpen)
+	if !found {
+		return mp, false
+	}
+	end := strings.LastIndex(body, taskClose)
+	if end < 0 {
+		return mp, false
+	}
+	body = body[:end]
+	head, tail := body, body
+	for _, tag := range []string{"result", "event"} {
+		if i := strings.Index(body, "<"+tag+">"); i >= 0 && i < len(head) {
+			head = body[:i]
+		}
+		if i := strings.LastIndex(body, "</"+tag+">"); i >= 0 && len(body)-i < len(tail) {
+			tail = body[i:]
+		}
+	}
+	summary := strings.TrimSpace(tagBody(head, "summary"))
+	if summary == "" {
+		return mp, false
+	}
+	usage := tagBody(tail, "usage")
+	num := func(tag string) int64 {
+		n, _ := strconv.ParseInt(strings.TrimSpace(tagBody(usage, tag)), 10, 64)
+		return n
+	}
+	return parser.MarkerPayload{
+		Marker: parser.MarkerTaskNotification,
+		Text:   summary,
+		Output: strings.TrimSpace(outerTagBody(body, "event")),
+		Task: &parser.TaskPayload{
+			Status:     strings.TrimSpace(tagBody(head, "status")),
+			ToolUseID:  strings.TrimSpace(tagBody(head, "tool-use-id")),
+			Result:     strings.TrimSpace(outerTagBody(body, "result")),
+			Tokens:     num("subagent_tokens"),
+			ToolUses:   num("tool_uses"),
+			DurationMS: num("duration_ms"),
+		},
+	}, true
+}
+
+// tagBody is the text between the first <tag> and the </tag> after it, or
+// "" when either is missing.
+func tagBody(s, tag string) string {
+	_, rest, ok := strings.Cut(s, "<"+tag+">")
+	if !ok {
+		return ""
+	}
+	body, _, ok := strings.Cut(rest, "</"+tag+">")
+	if !ok {
+		return ""
+	}
+	return body
+}
+
+// outerTagBody is the text between the first <tag> and the last </tag>, or ""
+// when either is missing.
+func outerTagBody(s, tag string) string {
+	_, rest, ok := strings.Cut(s, "<"+tag+">")
+	if !ok {
+		return ""
+	}
+	i := strings.LastIndex(rest, "</"+tag+">")
+	if i < 0 {
+		return ""
+	}
+	return rest[:i]
+}
+
+// linkTaskNotifications links each task_notification marker and the
+// tool_call Part that started its task, both ways, when that call is in the
+// Session.
+func linkTaskNotifications(msgs []parser.Message) {
+	calls := map[string]*parser.Part{}
+	for i := range msgs {
+		for j := range msgs[i].Parts {
+			p := &msgs[i].Parts[j]
+			if tc, ok := p.Payload.(parser.ToolCallPayload); ok && calls[tc.CallID] == nil {
+				calls[tc.CallID] = p
+			}
+		}
+	}
+	for i := range msgs {
+		for j := range msgs[i].Parts {
+			p := &msgs[i].Parts[j]
+			mp, ok := p.Payload.(parser.MarkerPayload)
+			if !ok || mp.Task == nil || mp.Task.ToolUseID == "" {
+				continue
+			}
+			call := calls[mp.Task.ToolUseID]
+			if call == nil {
+				continue
+			}
+			task := *mp.Task
+			task.CallPart = call.ID
+			mp.Task = &task
+			p.Payload = mp
+			tc := call.Payload.(parser.ToolCallPayload)
+			tc.Notifications = append(tc.Notifications, p.ID)
+			call.Payload = tc
+		}
+	}
 }
 
 func addPart(m *parser.Message, kind string, payload any) {
@@ -774,6 +915,7 @@ const (
 	userCommand                     // a slash_command marker
 	userShell                       // a shell_command marker
 	userCompaction                  // a compaction marker with the summary
+	userTask                        // a <task-notification> block: a task_notification marker when well formed
 )
 
 // userContent is a user line's message.content, or ok=false when the
@@ -889,6 +1031,9 @@ func classifyUser(l *line, warn *parser.Warnings) (kind userKind, blocks []block
 		// Output with its command before it is read with the command.
 		if isShellOutput(s) {
 			return userSkip, nil, ""
+		}
+		if l.Origin.Kind == taskMode || strings.HasPrefix(s, taskOpen) {
+			return userTask, nil, s
 		}
 		for _, p := range []string{"<local-command-stdout>", "<local-command-stderr>", "<local-command-caveat>"} {
 			if strings.HasPrefix(s, p) {
