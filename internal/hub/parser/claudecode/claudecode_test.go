@@ -2,6 +2,7 @@ package claudecode
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -111,6 +112,14 @@ func flatten(ms []parser.Message) []flat {
 				f.Texts = append(f.Texts, "[tool "+pl.Name+" "+pl.Status+"]")
 			case parser.ImagePayload:
 				f.Texts = append(f.Texts, "[image "+pl.MIME+"]")
+			case parser.ThinkingPayload:
+				f.Texts = append(f.Texts, "[thinking "+pl.Text+"]")
+			case parser.MarkerPayload:
+				f.Texts = append(f.Texts, "["+pl.Marker+" "+pl.Text+"]")
+			case parser.UnknownPayload:
+				f.Texts = append(f.Texts, "[unknown "+pl.SourceType+"]")
+			case parser.AttachmentPayload:
+				f.Texts = append(f.Texts, "[attachment "+pl.Label+"]")
 			default:
 				f.Texts = append(f.Texts, "["+p.Kind+"]")
 			}
@@ -140,7 +149,7 @@ func TestParseSimpleConversation(t *testing.T) {
 
 	want := []flat{
 		{ID: "u1", Role: "user", Texts: []string{"hello <b>there</b>"}},
-		{ID: "a1", Role: "assistant", Texts: []string{"Hi!", "[tool Bash ok]", "Done."}},
+		{ID: "a1", Role: "assistant", Texts: []string{"[thinking hmm]", "Hi!", "[tool Bash ok]", "Done."}},
 		{ID: "u3", Role: "user", Texts: []string{"second", "prompt"}},
 	}
 	if got := flatten(res.Messages); !reflect.DeepEqual(got, want) {
@@ -156,7 +165,7 @@ func TestParseSimpleConversation(t *testing.T) {
 	if a.Timestamp != 1788256802000 {
 		t.Errorf("assistant timestamp = %d", a.Timestamp)
 	}
-	if a.Parts[0].ID != "a1.0" || a.Parts[2].ID != "a1.2" {
+	if a.Parts[0].ID != "a1.0" || a.Parts[3].ID != "a1.3" {
 		t.Errorf("part ids = %q %q", a.Parts[0].ID, a.Parts[2].ID)
 	}
 
@@ -172,21 +181,221 @@ func TestParseSimpleConversation(t *testing.T) {
 	}
 }
 
-func TestParseSkipsInjectedAndCommandLines(t *testing.T) {
+func TestParseCommandsAndInjectedLines(t *testing.T) {
 	meta := userLine("u0", "", "2026-09-01T10:00:00.000Z", "caveat")
 	meta["isMeta"] = true
+	att := func(uuid, parent string, a map[string]any) map[string]any {
+		return map[string]any{"type": "attachment", "uuid": uuid, "parentUuid": parent, "timestamp": "2026-09-01T10:00:03.000Z", "attachment": a}
+	}
 	main := jsonl(t,
 		meta,
-		userLine("u1", "u0", "2026-09-01T10:00:01.000Z", "<command-name>/clear</command-name>\n<command-args></command-args>"),
+		userLine("u1", "u0", "2026-09-01T10:00:01.000Z", "<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>"),
 		userLine("u2", "u1", "2026-09-01T10:00:02.000Z", "<local-command-stdout></local-command-stdout>"),
-		userLine("u2b", "u2", "2026-09-01T10:00:02.500Z", "<command-message>review</command-message>\n<command-name>/review</command-name>"),
-		map[string]any{"type": "attachment", "uuid": "at1", "parentUuid": "u2b", "timestamp": "2026-09-01T10:00:03.000Z", "attachment": map[string]any{"type": "reminder"}},
-		userLine("u3", "at1", "2026-09-01T10:00:04.000Z", "real prompt"),
+		userLine("u2a", "u2", "2026-09-01T10:00:02.100Z", "<local-command-stderr>oops</local-command-stderr>"),
+		userLine("u2c", "u2a", "2026-09-01T10:00:02.200Z", "<local-command-caveat>Caveat</local-command-caveat>"),
+		userLine("u2b", "u2c", "2026-09-01T10:00:02.500Z", "<command-message>review</command-message>\n<command-name>/review</command-name>\n<command-args>42</command-args>"),
+		att("at1", "u2b", map[string]any{"type": "total_tokens_reminder"}),
+		att("at2", "at1", map[string]any{"type": "queued_command", "prompt": "meta prompt", "isMeta": true}),
+		att("at3", "at2", map[string]any{"type": "queued_command", "prompt": "queued prompt"}),
+		userLine("u3", "at3", "2026-09-01T10:00:04.000Z", "real prompt"),
 	)
 	res := parse(t, main, nil)
-	want := []flat{{ID: "u3", Role: "user", Texts: []string{"real prompt"}}}
+	want := []flat{
+		{ID: "u1", Role: "user", Texts: []string{"[slash_command /clear]"}},
+		{ID: "u2b", Role: "user", Texts: []string{"[slash_command /review 42]"}},
+		{ID: "at3", Role: "user", Texts: []string{"queued prompt"}},
+		{ID: "u3", Role: "user", Texts: []string{"real prompt"}},
+	}
 	if got := flatten(res.Messages); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v", got)
+	}
+	if len(res.Warnings) != 0 {
+		t.Errorf("warnings = %+v", res.Warnings)
+	}
+}
+
+func TestParseCompaction(t *testing.T) {
+	boundary := map[string]any{
+		"type": "system", "subtype": "compact_boundary", "uuid": "cb", "parentUuid": nil, "logicalParentUuid": "a1",
+		"timestamp": "2026-09-01T10:01:00.000Z", "content": "Conversation compacted", "compactMetadata": map[string]any{"trigger": "auto"},
+	}
+	summary := userLine("s1", "cb", "2026-09-01T10:01:00.100Z", "This session is being continued…")
+	summary["isCompactSummary"] = true
+	summary["isVisibleInTranscriptOnly"] = true
+	// A later summary with no boundary before it is a marker of its own.
+	lone := userLine("s2", "a2", "2026-09-01T10:03:00.000Z", []any{text("Second summary")})
+	lone["isCompactSummary"] = true
+	main := jsonl(t,
+		userLine("u1", "", "2026-09-01T10:00:00.000Z", "before"),
+		asstLine("a1", "u1", "2026-09-01T10:00:01.000Z", "msg_1", text("old answer"), nil),
+		boundary,
+		summary,
+		userLine("u2", "s1", "2026-09-01T10:02:00.000Z", "after"),
+		asstLine("a2", "u2", "2026-09-01T10:02:01.000Z", "msg_2", text("new answer"), nil),
+		lone,
+	)
+	res := parse(t, main, nil)
+	want := []flat{
+		{ID: "u1", Role: "user", Texts: []string{"before"}},
+		{ID: "a1", Role: "assistant", Texts: []string{"old answer"}},
+		{ID: "cb", Role: "assistant", Texts: []string{"[compaction This session is being continued…]"}},
+		{ID: "u2", Role: "user", Texts: []string{"after"}},
+		{ID: "a2", Role: "assistant", Texts: []string{"new answer"}},
+		{ID: "s2", Role: "user", Texts: []string{"[compaction Second summary]"}},
+	}
+	if got := flatten(res.Messages); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v", got)
+	}
+	if len(res.Warnings) != 0 {
+		t.Errorf("warnings = %+v", res.Warnings)
+	}
+
+	// A boundary without a summary keeps its own text.
+	res = parse(t, jsonl(t, userLine("u1", "", "2026-09-01T10:00:00.000Z", "before"),
+		asstLine("a1", "u1", "2026-09-01T10:00:01.000Z", "msg_1", text("old answer"), nil), boundary), nil)
+	if got := flatten(res.Messages); len(got) != 3 || got[2].Texts[0] != "[compaction Conversation compacted]" {
+		t.Errorf("got %+v", got)
+	}
+}
+
+func TestParseLineTypes(t *testing.T) {
+	// Every Raw-only line type and system subtype of claude-code.md §3.1, on
+	// the path, gives neither a Part nor a warning, and doesn't break an
+	// assistant group.
+	types := []string{
+		"summary", "custom-title", "ai-title", "file-history-snapshot", "file-history-delta", "last-prompt",
+		"mode", "permission-mode", "queue-operation", "progress", "atis-latch", "bridge-session", "cost-state",
+		"agent-name", "pr-link", "frame-link", "artifact-autoreact-ledger", "artifact-comment-monitor",
+		"attachment",
+	}
+	subtypes := []string{"turn_duration", "local_command", "away_summary", "stop_hook_summary", "informational", "api_error"}
+	lines := []map[string]any{
+		userLine("u1", "", "2026-09-01T10:00:00.000Z", "go"),
+		asstLine("a1", "u1", "2026-09-01T10:00:01.000Z", "msg_1", text("one"), nil),
+	}
+	parent := "a1"
+	add := func(l map[string]any) {
+		id := fmt.Sprintf("x%d", len(lines))
+		l["uuid"], l["parentUuid"], l["timestamp"] = id, parent, "2026-09-01T10:00:02.000Z"
+		lines = append(lines, l)
+		parent = id
+	}
+	for _, typ := range types {
+		add(map[string]any{"type": typ, "attachment": map[string]any{"type": "reminder"}})
+	}
+	for _, st := range subtypes {
+		add(map[string]any{"type": "system", "subtype": st, "content": "x"})
+	}
+	lines = append(lines, asstLine("a2", parent, "2026-09-01T10:00:03.000Z", "msg_1", text("two"), nil))
+	res := parse(t, jsonl(t, lines...), nil)
+	want := []flat{
+		{ID: "u1", Role: "user", Texts: []string{"go"}},
+		{ID: "a1", Role: "assistant", Texts: []string{"one", "two"}},
+	}
+	if got := flatten(res.Messages); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v", got)
+	}
+	if len(res.Warnings) != 0 {
+		t.Errorf("warnings = %+v", res.Warnings)
+	}
+}
+
+func TestParseUnknownLineTypes(t *testing.T) {
+	main := jsonl(t,
+		userLine("u1", "", "2026-09-01T10:00:00.000Z", "go"),
+		asstLine("a1", "u1", "2026-09-01T10:00:01.000Z", "msg_1", text("one"), nil),
+		// On the path: an unknown Part in its own Message, plus a warning.
+		map[string]any{"type": "brand_new", "uuid": "n1", "parentUuid": "a1", "timestamp": "2026-09-01T10:00:02.000Z", "data": 1},
+		map[string]any{"type": "system", "subtype": "shiny", "uuid": "n2", "parentUuid": "n1", "timestamp": "2026-09-01T10:00:02.500Z"},
+		// Off the path: no uuid, and an abandoned branch. A warning only.
+		map[string]any{"type": "brand_new", "data": 2},
+		map[string]any{"type": "other_new", "uuid": "off", "parentUuid": "u1"},
+		asstLine("a2", "n2", "2026-09-01T10:00:03.000Z", "msg_1", text("two"), nil),
+	)
+	res := parse(t, main, nil)
+	want := []flat{
+		{ID: "u1", Role: "user", Texts: []string{"go"}},
+		{ID: "a1", Role: "assistant", Texts: []string{"one"}},
+		{ID: "n1", Role: "assistant", Texts: []string{"[unknown brand_new]"}},
+		{ID: "n2", Role: "assistant", Texts: []string{"[unknown system:shiny]"}},
+		{ID: "a2", Role: "assistant", Texts: []string{"two"}},
+	}
+	if got := flatten(res.Messages); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v", got)
+	}
+	u := res.Messages[2].Parts[0].Payload.(parser.UnknownPayload)
+	if !strings.Contains(u.Excerpt, `"data":1`) {
+		t.Errorf("excerpt = %q", u.Excerpt)
+	}
+	got := map[string]int{}
+	for _, w := range res.Warnings {
+		got[w.Kind+"/"+w.SourceType] = w.Count
+	}
+	wantW := map[string]int{"unknown_type/brand_new": 2, "unknown_type/system:shiny": 1, "unknown_type/other_new": 1}
+	if !reflect.DeepEqual(got, wantW) {
+		t.Errorf("warnings = %+v", res.Warnings)
+	}
+}
+
+func TestParseUserContent(t *testing.T) {
+	// The user-content table of claude-code.md §3.3.
+	const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+	meta := userLine("m1", "u1", "2026-09-01T10:00:01.000Z", "injected")
+	meta["isMeta"] = true
+	main := jsonl(t,
+		userLine("u1", "", "2026-09-01T10:00:00.000Z", "plain string"),
+		meta,
+		userLine("u2", "m1", "2026-09-01T10:00:02.000Z", []any{
+			text("blocks"),
+			map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": "image/png", "data": png}},
+			map[string]any{"type": "document", "title": "spec.pdf", "source": map[string]any{"type": "base64", "media_type": "application/pdf", "data": ""}},
+			map[string]any{"type": "document", "source": map[string]any{"type": "base64", "media_type": "text/plain", "data": ""}},
+			map[string]any{"type": "tool_result", "tool_use_id": "nope", "content": "x"},
+			map[string]any{"type": "mystery", "v": 1},
+		}),
+	)
+	res := parse(t, main, nil)
+	want := []flat{
+		{ID: "u1", Role: "user", Texts: []string{"plain string"}},
+		{ID: "u2", Role: "user", Texts: []string{"blocks", "[image image/png]", "[attachment spec.pdf]", "[attachment text/plain]", "[unknown mystery]"}},
+	}
+	if got := flatten(res.Messages); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v", got)
+	}
+	got := map[string]int{}
+	for _, w := range res.Warnings {
+		got[w.Kind+"/"+w.SourceType] = w.Count
+	}
+	if !reflect.DeepEqual(got, map[string]int{"unknown_type/mystery": 1, "orphan/tool_result": 1}) {
+		t.Errorf("warnings = %+v", res.Warnings)
+	}
+}
+
+func TestParseAssistantBlocks(t *testing.T) {
+	// The assistant block table of claude-code.md §3.3.
+	apiErr := asstLine("e1", "a5", "2026-09-01T10:00:06.000Z", "msg_err", text("API Error: overloaded"), nil)
+	apiErr["isApiErrorMessage"] = true
+	main := jsonl(t,
+		userLine("u1", "", "2026-09-01T10:00:00.000Z", "go"),
+		asstLine("a1", "u1", "2026-09-01T10:00:01.000Z", "msg_1", map[string]any{"type": "thinking", "thinking": "ponder", "signature": "sig"}, nil),
+		asstLine("a2", "a1", "2026-09-01T10:00:02.000Z", "msg_1", map[string]any{"type": "thinking", "thinking": "", "signature": "sig"}, nil),
+		asstLine("a3", "a2", "2026-09-01T10:00:03.000Z", "msg_1", map[string]any{"type": "redacted_thinking", "data": "xx"}, nil),
+		asstLine("a4", "a3", "2026-09-01T10:00:04.000Z", "msg_1", map[string]any{"type": "server_tool_use", "id": "s1"}, nil),
+		asstLine("a5", "a4", "2026-09-01T10:00:05.000Z", "msg_1", text("answer"), nil),
+		apiErr,
+	)
+	res := parse(t, main, nil)
+	want := []flat{
+		{ID: "u1", Role: "user", Texts: []string{"go"}},
+		{ID: "a1", Role: "assistant", Texts: []string{"[thinking ponder]", "[unknown server_tool_use]", "answer"}},
+		{ID: "e1", Role: "assistant", Texts: []string{"API Error: overloaded"}},
+	}
+	if got := flatten(res.Messages); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v", got)
+	}
+	if len(res.Warnings) != 1 || res.Warnings[0].Kind != "unknown_type" || res.Warnings[0].SourceType != "server_tool_use" ||
+		!strings.Contains(res.Warnings[0].FirstExcerpt, `"id":"s1"`) {
+		t.Errorf("warnings = %+v", res.Warnings)
 	}
 }
 

@@ -162,3 +162,49 @@ func TestFeedChips(t *testing.T) {
 		t.Errorf("projects = %+v", projects)
 	}
 }
+
+func TestFeedWarningsAndDriftBanners(t *testing.T) {
+	now := int64(1_800_000_000_000) // openParsing's clock
+	day := int64(24 * 3600 * 1000)
+	s := seedFeed(t, []feedSession{
+		{machine: "m1", source: "claude-code", last: now - day},        // 1: warnings, 2.1.1, recent
+		{machine: "m1", source: "claude-code", last: now - 2*day},      // 2: warnings, 2.1.1, recent
+		{machine: "m1", source: "claude-code", last: now - 30*day},     // 3: warnings, 2.1.0, old
+		{machine: "m1", source: "claude-code", last: now},              // 4: failed, no warnings
+		{machine: "m1", source: "codex", last: now},                    // 5: clean
+		{machine: "m1", source: "codex", last: now - day, child: true}, // 6: child with warnings, 0.52
+	})
+	ctx := context.Background()
+	for _, q := range []string{
+		`UPDATE sessions SET source_version = '2.1.1' WHERE id IN (1, 2)`,
+		`UPDATE sessions SET source_version = '2.1.0' WHERE id = 3`,
+		`UPDATE sessions SET source_version = '0.52' WHERE id = 6`,
+		`UPDATE sessions SET parse_status = 'failed' WHERE id = 4`,
+		`INSERT INTO parse_warnings (session_id, kind, source_type, count) VALUES (1, 'unknown_type', 'x', 3), (1, 'orphan', '', 1), (2, 'bad_line', '', 1), (3, 'unknown_type', 'y', 1), (6, 'unknown_type', 'z', 1)`,
+	} {
+		if _, err := s.write.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rows, err := s.Feed(ctx, FeedFilter{Warnings: true}, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := ids(rows), []int64{4, 1, 2, 3}; !reflect.DeepEqual(got, want) {
+		t.Errorf("warnings feed = %v, want %v", got, want)
+	}
+	rows, _ = s.Feed(ctx, FeedFilter{Warnings: true, Source: "codex"}, 50)
+	if len(rows) != 0 {
+		t.Errorf("warnings+codex feed = %v", ids(rows))
+	}
+
+	drift, err := s.DriftBanners(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Drift{{Source: "claude-code", SourceVersion: "2.1.1", Sessions: 2}, {Source: "codex", SourceVersion: "0.52", Sessions: 1}}
+	if !reflect.DeepEqual(drift, want) {
+		t.Errorf("drift = %+v", drift)
+	}
+}

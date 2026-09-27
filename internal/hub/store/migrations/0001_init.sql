@@ -113,6 +113,15 @@ CREATE TABLE blobs (
   bytes  BLOB NOT NULL
 );
 
+CREATE TABLE parse_warnings (
+  session_id    INTEGER NOT NULL REFERENCES sessions(id),
+  kind          TEXT NOT NULL,     -- unknown_type | bad_line | missing_field | orphan
+  source_type   TEXT NOT NULL,     -- the Source's type or field name involved, '' if none
+  count         INTEGER NOT NULL,
+  first_excerpt TEXT,              -- short raw JSON sample, at most 500 bytes
+  PRIMARY KEY (session_id, kind, source_type)
+);
+
 CREATE TABLE parse_queue (
   session_id  INTEGER PRIMARY KEY REFERENCES sessions(id),
   priority    INTEGER NOT NULL,   -- 0 = live ingest, 1 = re-parse

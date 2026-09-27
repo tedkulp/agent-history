@@ -1,7 +1,7 @@
 /* Agent History: plain CSS, variant C of docs/prototype/webui. */
-:root{--bg:#fbfbfa;--panel:#fff;--ink:#1d1d1f;--dim:#6b6b70;--line:#e4e4e2;--acc:#3b5bdb;--tool:#f6f6f4;--mark:#ffe066;--add:#e6f6ea;--add-ink:#1c6b33;--del:#fdecec;--del-ink:#9b2226;--bad:#c92a2a;
+:root{--bg:#fbfbfa;--panel:#fff;--ink:#1d1d1f;--dim:#6b6b70;--line:#e4e4e2;--acc:#3b5bdb;--tool:#f6f6f4;--mark:#ffe066;--add:#e6f6ea;--add-ink:#1c6b33;--del:#fdecec;--del-ink:#9b2226;--bad:#c92a2a;--warn:#fff4db;
 --mono:ui-monospace,SFMono-Regular,Menlo,monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
-@media (prefers-color-scheme:dark){:root{--bg:#141416;--panel:#1c1c1f;--ink:#e8e8ea;--dim:#9a9aa2;--line:#2e2e33;--acc:#8ea2ff;--tool:#202024;--mark:#8a6d00;--add:#15301d;--add-ink:#8fe0a4;--del:#3a1a1c;--del-ink:#ffa3a8;--bad:#ff8787}}
+@media (prefers-color-scheme:dark){:root{--bg:#141416;--panel:#1c1c1f;--ink:#e8e8ea;--dim:#9a9aa2;--line:#2e2e33;--acc:#8ea2ff;--tool:#202024;--mark:#8a6d00;--add:#15301d;--add-ink:#8fe0a4;--del:#3a1a1c;--del-ink:#ffa3a8;--bad:#ff8787;--warn:#3a3016}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--sans)}
 a{color:var(--acc);text-decoration:none} a:hover{text-decoration:underline}
@@ -62,3 +62,25 @@ pre.in,pre.out{max-height:480px;margin:0}
 .stub:hover{border-color:var(--acc);color:var(--acc)} .stub.htmx-request{opacity:.5}
 .stub pre.preview{margin:4px 0 0;color:var(--dim)}
 a.img{display:block;max-width:78%;margin:3px 0} a.img img{max-width:100%;max-height:480px;border-radius:8px;border:1px solid var(--line)}
+
+/* Drift banners, markers, thinking, unknown Parts and attachments. */
+.banner{display:block;background:var(--warn);border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin-bottom:8px;color:var(--ink);font-size:13px}
+.msg.marker{align-items:center}
+.marker{font-size:12px;color:var(--dim);background:var(--tool);padding:2px 12px;border-radius:999px;margin:8px 0;max-width:78%;overflow-wrap:anywhere}
+details.marker{border-radius:12px} details.marker>summary{cursor:pointer;text-align:center}
+details.marker .bubble{max-width:none;margin:6px 0 4px;color:var(--ink);font-size:13px}
+.bubble.unknown{background:var(--warn);font-size:12.5px} .msg.user .bubble.unknown{background:var(--warn);color:var(--ink);border-color:var(--line)}
+.bubble.unknown pre{margin:4px 0 0}
+details.think{max-width:78%;font-size:12.5px;color:var(--dim);margin:3px 0} details.think>summary{cursor:pointer}
+.att{font-size:12.5px;color:var(--dim);margin:3px 0}
+details.notes{font-size:12.5px;margin:-10px 0 16px;color:var(--dim)} details.notes>summary{cursor:pointer;color:var(--bad)}
+details.notes ul{margin:6px 0;padding-left:18px} details.notes pre{margin:4px 0 8px;max-height:200px}
+
+/* Transcript: a sticky outline of the user's prompts beside the Messages. */
+.tr{display:grid;grid-template-columns:200px minmax(0,1fr);gap:28px}
+.outline{position:sticky;top:12px;align-self:start;max-height:calc(100vh - 24px);overflow:auto;font-size:12.5px;border-right:1px solid var(--line);padding-right:12px}
+.outline .lab{color:var(--dim);font-size:12px;margin-bottom:6px}
+.outline a{display:block;padding:4px 0 4px 8px;color:var(--dim);border-left:2px solid transparent;overflow-wrap:anywhere}
+.outline a:hover{color:var(--acc);border-color:var(--acc);text-decoration:none}
+.outline .n{font-size:11px}
+@media (max-width:760px){.tr{grid-template-columns:minmax(0,1fr)}.outline{display:none}}

@@ -25,9 +25,21 @@ const (
 
 // Part kinds (hub.md §3.5).
 const (
-	KindText     = "text"
-	KindToolCall = "tool_call"
-	KindImage    = "image"
+	KindText       = "text"
+	KindThinking   = "thinking"
+	KindToolCall   = "tool_call"
+	KindImage      = "image"
+	KindAttachment = "attachment"
+	KindMarker     = "marker"
+	KindUnknown    = "unknown"
+)
+
+// Marker kinds (hub.md §3.5).
+const (
+	MarkerCompaction    = "compaction"
+	MarkerModelChange   = "model_change"
+	MarkerThinkingLevel = "thinking_level"
+	MarkerSlashCommand  = "slash_command"
 )
 
 // Tool call statuses.
@@ -107,6 +119,37 @@ type Part struct {
 // TextPayload is the payload of a text Part.
 type TextPayload struct {
 	Text string `json:"text"`
+}
+
+// ThinkingPayload is the payload of a thinking Part: readable thinking or its
+// summary only.
+type ThinkingPayload struct {
+	Text string `json:"text"`
+}
+
+// AttachmentPayload is the payload of an attachment Part: a label for a file
+// reference, no bytes.
+type AttachmentPayload struct {
+	Label string `json:"label"`
+}
+
+// MarkerPayload is the payload of a marker Part.
+type MarkerPayload struct {
+	Marker string `json:"marker"`
+	Text   string `json:"text"`
+}
+
+// UnknownPayload is the payload of an unknown Part: the Source type name and
+// the first 500 bytes of its raw JSON.
+type UnknownPayload struct {
+	SourceType string `json:"source_type"`
+	Excerpt    string `json:"excerpt"`
+}
+
+// NewUnknown returns the payload of an unknown Part for raw JSON of the given
+// Source type.
+func NewUnknown(sourceType string, raw []byte) UnknownPayload {
+	return UnknownPayload{SourceType: sourceType, Excerpt: Excerpt(string(raw))}
 }
 
 // ToolCallPayload is the payload of a tool_call Part. Parsers set Output to
@@ -240,16 +283,23 @@ func (w *Warnings) Add(kind, sourceType, excerpt string) {
 		w.list[i].Count++
 		return
 	}
-	if len(excerpt) > 500 {
-		// Cut at a character boundary.
-		n := 500
-		for n > 0 && !utf8.RuneStart(excerpt[n]) {
-			n--
-		}
-		excerpt = excerpt[:n]
-	}
 	w.index[k] = len(w.list)
-	w.list = append(w.list, Warning{Kind: kind, SourceType: sourceType, Count: 1, FirstExcerpt: excerpt})
+	w.list = append(w.list, Warning{Kind: kind, SourceType: sourceType, Count: 1, FirstExcerpt: Excerpt(excerpt)})
+}
+
+// excerptMax is the most bytes an excerpt keeps (hub.md §3.5, §3.6).
+const excerptMax = 500
+
+// Excerpt cuts s to at most 500 bytes, at a character boundary.
+func Excerpt(s string) string {
+	if len(s) <= excerptMax {
+		return s
+	}
+	n := excerptMax
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // List returns the aggregated warnings.

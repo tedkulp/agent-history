@@ -32,6 +32,9 @@ templ sourceBadge(source string) {
 
 templ feedPage(v feedView) {
 	@layout("Agent History") {
+		for _, b := range v.Banners {
+			<a class="banner" href={ templ.SafeURL(b.Href) }>⚠ { b.Text }</a>
+		}
 		<div class="chips">
 			for _, row := range v.Chips {
 				if len(row.Chips) > 0 {
@@ -85,43 +88,112 @@ templ feedRows(v feedView) {
 	}
 }
 
-templ transcriptPage(h headerView, msgs []messageView) {
+templ transcriptPage(h headerView, outline []outlineEntry, msgs []messageView) {
 	@layout(h.Title + " · Agent History") {
-		<div class="head">
-			<h1>{ h.Title }</h1>
-			<div class="m">
-				@sourceBadge(h.Source)
-				<a href={ templ.SafeURL(h.MachineHref) }>{ h.Machine }</a>
-				<a href={ templ.SafeURL(h.ProjectHref) } title={ h.ProjectFull }>{ h.Project }</a>
-				if h.GitBranch != "" {
-					<span>⎇ { h.GitBranch }</span>
+		<div class="tr">
+			<nav class="outline">
+				if len(outline) > 0 {
+					<div class="lab">Your prompts</div>
+					for _, o := range outline {
+						<a href={ templ.SafeURL("#m-" + o.ID) }>{ o.Text } <span class="n">{ o.Time }</span></a>
+					}
 				}
-				if h.Model != "" {
-					<span>{ h.Model }</span>
-				}
-				if h.Started != "" {
-					<span>{ h.Started }</span>
+			</nav>
+			<div class="tr-main">
+				<div class="head">
+					<h1>{ h.Title }</h1>
+					<div class="m">
+						@sourceBadge(h.Source)
+						<a href={ templ.SafeURL(h.MachineHref) }>{ h.Machine }</a>
+						<a href={ templ.SafeURL(h.ProjectHref) } title={ h.ProjectFull }>{ h.Project }</a>
+						if h.GitBranch != "" {
+							<span>⎇ { h.GitBranch }</span>
+						}
+						if h.Model != "" {
+							<span>{ h.Model }</span>
+						}
+						if h.Started != "" {
+							<span>{ h.Started }</span>
+						}
+					</div>
+					if h.WarningNote != "" {
+						@notes(h)
+					}
+				</div>
+				for _, m := range msgs {
+					<div class={ "msg", m.Role, templ.KV("marker", m.Marker) } id={ "m-" + m.ID }>
+						for _, c := range m.Chunks {
+							@chunk(c)
+						}
+						if !m.Marker {
+							<span class="time">{ m.Time }</span>
+						}
+					</div>
 				}
 			</div>
 		</div>
-		for _, m := range msgs {
-			<div class={ "msg", m.Role } id={ "m-" + m.ID }>
-				for _, c := range m.Chunks {
-					if c.Tools != nil {
-						@toolCluster(c)
-					} else if c.Image != nil {
-						<a class="img" href={ templ.SafeURL(c.Image.Src) } target="_blank">
-							<img src={ c.Image.Src } alt={ c.Image.Alt } loading="lazy"/>
-						</a>
-					} else {
-						<div class="bubble">
-							@templ.Raw(c.HTML)
-						</div>
+	}
+}
+
+// notes lists the Session's Parse warnings, collapsed (hub.md §4.7).
+templ notes(h headerView) {
+	<details class="notes">
+		<summary>⚠ { h.WarningNote }</summary>
+		<ul>
+			for _, w := range h.Warnings {
+				<li>
+					<b>{ w.Kind }</b>
+					if w.SourceType != "" {
+						<code>{ w.SourceType }</code>
 					}
-				}
-				<span class="time">{ m.Time }</span>
-			</div>
+					×{ strconv.Itoa(w.Count) }
+					if h.SourceVersion != "" {
+						<span class="dim">· { h.Source } { h.SourceVersion }</span>
+					}
+					if w.FirstExcerpt != "" {
+						<pre>{ w.FirstExcerpt }</pre>
+					}
+				</li>
+			}
+		</ul>
+	</details>
+}
+
+// chunk renders one piece of a Message.
+templ chunk(c chunkView) {
+	if c.Tools != nil {
+		@toolCluster(c)
+	} else if c.Image != nil {
+		<a class="img" href={ templ.SafeURL(c.Image.Src) } target="_blank">
+			<img src={ c.Image.Src } alt={ c.Image.Alt } loading="lazy"/>
+		</a>
+	} else if c.Marker != nil {
+		if c.Marker.Body != "" {
+			<details class={ "marker", c.Marker.Kind }>
+				<summary>{ c.Marker.Label }</summary>
+				<div class="bubble">
+					@templ.Raw(c.Marker.Body)
+				</div>
+			</details>
+		} else {
+			<div class={ "marker", c.Marker.Kind }>{ c.Marker.Label }</div>
 		}
+	} else if c.Unknown != nil {
+		<div class="bubble unknown">
+			⚠ unknown <code>{ c.Unknown.SourceType }</code>
+			<pre>{ c.Unknown.Excerpt }</pre>
+		</div>
+	} else if c.Thinking != "" {
+		<details class="think">
+			<summary>💭 thinking</summary>
+			@templ.Raw(c.Thinking)
+		</details>
+	} else if c.Attachment != "" {
+		<div class="att">📎 { c.Attachment }</div>
+	} else {
+		<div class="bubble">
+			@templ.Raw(c.HTML)
+		</div>
 	}
 }
 

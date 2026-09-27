@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -537,5 +538,39 @@ func TestSaveParseSplitsToolOutputAndStoresBlobs(t *testing.T) {
 	s.read.QueryRow(`SELECT count(*) FROM blobs`).Scan(&blobs)
 	if outputs != 1 || blobs != 1 {
 		t.Errorf("tool_outputs = %d, blobs = %d; want 1, 1", outputs, blobs)
+	}
+}
+
+func TestSaveParseRebuildsParseWarnings(t *testing.T) {
+	s, _ := openParsing(t)
+	ctx := context.Background()
+	lines := line1 + `{"type":"brand_new","x":1}` + "\n" + `{"type":"brand_new","x":2}` + "\n" + "{not json\n" + line2
+	appendTo(t, s, protocol.SourceClaudeCode, mainKey, []byte(strings.Replace(lines, `"cwd"`, `"version":"2.1.300","cwd"`, 1)))
+	parseNext(t, s)
+	id := sessionIDOf(t, s, sessUUID)
+
+	h, _, ok, err := s.Transcript(ctx, id)
+	if err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	want := []ParseWarning{
+		{Kind: "unknown_type", SourceType: "brand_new", Count: 2, FirstExcerpt: `{"type":"brand_new","x":1}`},
+		{Kind: "bad_line", SourceType: "", Count: 1, FirstExcerpt: "{not json"},
+	}
+	if h.SourceVersion != "2.1.300" || !reflect.DeepEqual(h.Warnings, want) {
+		t.Fatalf("version = %q, warnings = %+v", h.SourceVersion, h.Warnings)
+	}
+
+	// A re-parse replaces the rows rather than adding to them.
+	if _, err := s.write.Exec(`INSERT INTO parse_warnings (session_id, kind, source_type, count) VALUES (?, 'orphan', 'stale', 1)`, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.write.Exec(`INSERT INTO parse_queue (session_id, priority, enqueued_at, not_before) VALUES (?, 1, 0, 0)`, id); err != nil {
+		t.Fatal(err)
+	}
+	parseNext(t, s)
+	h, _, _, _ = s.Transcript(ctx, id)
+	if !reflect.DeepEqual(h.Warnings, want) {
+		t.Errorf("after re-parse: %+v", h.Warnings)
 	}
 }

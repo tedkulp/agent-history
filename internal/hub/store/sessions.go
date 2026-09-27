@@ -268,7 +268,10 @@ func (s *Store) SaveParse(ctx context.Context, job Job, parserVersion int, res p
 		return err
 	}
 
-	for _, q := range []string{`DELETE FROM parts WHERE session_id = ?`, `DELETE FROM messages WHERE session_id = ?`, `DELETE FROM tool_outputs WHERE session_id = ?`} {
+	for _, q := range []string{
+		`DELETE FROM parts WHERE session_id = ?`, `DELETE FROM messages WHERE session_id = ?`,
+		`DELETE FROM tool_outputs WHERE session_id = ?`, `DELETE FROM parse_warnings WHERE session_id = ?`,
+	} {
 		if _, err := tx.ExecContext(ctx, q, id); err != nil {
 			return err
 		}
@@ -325,6 +328,15 @@ func (s *Store) SaveParse(ctx context.Context, job Job, parserVersion int, res p
 	for _, img := range res.Images {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT OR IGNORE INTO blobs (sha256, mime, bytes) VALUES (?, ?, ?)`, img.SHA256, img.MIME, img.Bytes); err != nil {
+			return err
+		}
+	}
+
+	for _, w := range res.Warnings {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO parse_warnings (session_id, kind, source_type, count, first_excerpt) VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT (session_id, kind, source_type) DO UPDATE SET count = count + excluded.count`,
+			id, w.Kind, w.SourceType, w.Count, nullStr(w.FirstExcerpt)); err != nil {
 			return err
 		}
 	}

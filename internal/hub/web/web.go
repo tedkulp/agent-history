@@ -7,6 +7,8 @@ package web
 import (
 	"context"
 	"embed"
+	"encoding/json"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -18,6 +20,7 @@ import (
 
 	"github.com/a-h/templ"
 
+	"github.com/tedkulp/agent-history/internal/hub/parser"
 	"github.com/tedkulp/agent-history/internal/hub/store"
 )
 
@@ -81,7 +84,14 @@ type chipRow struct {
 	Chips []chip
 }
 
+// driftBanner is one "unrecognised data" banner above the feed (hub.md §4.7).
+type driftBanner struct {
+	Text string
+	Href string
+}
+
 type feedView struct {
+	Banners  []driftBanner
 	Chips    []chipRow
 	Filtered bool
 	Days     []feedDay
@@ -94,10 +104,11 @@ const noProject = "-"
 // feedParams is the feed's state, all of it in the URL.
 type feedParams struct {
 	Machine, Project, Source string
+	Warnings                 bool
 }
 
 func (p feedParams) filter() store.FeedFilter {
-	f := store.FeedFilter{Machine: p.Machine, Source: p.Source}
+	f := store.FeedFilter{Machine: p.Machine, Source: p.Source, Warnings: p.Warnings}
 	if p.Project != "" {
 		cwd := p.Project
 		if cwd == noProject {
@@ -115,6 +126,9 @@ func (p feedParams) url(extra ...string) string {
 		if val != "" {
 			v.Set(k, val)
 		}
+	}
+	if p.Warnings {
+		v.Set("warnings", "1")
 	}
 	for i := 0; i+1 < len(extra); i += 2 {
 		v.Set(extra[i], extra[i+1])
@@ -144,7 +158,7 @@ func projectParam(cwd string) string {
 
 func (s *server) feed(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	p := feedParams{Machine: q.Get("machine"), Project: q.Get("project"), Source: q.Get("source")}
+	p := feedParams{Machine: q.Get("machine"), Project: q.Get("project"), Source: q.Get("source"), Warnings: q.Get("warnings") == "1"}
 	if p.Machine == "" {
 		p.Project = ""
 	}
@@ -176,6 +190,10 @@ func (s *server) feed(w http.ResponseWriter, r *http.Request) {
 		s.internal(w, r, err)
 		return
 	}
+	if v.Banners, err = s.driftBanners(r.Context()); err != nil {
+		s.internal(w, r, err)
+		return
+	}
 	s.render(w, r, http.StatusOK, feedPage(v))
 }
 
@@ -194,7 +212,7 @@ func (s *server) chips(ctx context.Context, p feedParams) ([]chipRow, error) {
 	for _, m := range machines {
 		mrow.Chips = append(mrow.Chips, toggle(chip{Label: m.Label, Title: m.ID}, p.Machine, m.ID, func(v string) feedParams {
 			// A Project belongs to one Machine, so switching Machine drops it.
-			return feedParams{Machine: v, Source: p.Source}
+			return feedParams{Machine: v, Source: p.Source, Warnings: p.Warnings}
 		}))
 	}
 	srow := chipRow{Label: "Source"}
@@ -205,7 +223,16 @@ func (s *server) chips(ctx context.Context, p feedParams) ([]chipRow, error) {
 			return q
 		}))
 	}
-	rows := []chipRow{mrow, srow}
+	cur := ""
+	if p.Warnings {
+		cur = "1"
+	}
+	wrow := chipRow{Label: "Show", Chips: []chip{toggle(chip{Label: "⚠ has warnings", Title: "Sessions with Parse warnings or a failed parse"}, cur, "1", func(v string) feedParams {
+		q := p
+		q.Warnings = v != ""
+		return q
+	})}}
+	rows := []chipRow{mrow, srow, wrow}
 	if p.Machine == "" {
 		return rows, nil
 	}
@@ -224,6 +251,31 @@ func (s *server) chips(ctx context.Context, p feedParams) ([]chipRow, error) {
 		}))
 	}
 	return append(rows, prow), nil
+}
+
+// driftBanners builds one banner per Source version with recent Parse
+// warnings, linking to those Sessions (hub.md §4.7).
+func (s *server) driftBanners(ctx context.Context) ([]driftBanner, error) {
+	drift, err := s.store.DriftBanners(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []driftBanner
+	for _, d := range drift {
+		name := d.Source
+		if d.SourceVersion != "" {
+			name += " " + d.SourceVersion
+		}
+		n := "1 Session has"
+		if d.Sessions != 1 {
+			n = strconv.Itoa(d.Sessions) + " Sessions have"
+		}
+		out = append(out, driftBanner{
+			Text: name + ": " + n + " unrecognised data",
+			Href: feedParams{Source: d.Source, Warnings: true}.url(),
+		})
+	}
+	return out, nil
 }
 
 // toggle completes chip c for the value val of a param now set to cur. The
@@ -315,6 +367,7 @@ type headerView struct {
 	Started     string
 	MachineHref string
 	ProjectHref string
+	WarningNote string // the Notes summary; "" without warnings
 }
 
 type messageView struct {
@@ -322,6 +375,14 @@ type messageView struct {
 	Role   string
 	Time   string
 	Chunks []chunkView
+	Marker bool // only marker Parts: a centred pill, no time
+}
+
+// outlineEntry is one user prompt in the Transcript's outline.
+type outlineEntry struct {
+	ID   string
+	Text string
+	Time string
 }
 
 func (s *server) transcript(w http.ResponseWriter, r *http.Request) {
@@ -344,16 +405,80 @@ func (s *server) transcript(w http.ResponseWriter, r *http.Request) {
 	hv.Project, hv.ProjectFull = projectName(h.ProjectCwd)
 	hv.MachineHref = feedURL(h.MachineID, nil)
 	hv.ProjectHref = feedURL(h.MachineID, &h.ProjectCwd)
-	var views []messageView
+	hv.WarningNote = warningNote(h.Warnings)
+	var (
+		views   []messageView
+		outline []outlineEntry
+	)
 	for _, m := range msgs {
 		v := messageView{ID: m.ID, Role: m.Role, Time: s.localTime(m.Timestamp, "Jan 2 15:04")}
 		v.Chunks = s.chunks(id, m.Parts)
 		// Messages with nothing renderable yet are skipped.
-		if len(v.Chunks) > 0 {
-			views = append(views, v)
+		if len(v.Chunks) == 0 {
+			continue
+		}
+		v.Marker = true
+		for _, c := range v.Chunks {
+			v.Marker = v.Marker && c.Marker != nil
+		}
+		views = append(views, v)
+		if m.Role == parser.MessageUser {
+			if t := promptLine(m.Parts); t != "" {
+				outline = append(outline, outlineEntry{ID: m.ID, Text: t, Time: s.localTime(m.Timestamp, "15:04")})
+			}
 		}
 	}
-	s.render(w, r, http.StatusOK, transcriptPage(hv, views))
+	s.render(w, r, http.StatusOK, transcriptPage(hv, outline, views))
+}
+
+// promptLine is the first line of a user Message's first text Part, for the
+// outline.
+func promptLine(parts []store.TranscriptPart) string {
+	for _, p := range parts {
+		if p.Kind != parser.KindText {
+			continue
+		}
+		var tp parser.TextPayload
+		if json.Unmarshal([]byte(p.Payload), &tp) != nil {
+			continue
+		}
+		for _, l := range strings.Split(tp.Text, "\n") {
+			if l = strings.TrimSpace(l); l != "" {
+				return cut(l, 60)
+			}
+		}
+	}
+	return ""
+}
+
+// warningNote summarises Parse warnings, e.g. "12 items not understood
+// (unknown_type: foo ×10, orphan: tool_result ×2)" (hub.md §4.7).
+func warningNote(ws []store.ParseWarning) string {
+	if len(ws) == 0 {
+		return ""
+	}
+	var (
+		total int
+		kinds []string
+	)
+	for i, w := range ws {
+		total += w.Count
+		switch {
+		case i < 3:
+			k := w.Kind
+			if w.SourceType != "" {
+				k += ": " + w.SourceType
+			}
+			kinds = append(kinds, fmt.Sprintf("%s ×%d", k, w.Count))
+		case i == 3:
+			kinds = append(kinds, "…")
+		}
+	}
+	items := "items"
+	if total == 1 {
+		items = "item"
+	}
+	return fmt.Sprintf("%d %s not understood (%s)", total, items, strings.Join(kinds, ", "))
 }
 
 func (s *server) render(w http.ResponseWriter, r *http.Request, status int, c templ.Component) {

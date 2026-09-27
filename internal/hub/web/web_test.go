@@ -435,3 +435,94 @@ func TestTranscriptToolCallsAndImages(t *testing.T) {
 		}
 	}
 }
+
+func TestTranscriptMarkersWarningsAndOutline(t *testing.T) {
+	now := time.Now().UTC()
+	ts := func(s int) string {
+		return now.Add(time.Duration(s-100) * time.Second).Format("2006-01-02T15:04:05.000Z")
+	}
+	lines := []map[string]any{
+		{"type": "user", "uuid": "u1", "parentUuid": nil, "timestamp": ts(0), "cwd": "/Users/ted/src/app", "version": "2.1.999",
+			"message": map[string]any{"role": "user", "content": "First prompt\nsecond line"}},
+		{"type": "assistant", "uuid": "a1", "parentUuid": "u1", "timestamp": ts(1),
+			"message": map[string]any{"id": "msg_1", "model": "m", "content": []any{map[string]any{"type": "thinking", "thinking": "*pondering*"}}}},
+		{"type": "assistant", "uuid": "a2", "parentUuid": "a1", "timestamp": ts(2),
+			"message": map[string]any{"id": "msg_1", "model": "m", "content": []any{map[string]any{"type": "text", "text": "old answer"}}}},
+		{"type": "system", "subtype": "compact_boundary", "uuid": "cb", "parentUuid": nil, "logicalParentUuid": "a2", "timestamp": ts(3), "content": "Conversation compacted"},
+		{"type": "user", "uuid": "s1", "parentUuid": "cb", "timestamp": ts(4), "isCompactSummary": true,
+			"message": map[string]any{"role": "user", "content": "Summary of <b>earlier</b> work"}},
+		{"type": "user", "uuid": "c1", "parentUuid": "s1", "timestamp": ts(5),
+			"message": map[string]any{"role": "user", "content": "<command-name>/review</command-name>\n<command-args>42</command-args>"}},
+		{"type": "user", "uuid": "i1", "parentUuid": "c1", "timestamp": ts(6), "isMeta": true,
+			"message": map[string]any{"role": "user", "content": "INJECTED CONTEXT"}},
+		{"type": "attachment", "uuid": "at1", "parentUuid": "i1", "timestamp": ts(7), "attachment": map[string]any{"type": "skill_listing", "content": "ATTACHED LISTING"}},
+		{"type": "brand_new", "uuid": "n1", "parentUuid": "at1", "timestamp": ts(8), "payload": "<i>x</i>"},
+		{"type": "user", "uuid": "u2", "parentUuid": "n1", "timestamp": ts(9),
+			"message": map[string]any{"role": "user", "content": []any{
+				map[string]any{"type": "text", "text": "Second prompt"},
+				map[string]any{"type": "document", "title": "spec.pdf", "source": map[string]any{"type": "base64", "media_type": "application/pdf", "data": ""}},
+			}}},
+		{"type": "future_type", "data": 1},
+	}
+	var main strings.Builder
+	enc := json.NewEncoder(&main)
+	enc.SetEscapeHTML(false) // keep raw < in lines, as Claude Code writes them
+	for _, l := range lines {
+		if err := enc.Encode(l); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srv := newSiteRecords(t, []record{
+		{"m1", "-Users-ted-src-app/" + sess + ".jsonl", main.String()},
+		{"m1", "-Users-ted-src-app/" + uuid(2) + ".jsonl", sessionLine("/Users/ted/src/app", "clean one", 1)},
+	})
+
+	_, feed := get(t, srv.URL+"/")
+	for _, want := range []string{
+		`<a class="banner" href="/?source=claude-code&amp;warnings=1">⚠ claude-code 2.1.999: 1 Session has unrecognised data</a>`,
+		`href="/?warnings=1"`, "⚠ has warnings", "clean one",
+	} {
+		if !strings.Contains(feed, want) {
+			t.Errorf("feed lacks %q", want)
+		}
+	}
+	_, filtered := get(t, srv.URL+"/?warnings=1&source=claude-code")
+	if strings.Contains(filtered, "clean one") || !strings.Contains(filtered, "First prompt") {
+		t.Error("the has-warnings chip does not filter")
+	}
+	if !strings.Contains(filtered, `class="chip on" href="/?source=claude-code" title="Sessions with Parse warnings`) {
+		t.Error("the has-warnings chip does not toggle off")
+	}
+
+	i := strings.Index(filtered, `href="/sessions/`)
+	link := filtered[i+len(`href="`):]
+	_, page := get(t, srv.URL+link[:strings.Index(link, `"`)])
+	for _, want := range []string{
+		// Outline of the user's prompts, first lines only.
+		`<a href="#m-u1">First prompt <span class="n">`, `<a href="#m-u2">Second prompt <span class="n">`,
+		// Notes with the warnings, source version and excerpts.
+		"⚠ 2 items not understood (unknown_type: brand_new ×1, unknown_type: future_type ×1)",
+		"· claude-code 2.1.999", "{&#34;data&#34;:1,&#34;type&#34;:&#34;future_type&#34;}",
+		// Thinking collapsed, markers as pills, the unknown line, the attachment.
+		`<details class="think"><summary>💭 thinking</summary><p><em>pondering</em></p>`,
+		`<details class="marker compaction"><summary>Conversation compacted</summary>`, "Summary of &lt;b&gt;earlier&lt;/b&gt; work",
+		`<div class="marker slash_command">/review 42</div>`,
+		`⚠ unknown <code>brand_new</code>`, "&lt;i&gt;x&lt;/i&gt;",
+		"📎 spec.pdf",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("transcript lacks %q", want)
+		}
+	}
+	for _, bad := range []string{"INJECTED CONTEXT", "ATTACHED LISTING", `href="#m-c1"`, "<i>x</i>"} {
+		if strings.Contains(page, bad) {
+			t.Errorf("transcript shows %q", bad)
+		}
+	}
+	order := []string{`id="m-u1"`, `id="m-a1"`, `id="m-cb"`, `id="m-c1"`, `id="m-n1"`, `id="m-u2"`}
+	for k := 1; k < len(order); k++ {
+		if a, b := strings.Index(page, order[k-1]), strings.Index(page, order[k]); a < 0 || b < a {
+			t.Errorf("%s not before %s", order[k-1], order[k])
+		}
+	}
+}

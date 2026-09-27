@@ -19,7 +19,7 @@ import (
 
 // version is the parser_version. Bump it whenever output changes for
 // existing data (hub.md §4.5).
-const version = 2
+const version = 3
 
 const (
 	layout     = "jsonl"
@@ -92,6 +92,8 @@ type line struct {
 	IsSidechain       bool            `json:"isSidechain"`
 	IsMeta            bool            `json:"isMeta"`
 	IsCompactSummary  bool            `json:"isCompactSummary"`
+	Content           json.RawMessage `json:"content"` // system lines
+	Attachment        json.RawMessage `json:"attachment"`
 	Timestamp         string          `json:"timestamp"`
 	Cwd               string          `json:"cwd"`
 	GitBranch         string          `json:"gitBranch"`
@@ -103,6 +105,43 @@ type line struct {
 
 	raw []byte
 	ts  int64
+	// unknown is the Source type of a line the parser doesn't know, "" for
+	// a known one.
+	unknown string
+}
+
+// rawOnly are the line types kept in the Raw record only, beyond user,
+// assistant, system and attachment (claude-code.md §3.1).
+var rawOnly = map[string]bool{
+	"summary": true, "custom-title": true, "ai-title": true,
+	"file-history-snapshot": true, "file-history-delta": true, "last-prompt": true, "mode": true,
+	"permission-mode": true, "queue-operation": true, "progress": true, "atis-latch": true,
+	"bridge-session": true, "cost-state": true, "agent-name": true, "pr-link": true, "frame-link": true,
+	"artifact-autoreact-ledger": true, "artifact-comment-monitor": true,
+}
+
+// rawOnlySystem are the system subtypes kept in the Raw record only.
+var rawOnlySystem = map[string]bool{
+	"turn_duration": true, "local_command": true, "away_summary": true,
+	"stop_hook_summary": true, "informational": true, "api_error": true,
+}
+
+const compactBoundary = "compact_boundary"
+
+// unknownType returns the Source type of a line the parser doesn't know
+// (claude-code.md §3.1): its type, or system:<subtype> for an unknown system
+// subtype. It is "" for a known line.
+func unknownType(l *line) string {
+	switch {
+	case l.Type == "user", l.Type == "assistant", l.Type == "attachment", rawOnly[l.Type]:
+		return ""
+	case l.Type == "system":
+		if l.Subtype == compactBoundary || rawOnlySystem[l.Subtype] {
+			return ""
+		}
+		return "system:" + l.Subtype
+	}
+	return l.Type
 }
 
 type apiMessage struct {
@@ -132,11 +171,15 @@ type block struct {
 	Content   json.RawMessage `json:"content"`     // tool_result
 	IsError   bool            `json:"is_error"`    // tool_result
 	ToolName  string          `json:"tool_name"`   // tool_reference
+	Thinking  string          `json:"thinking"`    // thinking
+	Title     string          `json:"title"`       // document
 	Source    *struct {
 		Type      string `json:"type"`
 		MediaType string `json:"media_type"`
 		Data      string `json:"data"`
-	} `json:"source"` // image
+	} `json:"source"` // image, document
+
+	raw json.RawMessage
 }
 
 // Parse implements parser.Parser.
@@ -170,6 +213,9 @@ func (*Parser) Parse(in parser.Input) (parser.Result, error) {
 			if l.ts > res.Session.LastActivityAt {
 				res.Session.LastActivityAt = l.ts
 			}
+		}
+		if l.unknown = unknownType(l); l.unknown != "" {
+			warn.Add(parser.WarnUnknownType, l.unknown, string(raw))
 		}
 		if res.Session.Cwd == "" {
 			res.Session.Cwd = l.Cwd
@@ -329,15 +375,73 @@ func buildMessages(in parser.Input, path []*line, warn *parser.Warnings) ([]pars
 		}
 		cur, curAPIID = nil, ""
 	}
-	for i, l := range path {
+	// marker appends a Message holding one marker Part.
+	marker := func(l *line, role, kind, text string) {
+		m := parser.Message{ID: parser.SafeID(l.UUID), Role: role, Timestamp: l.ts}
+		addPart(&m, parser.KindMarker, parser.MarkerPayload{Marker: kind, Text: text})
+		msgs = append(msgs, m)
+	}
+	for i := 0; i < len(path); i++ {
+		l := path[i]
+		if l.unknown != "" {
+			flush()
+			m := parser.Message{ID: parser.SafeID(l.UUID), Role: parser.MessageAssistant, Timestamp: l.ts}
+			addPart(&m, parser.KindUnknown, parser.NewUnknown(l.unknown, l.raw))
+			msgs = append(msgs, m)
+			continue
+		}
 		switch l.Type {
+		case "system":
+			if l.Subtype != compactBoundary {
+				continue
+			}
+			flush()
+			// The summary line that follows a boundary is the same compaction:
+			// one marker, with the summary as its text.
+			text := "Conversation compacted"
+			if json.Unmarshal(l.Content, &text) != nil || text == "" {
+				text = "Conversation compacted"
+			}
+			if i+1 < len(path) && path[i+1].Type == "user" && path[i+1].IsCompactSummary {
+				i++
+				if s := userText(path[i]); s != "" {
+					text = s
+				}
+			}
+			marker(l, parser.MessageAssistant, parser.MarkerCompaction, text)
+		case "attachment":
+			// Injected context is Raw only, except a queued prompt.
+			var a struct {
+				Type   string          `json:"type"`
+				IsMeta bool            `json:"isMeta"`
+				Prompt json.RawMessage `json:"prompt"`
+			}
+			if json.Unmarshal(l.Attachment, &a) != nil || a.Type != "queued_command" || a.IsMeta {
+				continue
+			}
+			flush()
+			var prompt string
+			if json.Unmarshal(a.Prompt, &prompt) != nil {
+				warn.Add(parser.WarnMissingField, "attachment.prompt", string(l.raw))
+				continue
+			}
+			m := parser.Message{ID: parser.SafeID(l.UUID), Role: parser.MessageUser, Timestamp: l.ts}
+			addText(&m, prompt)
+			msgs = append(msgs, m)
 		case "user":
-			kind, blocks := classifyUser(l, warn)
+			kind, blocks, text := classifyUser(l, warn)
 			if kind == userToolResults {
 				continue
 			}
 			flush()
-			if kind == userSkip {
+			switch kind {
+			case userSkip:
+				continue
+			case userCompaction:
+				marker(l, parser.MessageUser, parser.MarkerCompaction, text)
+				continue
+			case userCommand:
+				marker(l, parser.MessageUser, parser.MarkerSlashCommand, text)
 				continue
 			}
 			m := parser.Message{ID: parser.SafeID(l.UUID), Role: parser.MessageUser, Timestamp: l.ts}
@@ -347,6 +451,16 @@ func buildMessages(in parser.Input, path []*line, warn *parser.Warnings) ([]pars
 					addText(&m, bl.Text)
 				case "image":
 					b.addImage(&m, bl, l.raw)
+				case "document":
+					label := bl.Title
+					if label == "" && bl.Source != nil {
+						label = bl.Source.MediaType
+					}
+					addPart(&m, parser.KindAttachment, parser.AttachmentPayload{Label: label})
+				case "tool_result":
+					// Merged into its call.
+				default:
+					b.addUnknown(&m, bl)
 				}
 			}
 			msgs = append(msgs, m)
@@ -379,10 +493,20 @@ func buildMessages(in parser.Input, path []*line, warn *parser.Warnings) ([]pars
 				switch bl.Type {
 				case "text":
 					addText(cur, bl.Text)
+				case "thinking":
+					// Claude Code often keeps only the signature; an empty
+					// thinking block has nothing to show.
+					if bl.Thinking != "" {
+						addPart(cur, parser.KindThinking, parser.ThinkingPayload{Text: bl.Thinking})
+					}
+				case "redacted_thinking":
+					// Raw only.
 				case "tool_use":
 					b.addToolCall(cur, bl, i)
 				case "image":
 					b.addImage(cur, bl, l.raw)
+				default:
+					b.addUnknown(cur, bl)
 				}
 			}
 		}
@@ -413,6 +537,13 @@ func addPart(m *parser.Message, kind string, payload any) {
 
 func addText(m *parser.Message, text string) {
 	addPart(m, parser.KindText, parser.TextPayload{Text: text})
+}
+
+// addUnknown adds an unknown Part for a block type the parser doesn't know,
+// with an unknown_type warning.
+func (b *builder) addUnknown(m *parser.Message, bl block) {
+	b.warn.Add(parser.WarnUnknownType, bl.Type, string(bl.raw))
+	addPart(m, parser.KindUnknown, parser.NewUnknown(bl.Type, bl.raw))
 }
 
 // addImage adds an image Part for a base64 image block. Other sources carry
@@ -533,7 +664,9 @@ func (b *builder) stitchSpill(out, callID string) string {
 const (
 	userMessage     = iota // a user Message
 	userToolResults        // only tool results: no Message
-	userSkip               // injected context or a command line: Raw only
+	userSkip               // injected context or command output: Raw only
+	userCommand            // a slash_command marker
+	userCompaction         // a compaction marker with the summary
 )
 
 // userBlocks returns a user line's content blocks, or nil for string content.
@@ -547,33 +680,83 @@ func userBlocks(l *line) []block {
 	return contentBlocks(m.Content)
 }
 
-// classifyUser classifies a user line and returns its content blocks; string
-// content comes back as one text block.
-func classifyUser(l *line, warn *parser.Warnings) (kind int, blocks []block) {
-	if l.IsMeta || l.IsCompactSummary {
-		return userSkip, nil
+// userText is a user line's text: its string content, or its text blocks
+// joined by newlines.
+func userText(l *line) string {
+	var m struct {
+		Content json.RawMessage `json:"content"`
+	}
+	if json.Unmarshal(l.Message, &m) != nil {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(m.Content, &s) == nil {
+		return s
+	}
+	var texts []string
+	for _, b := range contentBlocks(m.Content) {
+		if b.Type == "text" {
+			texts = append(texts, b.Text)
+		}
+	}
+	return strings.Join(texts, "\n")
+}
+
+var (
+	commandNameRe = regexp.MustCompile(`(?s)<command-name>(.*?)</command-name>`)
+	commandArgsRe = regexp.MustCompile(`(?s)<command-args>(.*?)</command-args>`)
+)
+
+// commandText is a slash command's marker text: its name plus its
+// arguments, e.g. "/review 42".
+func commandText(s string) string {
+	var name, args string
+	if m := commandNameRe.FindStringSubmatch(s); m != nil {
+		name = strings.TrimSpace(m[1])
+	}
+	if name != "" && !strings.HasPrefix(name, "/") {
+		name = "/" + name
+	}
+	if m := commandArgsRe.FindStringSubmatch(s); m != nil {
+		args = strings.TrimSpace(m[1])
+	}
+	return strings.TrimSpace(name + " " + args)
+}
+
+// classifyUser classifies a user line and returns its content blocks (string
+// content comes back as one text block) or, for a marker, its text.
+func classifyUser(l *line, warn *parser.Warnings) (kind int, blocks []block, text string) {
+	if l.IsMeta {
+		return userSkip, nil, ""
+	}
+	if l.IsCompactSummary {
+		return userCompaction, nil, userText(l)
 	}
 	var m struct {
 		Content json.RawMessage `json:"content"`
 	}
 	if json.Unmarshal(l.Message, &m) != nil {
 		warn.Add(parser.WarnMissingField, "message", string(l.raw))
-		return userSkip, nil
+		return userSkip, nil, ""
 	}
 	var s string
 	if json.Unmarshal(m.Content, &s) == nil {
 		// A skill invocation writes <command-message> before <command-name>;
 		// both are the same slash-command line.
-		for _, p := range []string{"<command-name>", "<command-message>", "<local-command-stdout>", "<local-command-stderr>", "<local-command-caveat>"} {
+		if strings.HasPrefix(s, "<command-name>") || strings.HasPrefix(s, "<command-message>") {
+			return userCommand, nil, commandText(s)
+		}
+		for _, p := range []string{"<local-command-stdout>", "<local-command-stderr>", "<local-command-caveat>"} {
 			if strings.HasPrefix(s, p) {
-				return userSkip, nil
+				return userSkip, nil, ""
 			}
 		}
-		return userMessage, []block{{Type: "text", Text: s}}
+		return userMessage, []block{{Type: "text", Text: s}}, ""
 	}
-	if json.Unmarshal(m.Content, &blocks) != nil || len(blocks) == 0 {
+	blocks = contentBlocks(m.Content)
+	if len(blocks) == 0 {
 		warn.Add(parser.WarnMissingField, "message.content", string(l.raw))
-		return userSkip, nil
+		return userSkip, nil, ""
 	}
 	kind = userToolResults
 	for _, b := range blocks {
@@ -581,11 +764,24 @@ func classifyUser(l *line, warn *parser.Warnings) (kind int, blocks []block) {
 			kind = userMessage
 		}
 	}
-	return kind, blocks
+	return kind, blocks, ""
 }
 
+// contentBlocks decodes a block list, keeping each block's raw JSON. It is
+// nil for anything else.
 func contentBlocks(raw json.RawMessage) []block {
-	var bs []block
-	json.Unmarshal(raw, &bs)
+	var rs []json.RawMessage
+	if json.Unmarshal(raw, &rs) != nil {
+		return nil
+	}
+	bs := make([]block, 0, len(rs))
+	for _, r := range rs {
+		var b block
+		if json.Unmarshal(r, &b) != nil {
+			b = block{Type: "?"}
+		}
+		b.raw = r
+		bs = append(bs, b)
+	}
 	return bs
 }

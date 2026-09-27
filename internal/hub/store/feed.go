@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/tedkulp/agent-history/internal/hub/parser"
 )
@@ -33,11 +34,16 @@ const feedVisible = `s.parent_session_id IS NULL AND s.parsed_at IS NOT NULL`
 // FeedFilter narrows the feed to the active chips (hub.md §4.7). Empty fields
 // don't filter.
 type FeedFilter struct {
-	Machine string
-	Source  string
-	Project *string // nil = any; "" = No project
-	Before  *Cursor // only rows older than this one (later in feed order)
+	Machine  string
+	Source   string
+	Project  *string // nil = any; "" = No project
+	Warnings bool    // only Sessions with Parse warnings or a failed parse
+	Before   *Cursor // only rows older than this one (later in feed order)
 }
+
+// hasWarnings selects Sessions with any Parse warning or a failed parse: the
+// "has warnings" chip (hub.md §4.7).
+const hasWarnings = `(s.parse_status = 'failed' OR EXISTS (SELECT 1 FROM parse_warnings w WHERE w.session_id = s.id))`
 
 // Cursor is the position of a feed row: its last_activity_at, with the id
 // breaking ties so paging neither skips nor repeats rows.
@@ -66,6 +72,9 @@ func (s *Store) Feed(ctx context.Context, f FeedFilter, limit int) ([]FeedRow, e
 			where = append(where, `s.project_cwd = ?`)
 			args = append(args, *f.Project)
 		}
+	}
+	if f.Warnings {
+		where = append(where, hasWarnings)
 	}
 	if f.Before != nil {
 		where = append(where, `(coalesce(s.last_activity_at, 0), s.id) < (?, ?)`)
@@ -166,6 +175,50 @@ func (s *Store) MachineProjects(ctx context.Context, machineID string) ([]Projec
 	return out, rows.Err()
 }
 
+// driftWindow is how recently a Session must have been active for its
+// warnings to raise a drift banner (hub.md §4.7).
+const driftWindow = 7 * 24 * time.Hour
+
+// Drift is one drift banner: Sessions of a Source version with Parse warnings.
+type Drift struct {
+	Source        string
+	SourceVersion string // "" when unknown
+	Sessions      int
+}
+
+// DriftBanners lists each (source, source_version) with Parse warnings where
+// at least one Session with warnings was active in the last 7 days.
+func (s *Store) DriftBanners(ctx context.Context) ([]Drift, error) {
+	rows, err := s.read.QueryContext(ctx, `
+		SELECT s.source, coalesce(s.source_version, ''), count(*)
+		FROM sessions s
+		WHERE EXISTS (SELECT 1 FROM parse_warnings w WHERE w.session_id = s.id)
+		GROUP BY s.source, coalesce(s.source_version, '')
+		HAVING max(coalesce(s.last_activity_at, 0)) >= ?
+		ORDER BY s.source, coalesce(s.source_version, '')`, s.now()-driftWindow.Milliseconds())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Drift
+	for rows.Next() {
+		var d Drift
+		if err := rows.Scan(&d.Source, &d.SourceVersion, &d.Sessions); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// ParseWarning is one aggregated Parse warning of a Session (hub.md §3.6).
+type ParseWarning struct {
+	Kind         string
+	SourceType   string
+	Count        int
+	FirstExcerpt string
+}
+
 // SessionHeader is the Session data shown above a Transcript.
 type SessionHeader struct {
 	ID         int64
@@ -178,6 +231,9 @@ type SessionHeader struct {
 	GitBranch  string
 	Model      string
 	StartedAt  int64
+	// SourceVersion and Warnings are for the Notes (hub.md §4.7).
+	SourceVersion string
+	Warnings      []ParseWarning
 }
 
 // TranscriptMessage is one Message with its Parts, in order.
@@ -200,14 +256,17 @@ type TranscriptPart struct {
 func (s *Store) Transcript(ctx context.Context, id int64) (h SessionHeader, msgs []TranscriptMessage, ok bool, err error) {
 	err = s.read.QueryRowContext(ctx, `
 		SELECT s.id, s.source, s.native_id, coalesce(s.title, ''), m.id, `+machineLabel+`, coalesce(s.project_cwd, ''),
-			coalesce(s.git_branch, ''), coalesce(s.model, ''), coalesce(s.started_at, 0)
+			coalesce(s.git_branch, ''), coalesce(s.model, ''), coalesce(s.started_at, 0), coalesce(s.source_version, '')
 		FROM sessions s JOIN machines m ON m.id = s.machine_id
 		WHERE s.id = ? AND s.parsed_at IS NOT NULL`, id).Scan(
-		&h.ID, &h.Source, &h.NativeID, &h.Title, &h.MachineID, &h.Machine, &h.ProjectCwd, &h.GitBranch, &h.Model, &h.StartedAt)
+		&h.ID, &h.Source, &h.NativeID, &h.Title, &h.MachineID, &h.Machine, &h.ProjectCwd, &h.GitBranch, &h.Model, &h.StartedAt, &h.SourceVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return h, nil, false, nil
 	}
 	if err != nil {
+		return h, nil, false, err
+	}
+	if h.Warnings, err = s.parseWarnings(ctx, id); err != nil {
 		return h, nil, false, err
 	}
 
@@ -238,6 +297,26 @@ func (s *Store) Transcript(ctx context.Context, id int64) (h SessionHeader, msgs
 		}
 	}
 	return h, msgs, true, rows.Err()
+}
+
+// parseWarnings lists a Session's Parse warnings, most frequent first.
+func (s *Store) parseWarnings(ctx context.Context, sessionID int64) ([]ParseWarning, error) {
+	rows, err := s.read.QueryContext(ctx, `
+		SELECT kind, source_type, count, coalesce(first_excerpt, '') FROM parse_warnings
+		WHERE session_id = ? ORDER BY count DESC, kind, source_type`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ParseWarning
+	for rows.Next() {
+		var w ParseWarning
+		if err := rows.Scan(&w.Kind, &w.SourceType, &w.Count, &w.FirstExcerpt); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
 }
 
 // ToolOutput returns the full output of one tool_call Part: from
