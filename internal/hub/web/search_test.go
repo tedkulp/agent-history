@@ -118,6 +118,13 @@ func TestSearchFacetsAddChips(t *testing.T) {
 	if !strings.Contains(body, `name="machine" value="m1"`) || !strings.Contains(body, `name="project" value="-"`) {
 		t.Error("search form drops the active chips")
 	}
+	// The clear button drops the query and keeps the chips.
+	if !strings.Contains(body, `class="clear" href="/?machine=m1&amp;project=-"`) {
+		t.Error("no clear button back to the filtered feed")
+	}
+	if _, home := get(t, srv.URL+"/"); strings.Contains(home, `class="clear"`) {
+		t.Error("clear button shown with no query")
+	}
 	// Chips keep the query.
 	if !strings.Contains(body, `class="chip on" href="/?q=otter"`) {
 		t.Error("Machine chip toggles off without keeping q")

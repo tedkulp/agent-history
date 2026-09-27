@@ -131,6 +131,12 @@ func (p feedParams) withMachine(id string) feedParams {
 	return p
 }
 
+// withQ is p with the search box set to q; "" clears it, keeping the chips.
+func (p feedParams) withQ(q string) feedParams {
+	p.Q = q
+	return p
+}
+
 // url is the feed URL for p plus the extra key/value params.
 func (p feedParams) url(extra ...string) string {
 	v := url.Values{}

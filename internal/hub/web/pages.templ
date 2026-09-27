@@ -36,6 +36,9 @@ templ sourceBadge(source string) {
 templ searchForm(p feedParams) {
 	<form class="search" action="/">
 		<input type="search" name="q" value={ p.Q } placeholder="Search every Transcript on every Machine…" aria-label="Search" autofocus/>
+		if p.Q != "" {
+			<a class="clear" href={ templ.SafeURL(p.withQ("").url()) } title="Clear search" aria-label="Clear search">✕</a>
+		}
 		if p.Machine != "" {
 			<input type="hidden" name="machine" value={ p.Machine }/>
 		}

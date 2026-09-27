@@ -91,8 +91,11 @@ details.notes ul{margin:6px 0;padding-left:18px} details.notes pre{margin:4px 0 
 /* Search: the box, ranked hits and a facet sidebar (hub.md §4.7). */
 mark{background:var(--mark);color:inherit;border-radius:2px;padding:0 1px}
 .msg.user .bubble mark{color:#000}
-.search{margin-bottom:10px}
-.search input{width:100%;font:17px var(--sans);padding:11px 16px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);box-shadow:0 1px 3px #0001}
+.search{margin-bottom:10px;position:relative}
+.search .clear{position:absolute;right:10px;top:50%;transform:translateY(-50%);width:28px;height:28px;line-height:28px;text-align:center;border-radius:50%;color:var(--dim);font-size:15px}
+.search .clear:hover{background:var(--tool);color:var(--ink);text-decoration:none}
+.search input::-webkit-search-cancel-button{display:none}
+.search input{width:100%;font:17px var(--sans);padding:11px 44px 11px 16px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);box-shadow:0 1px 3px #0001}
 .results{display:grid;grid-template-columns:minmax(0,1fr) 220px;gap:24px}
 .hit{display:block;padding:10px 12px;border-radius:8px;color:var(--ink);border:1px solid transparent}
 .hit:hover{border-color:var(--line);background:var(--panel);text-decoration:none}
