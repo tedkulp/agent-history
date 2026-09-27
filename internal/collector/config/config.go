@@ -2,8 +2,11 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -86,4 +89,73 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("config %s: %w", path, err)
 	}
 	return &c, nil
+}
+
+// Header is the comment written at the top of collector.toml.
+const Header = "# Written by `agent-history init`. Safe to edit; restart the service to apply.\n\n"
+
+// Doc is collector.toml as a generic table, so keys the user added survive
+// a rewrite.
+type Doc map[string]any
+
+// Table returns the sub-table at key, creating it if absent. A non-table
+// value at key is replaced.
+func (d Doc) Table(key string) Doc {
+	switch t := d[key].(type) {
+	case map[string]any:
+		return Doc(t)
+	case Doc:
+		return t
+	}
+	t := map[string]any{}
+	d[key] = t
+	return Doc(t)
+}
+
+// Edit reads the file at path as a Doc (empty if the file doesn't exist),
+// applies edit, and writes it back atomically. Comments in the file are not
+// kept; keys and values are.
+func Edit(path string, edit func(Doc) error) error {
+	d := Doc{}
+	if _, err := toml.DecodeFile(path, (*map[string]any)(&d)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("config %s: %w", path, err)
+	}
+	if err := edit(d); err != nil {
+		return err
+	}
+	var b bytes.Buffer
+	b.WriteString(Header)
+	enc := toml.NewEncoder(&b)
+	enc.Indent = ""
+	if err := enc.Encode(map[string]any(d)); err != nil {
+		return fmt.Errorf("config %s: %w", path, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return writeAtomic(path, b.Bytes())
+}
+
+func writeAtomic(path string, b []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".collector-*.toml")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }

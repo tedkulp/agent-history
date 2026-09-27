@@ -4,13 +4,14 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/tedkulp/agent-history/internal/collector/exclude"
 	"github.com/tedkulp/agent-history/internal/collector/hubclient"
 	"github.com/tedkulp/agent-history/internal/collector/runner"
+	"github.com/tedkulp/agent-history/internal/collector/setup"
 	"github.com/tedkulp/agent-history/internal/collector/source"
 	"github.com/tedkulp/agent-history/internal/collector/source/claudecode"
 	"github.com/tedkulp/agent-history/internal/collector/state"
@@ -30,7 +32,11 @@ import (
 const usage = `usage: agent-history <command>
 
 commands:
+  init --hub <url> [--name <display>] [--offline] [--reset-roots]
+            set up this Machine: write collector.toml and register with the Hub
   run       ship every Source's records to the Hub and keep it current
+  set-name <display>
+            change this Machine's display name
   version   print the version
 `
 
@@ -44,8 +50,12 @@ func main() {
 	}
 	var err error
 	switch os.Args[1] {
+	case "init":
+		err = initCmd(os.Args[2:])
 	case "run":
 		err = run()
+	case "set-name":
+		err = setName(os.Args[2:])
 	case "version":
 		fmt.Println(buildinfo.Version)
 	default:
@@ -111,7 +121,7 @@ func run() error {
 	log.Info("collector starting", "version", buildinfo.Version, "hub", cfg.HubURL, "state_dir", dir)
 	return runner.Run(ctx, runner.Config{
 		Hub:            hub,
-		Info:           machineInfo(cfg, home),
+		Info:           setup.MachineInfo(cfg, adapters, hostname(), home, buildinfo.Version),
 		Sources:        sources,
 		Cache:          cache.Load(filepath.Join(dir, "cache.json"), cfg.HubURL, log),
 		Log:            log,
@@ -120,20 +130,87 @@ func run() error {
 	})
 }
 
-func machineInfo(cfg *config.Config, home string) protocol.MachineInfo {
-	host, _ := os.Hostname()
-	host = strings.TrimSuffix(host, ".local")
-	name := cfg.DisplayName
-	if name == "" {
-		name = host
+func initCmd(args []string) error {
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	hubURL := fs.String("hub", "", "base URL of the Hub, e.g. http://hub.vpn:8080")
+	name := fs.String("name", "", "display name (default: the hostname)")
+	offline := fs.Bool("offline", false, "don't register with the Hub")
+	resetRoots := fs.Bool("reset-roots", false, "replace configured Source roots with the defaults")
+	if err := fs.Parse(args); err != nil {
+		return err
 	}
-	return protocol.MachineInfo{
-		DisplayName:      name,
-		Hostname:         host,
-		OS:               runtime.GOOS,
-		Arch:             runtime.GOARCH,
-		HomeDir:          home,
-		CollectorVersion: buildinfo.Version,
-		Sources:          []protocol.SourceInfo{},
+	if fs.NArg() > 0 {
+		return fmt.Errorf("init: unexpected argument %q", fs.Arg(0))
 	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	getenv := os.Getenv
+	if env, err := setup.ShellEnv(context.Background(), os.Getenv("SHELL"), setup.ShellEnvTimeout); err != nil {
+		fmt.Fprintf(os.Stderr, "agent-history: reading the shell environment: %v; using this process's environment\n", err)
+	} else {
+		getenv = func(k string) string { return env[k] }
+	}
+	path := config.DefaultPath(os.Getenv, home)
+	cfg, info, err := setup.Init(context.Background(), setup.Options{
+		ConfigPath: path,
+		HubURL:     *hubURL,
+		Name:       *name,
+		Offline:    *offline,
+		ResetRoots: *resetRoots,
+		Home:       home,
+		Hostname:   hostname(),
+		Version:    buildinfo.Version,
+		Env:        getenv,
+		Adapters:   adapters,
+		Register: func(ctx context.Context, hubURL, machineID string, info protocol.MachineInfo) error {
+			hub, err := hubclient.New(hubURL, machineID, buildinfo.Version, &http.Client{Timeout: 30 * time.Second})
+			if err != nil {
+				return err
+			}
+			return hub.PutMachine(ctx, info)
+		},
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("agent-history %s   machine %s   %q\n", buildinfo.Version, cfg.MachineID, cfg.DisplayName)
+	fmt.Printf("Config   %s\n", path)
+	if *offline {
+		fmt.Printf("Hub      %s  not registered (--offline)\n", cfg.HubURL)
+	} else {
+		fmt.Printf("Hub      %s  registered\n", cfg.HubURL)
+	}
+	fmt.Println()
+	for _, a := range adapters {
+		if !cfg.Sources[a.ID()].IsEnabled() {
+			fmt.Printf("%-12s disabled\n", a.ID())
+		}
+	}
+	for _, si := range info.Sources {
+		state := "not detected"
+		if si.Detected {
+			state = "detected"
+		}
+		fmt.Printf("%-12s %-14s %s\n", si.Source, state, si.Root)
+	}
+	return nil
+}
+
+func setName(args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: agent-history set-name <display>")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	return setup.SetName(config.DefaultPath(os.Getenv, home), args[0])
+}
+
+// hostname is the Machine's hostname, or empty if it can't be read.
+func hostname() string {
+	h, _ := os.Hostname()
+	return h
 }

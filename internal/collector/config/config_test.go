@@ -78,3 +78,59 @@ func TestDefaultPath(t *testing.T) {
 		t.Fatalf("XDG %q", got)
 	}
 }
+
+func TestEditKeepsUserKeys(t *testing.T) {
+	p := writeConfig(t, `
+machine_id = "m"
+hub_url    = "http://h"
+surprise   = [1, 2]
+
+[sources.claude-code]
+root  = "/r"
+extra = "kept"
+
+[mine]
+x = true
+`)
+	err := Edit(p, func(d Doc) error {
+		d["display_name"] = "box"
+		d.Table("sources").Table("claude-code")["root"] = "/new"
+		d.Table("sources").Table("codex")["enabled"] = false
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(p)
+	if !strings.HasPrefix(string(b), Header) {
+		t.Fatalf("missing header:\n%s", b)
+	}
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.DisplayName != "box" || c.Sources["claude-code"].Root != "/new" || c.Sources["codex"].IsEnabled() {
+		t.Fatalf("config %+v", c)
+	}
+	want := map[string]bool{"surprise": true, "sources.claude-code.extra": true, "mine": true, "mine.x": true}
+	for _, k := range c.Unknown {
+		delete(want, k)
+	}
+	if len(want) != 0 {
+		t.Fatalf("user keys lost: %v (unknown %q)", want, c.Unknown)
+	}
+}
+
+func TestEditCreatesFile(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "a", "b", "collector.toml")
+	if err := Edit(p, func(d Doc) error { d["machine_id"] = "m"; d["hub_url"] = "http://h"; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(p); err != nil {
+		t.Fatal(err)
+	}
+	fi, _ := os.Stat(p)
+	if fi.Mode().Perm() != 0o644 {
+		t.Fatalf("mode %v", fi.Mode())
+	}
+}
