@@ -19,7 +19,7 @@ import (
 
 // version is the parser_version. Bump it whenever output changes for
 // existing data (hub.md §4.5).
-const version = 5
+const version = 6
 
 const (
 	layout     = "jsonl"
@@ -512,6 +512,19 @@ func buildMessages(in parser.Input, path []*line, warn *parser.Warnings) ([]pars
 			case userCommand:
 				marker(l, parser.MessageUser, parser.MarkerSlashCommand, text)
 				continue
+			case userShell:
+				// Its output is the next path line, when that is one.
+				var out string
+				if i+1 < len(path) {
+					if o, ok := shellOutput(path[i+1]); ok {
+						out = o
+						i++
+					}
+				}
+				m := parser.Message{ID: parser.SafeID(l.UUID), Role: parser.MessageUser, Timestamp: l.ts}
+				addPart(&m, parser.KindMarker, parser.MarkerPayload{Marker: parser.MarkerShellCommand, Text: text, Output: out})
+				msgs = append(msgs, m)
+				continue
 			}
 			m := parser.Message{ID: parser.SafeID(l.UUID), Role: parser.MessageUser, Timestamp: l.ts}
 			for _, bl := range blocks {
@@ -760,6 +773,7 @@ const (
 	userToolResults                 // only tool results: no Message
 	userSkip                        // injected context or command output: Raw only
 	userCommand                     // a slash_command marker
+	userShell                       // a shell_command marker
 	userCompaction                  // a compaction marker with the summary
 )
 
@@ -801,7 +815,36 @@ func userText(l *line) string {
 var (
 	commandNameRe = regexp.MustCompile(`(?s)<command-name>(.*?)</command-name>`)
 	commandArgsRe = regexp.MustCompile(`(?s)<command-args>(.*?)</command-args>`)
+	bashInputRe   = regexp.MustCompile(`(?s)^<bash-input>(.*?)</bash-input>`)
+	bashStdoutRe  = regexp.MustCompile(`(?s)<bash-stdout>(.*?)</bash-stdout>`)
+	bashStderrRe  = regexp.MustCompile(`(?s)<bash-stderr>(.*?)</bash-stderr>`)
 )
+
+// isShellOutput reports whether s is a ! command's output line.
+func isShellOutput(s string) bool {
+	return strings.HasPrefix(s, "<bash-stdout>") || strings.HasPrefix(s, "<bash-stderr>")
+}
+
+// shellOutput is a ! command's output from its output line: stdout, then
+// stderr, each only when non-empty, joined with a newline. ok is false when
+// l isn't an output line.
+func shellOutput(l *line) (out string, ok bool) {
+	if l.Type != "user" || l.IsMeta {
+		return "", false
+	}
+	c, _ := userContent(l)
+	var s string
+	if json.Unmarshal(c, &s) != nil || !isShellOutput(s) {
+		return "", false
+	}
+	var parts []string
+	for _, re := range []*regexp.Regexp{bashStdoutRe, bashStderrRe} {
+		if m := re.FindStringSubmatch(s); m != nil && m[1] != "" {
+			parts = append(parts, m[1])
+		}
+	}
+	return strings.Join(parts, "\n"), true
+}
 
 // commandText is a slash command's marker text: its name plus its
 // arguments, e.g. "/review 42".
@@ -839,6 +882,13 @@ func classifyUser(l *line, warn *parser.Warnings) (kind userKind, blocks []block
 		// both are the same slash-command line.
 		if strings.HasPrefix(s, "<command-name>") || strings.HasPrefix(s, "<command-message>") {
 			return userCommand, nil, commandText(s)
+		}
+		if m := bashInputRe.FindStringSubmatch(s); m != nil {
+			return userShell, nil, "$ " + strings.TrimSpace(m[1])
+		}
+		// Output with its command before it is read with the command.
+		if isShellOutput(s) {
+			return userSkip, nil, ""
 		}
 		for _, p := range []string{"<local-command-stdout>", "<local-command-stderr>", "<local-command-caveat>"} {
 			if strings.HasPrefix(s, p) {

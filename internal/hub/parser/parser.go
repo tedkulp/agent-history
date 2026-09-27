@@ -40,6 +40,7 @@ const (
 	MarkerModelChange   = "model_change"
 	MarkerThinkingLevel = "thinking_level"
 	MarkerSlashCommand  = "slash_command"
+	MarkerShellCommand  = "shell_command"
 )
 
 // CompactionText is a compaction marker's text when the Source gives no
@@ -137,10 +138,12 @@ type AttachmentPayload struct {
 	Label string `json:"label"`
 }
 
-// MarkerPayload is the payload of a marker Part.
+// MarkerPayload is the payload of a marker Part. Output is a shell_command's
+// output, "" when it has none.
 type MarkerPayload struct {
 	Marker string `json:"marker"`
 	Text   string `json:"text"`
+	Output string `json:"output,omitempty"`
 }
 
 // UnknownPayload is the payload of an unknown Part: the Source type name and

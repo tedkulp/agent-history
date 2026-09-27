@@ -216,6 +216,47 @@ func TestParseCommandsAndInjectedLines(t *testing.T) {
 	}
 }
 
+func TestParseShellCommands(t *testing.T) {
+	main := jsonl(t,
+		userLine("u1", "", "2026-09-01T10:00:00.000Z", "<bash-input> git status -sb</bash-input>"),
+		userLine("u1o", "u1", "2026-09-01T10:00:00.100Z", "<bash-stdout>## main...origin/main</bash-stdout><bash-stderr></bash-stderr>"),
+		userLine("u2", "u1o", "2026-09-01T10:00:01.000Z", "<bash-input>make</bash-input>"),
+		userLine("u2o", "u2", "2026-09-01T10:00:01.100Z", "<bash-stdout>built</bash-stdout><bash-stderr>warning: <x></bash-stderr>"),
+		userLine("u3", "u2o", "2026-09-01T10:00:02.000Z", "<bash-input>true</bash-input>"),
+		userLine("u3p", "u3", "2026-09-01T10:00:02.500Z", "between"),
+		userLine("u4", "u3p", "2026-09-01T10:00:03.000Z", "<bash-stdout>stray</bash-stdout><bash-stderr></bash-stderr>"),
+		userLine("u5", "u4", "2026-09-01T10:00:04.000Z", "<bash-input>false</bash-input>"),
+		userLine("u5o", "u5", "2026-09-01T10:00:04.100Z", "<bash-stderr>failed</bash-stderr>"),
+		userLine("u6", "u5o", "2026-09-01T10:00:05.000Z", "real prompt"),
+	)
+	res := parse(t, main, nil)
+	want := []flat{
+		{ID: "u1", Role: "user", Texts: []string{"[shell_command $ git status -sb]"}},
+		{ID: "u2", Role: "user", Texts: []string{"[shell_command $ make]"}},
+		{ID: "u3", Role: "user", Texts: []string{"[shell_command $ true]"}},
+		{ID: "u3p", Role: "user", Texts: []string{"between"}},
+		{ID: "u5", Role: "user", Texts: []string{"[shell_command $ false]"}},
+		{ID: "u6", Role: "user", Texts: []string{"real prompt"}},
+	}
+	if got := flatten(res.Messages); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v", got)
+	}
+	var outputs []string
+	for _, m := range []parser.Message{res.Messages[0], res.Messages[1], res.Messages[2], res.Messages[4]} {
+		outputs = append(outputs, m.Parts[0].Payload.(parser.MarkerPayload).Output)
+	}
+	if want := []string{"## main...origin/main", "built\nwarning: <x>", "", "failed"}; !reflect.DeepEqual(outputs, want) {
+		t.Errorf("outputs = %q, want %q", outputs, want)
+	}
+	if len(res.Warnings) != 0 {
+		t.Errorf("warnings = %+v", res.Warnings)
+	}
+	j, _ := json.Marshal(res.Messages[2].Parts[0].Payload)
+	if string(j) != `{"marker":"shell_command","text":"$ true"}` {
+		t.Errorf("payload without output = %s", j)
+	}
+}
+
 func TestParseCompaction(t *testing.T) {
 	boundary := map[string]any{
 		"type": "system", "subtype": "compact_boundary", "uuid": "cb", "parentUuid": nil, "logicalParentUuid": "a1",

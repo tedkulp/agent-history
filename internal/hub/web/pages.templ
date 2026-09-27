@@ -286,7 +286,15 @@ templ chunk(c chunkView) {
 			<img src={ c.Image.Src } alt={ c.Image.Alt } loading="lazy"/>
 		</a>
 	} else if c.Marker != nil {
-		if c.Marker.Body != "" {
+		if c.Marker.Output != "" {
+			<details class={ "marker", c.Marker.Kind }>
+				<summary>{ c.Marker.Label }</summary>
+				<pre class="out">{ c.Marker.Output }</pre>
+				if c.Marker.More != "" {
+					<p class="dim">{ c.Marker.More }</p>
+				}
+			</details>
+		} else if c.Marker.Body != "" {
 			<details class={ "marker", c.Marker.Kind }>
 				<summary>{ c.Marker.Label }</summary>
 				<div class="bubble">

@@ -529,6 +529,58 @@ func TestTranscriptMarkersWarningsAndOutline(t *testing.T) {
 	}
 }
 
+func TestTranscriptShellCommands(t *testing.T) {
+	now := time.Now().UTC()
+	ts := func(s int) string {
+		return now.Add(time.Duration(s-100) * time.Second).Format("2006-01-02T15:04:05.000Z")
+	}
+	user := func(uuid string, parent any, s int, content string) map[string]any {
+		return map[string]any{"type": "user", "uuid": uuid, "parentUuid": parent, "timestamp": ts(s), "cwd": "/Users/ted/src/app",
+			"message": map[string]any{"role": "user", "content": content}}
+	}
+	long := strings.Repeat("x", 4<<10) + strings.Repeat("y", 2<<10)
+	lines := []map[string]any{
+		user("b1", nil, 0, "<bash-input>git status -sb</bash-input>"),
+		user("b1o", "b1", 1, "<bash-stdout>## main <b>bold</b></bash-stdout><bash-stderr></bash-stderr>"),
+		user("b2", "b1o", 2, "<bash-input>true</bash-input>"),
+		user("u1", "b2", 3, "Real prompt"),
+		user("b3", "u1", 4, "<bash-input>cat big</bash-input>"),
+		user("b3o", "b3", 5, "<bash-stdout>"+long+"</bash-stdout><bash-stderr></bash-stderr>"),
+	}
+	var main strings.Builder
+	enc := json.NewEncoder(&main)
+	enc.SetEscapeHTML(false)
+	for _, l := range lines {
+		if err := enc.Encode(l); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srv := newSiteRecords(t, []record{{"m1", "-Users-ted-src-app/" + sess + ".jsonl", main.String()}})
+
+	_, feed := get(t, srv.URL+"/")
+	if !strings.Contains(feed, "Real prompt") || strings.Contains(feed, "git status") || strings.Contains(feed, "bash-input") {
+		t.Error("the feed row's title or first prompt is not the first real prompt")
+	}
+	i := strings.Index(feed, `href="/sessions/`)
+	link := feed[i+len(`href="`):]
+	_, page := get(t, srv.URL+link[:strings.Index(link, `"`)])
+	for _, want := range []string{
+		`<details class="marker shell_command"><summary>$ git status -sb</summary><pre class="out">## main &lt;b&gt;bold&lt;/b&gt;</pre></details>`,
+		`<div class="marker shell_command">$ true</div>`,
+		`<summary>$ cat big</summary><pre class="out">` + strings.Repeat("x", 4<<10) + `</pre><p class="dim">… 2.0 KB more</p>`,
+		`<a href="#m-u1">Real prompt <span class="n">`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("transcript lacks %q", want)
+		}
+	}
+	for _, bad := range []string{"<b>bold</b>", "bash-input", "bash-stdout", `href="#m-b1"`, `href="#m-b3"`, "y"+"yyy"} {
+		if strings.Contains(page, bad) {
+			t.Errorf("transcript shows %q", bad)
+		}
+	}
+}
+
 func TestTranscriptChildSessionsLinkBothWays(t *testing.T) {
 	jsonLines := func(lines ...map[string]any) string {
 		var b strings.Builder

@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/sergi/go-diff/diffmatchpatch"
 
@@ -18,7 +19,7 @@ import (
 )
 
 // stubOver is the output size above which a tool call's output is a stub
-// loaded on click (hub.md §4.7).
+// loaded on click, and a shell_command's output is cut (hub.md §4.7).
 const stubOver = 4 << 10
 
 // chunkView is one rendered piece of a Message: one Part, or a cluster of
@@ -35,11 +36,13 @@ type chunkView struct {
 	Open       bool       // the cluster starts open: a call in it spawned a Child Session
 }
 
-// markerView is a marker pill. Body, when set, opens below it.
+// markerView is a marker pill. Body or Output, when set, opens below it.
 type markerView struct {
-	Kind  string
-	Label string
-	Body  string // rendered Markdown
+	Kind   string
+	Label  string
+	Body   string // rendered Markdown
+	Output string // a shell_command's output, preformatted
+	More   string // "… 2.0 KB more" when Output was cut
 }
 
 // markerLabelMax is the most characters a marker pill shows.
@@ -155,6 +158,21 @@ const compactionSummaryLabel = "Compaction summary"
 // text over one line, opens below the pill.
 func newMarkerView(mp parser.MarkerPayload) *markerView {
 	v := &markerView{Kind: mp.Marker, Label: mp.Text}
+	if mp.Marker == parser.MarkerShellCommand {
+		// A command and its output are never Markdown.
+		first, _, _ := strings.Cut(mp.Text, "\n")
+		v.Label = cut(first, markerLabelMax)
+		v.Output = mp.Output
+		if len(v.Output) > stubOver {
+			n := stubOver
+			for n > 0 && !utf8.RuneStart(v.Output[n]) {
+				n--
+			}
+			v.More = "… " + byteSize(len(v.Output)-n) + " more"
+			v.Output = v.Output[:n]
+		}
+		return v
+	}
 	if mp.Marker == parser.MarkerCompaction && mp.Text != parser.CompactionText {
 		v.Label, v.Body = compactionSummaryLabel, renderMarkdown(mp.Text)
 		return v
