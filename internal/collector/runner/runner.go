@@ -62,10 +62,11 @@ type Config struct {
 	UpgradeRetry time.Duration // 1h between retries after a 426 (protocol.md §4.6)
 	MaxUploads   int           // 4 in flight across all records
 
-	// CheckVersion, when set, runs `<shim> version` on each rescan. When it
-	// prints a version other than Info.CollectorVersion, Run drains for up
-	// to RestartDrain, writes the cache and returns nil, so that the service
-	// manager restarts the Collector on the new binary (collector.md §4.9).
+	// CheckVersion, when set, runs `<exe> version` on each rescan, where exe
+	// is the binary the service runs. When it prints a version other than
+	// Info.CollectorVersion, Run drains for up to RestartDrain, writes the
+	// cache and returns nil, so that the service manager restarts the
+	// Collector on the new binary (collector.md §4.9).
 	// CheckVersion's output is compared as is, so trim it.
 	CheckVersion   func(context.Context) (string, error)
 	VersionTimeout time.Duration // 10s for one CheckVersion
@@ -546,7 +547,7 @@ func (r *runner) handleReconciled(rc reconciled) {
 // sync retries at once.
 func (r *runner) upgradeRequired(e *hubclient.TooOldError) {
 	if r.tooOld == nil || r.tooOld.MinVersion != e.MinVersion {
-		r.Log.Error("hub requires a newer Collector, stopped uploading until it is upgraded (mise upgrade)",
+		r.Log.Error("hub requires a newer Collector, stopped uploading until it is upgraded: upgrade the Collector",
 			"min_collector_version", e.MinVersion, "retry_in", r.UpgradeRetry)
 	} else {
 		r.Log.Info("hub still requires a newer Collector", "min_collector_version", e.MinVersion, "retry_in", r.UpgradeRetry)

@@ -59,7 +59,7 @@ func TestNewVersionRestartsAfterDrainingAndWritingCache(t *testing.T) {
 	waitFor(t, 5*time.Second, "startup reconcile", func() bool { return f.hubHas(key) })
 	waitFor(t, 5*time.Second, "a version check", func() bool { return sh.calls.Load() > 0 })
 
-	// An upload is in flight when `mise upgrade` lands.
+	// An upload is in flight when an upgrade lands.
 	release := make(chan struct{})
 	f.setBlock(release)
 	f.appendLine(key, "{\"n\":2}")

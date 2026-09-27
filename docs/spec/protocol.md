@@ -285,7 +285,7 @@ Source: [Collector → Hub ingestion protocol](https://github.com/tedkulp/agent-
   ```
 
 - On `426`, the Collector stops uploading and logs the minimum version. `status` shows "upgrade Collector (Hub requires ≥ 0.4.0)". The Collector retries hourly with `PUT /machines/{id}`, and reconciles once that succeeds.
-- The Collector never upgrades itself; mise does that. After `mise upgrade`, the Collector restarts on its own version check (see `collector.md`) and sends the new version.
+- The Collector never upgrades itself; the user replaces the binary, or mise does. After an upgrade, the Collector restarts on its own version check (see `collector.md`) and sends the new version.
 - Collector and Hub are released in lockstep under one `vX.Y.Z` tag. When the floor moves, the release notes say "⚠ requires Collector ≥ X".
 
 Source: [Collector → Hub ingestion protocol](https://github.com/tedkulp/agent-history/issues/10), [Hub deployment shape](https://github.com/tedkulp/agent-history/issues/15), [Release pipeline](https://github.com/tedkulp/agent-history/issues/17)

@@ -27,6 +27,13 @@ One version covers the Collector and the Hub together (see
 - Ingest answers `503` while the database stays locked and `507` when the
   disk is full.
 
+### Changed
+
+- The Collector no longer needs mise: install it by downloading the release
+  archive into `~/.local/bin`. `init` and `service install` run the mise shim
+  when it exists, otherwise the binary you ran. `--shim` is renamed
+  `--exec`; `--shim` still works for this release.
+
 ### Fixed
 
 - A Message holding only markers no longer draws the marker's pill shape

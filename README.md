@@ -31,23 +31,50 @@ backups are covered in [docs/hub-deploy.md](docs/hub-deploy.md).
 
 ## Install the Collector
 
-On each macOS or Linux machine, install with [mise](https://mise.jdx.dev):
+On each macOS or Linux machine, download the latest release into a
+directory on your `PATH`, then set it up:
+
+```sh
+os=$(uname -s | tr '[:upper:]' '[:lower:]')
+arch=$(uname -m); case $arch in x86_64) arch=amd64;; aarch64) arch=arm64;; esac
+curl -fsSL "https://github.com/tedkulp/agent-history/releases/latest/download/agent-history_${os}_${arch}.tar.gz" | tar -xz agent-history
+mkdir -p ~/.local/bin && install -m 755 agent-history ~/.local/bin/
+agent-history init --hub http://<host>:8080
+```
+
+`init` writes `~/.config/agent-history/collector.toml`, registers the
+machine with the Hub, and installs a launchd or systemd user service that
+runs `~/.local/bin/agent-history` and keeps shipping new history in the
+background. Check on it with:
+
+```sh
+agent-history status
+```
+
+To upgrade, download the new release the same way and replace the file
+with `install -m 755` (or `mv`). Never `cp` over it: Linux refuses to
+overwrite a running binary ("text file busy"), and on macOS an in-place
+overwrite can break it. The running service restarts itself onto the new
+version within one rescan.
+
+On macOS, use `curl` as above rather than a browser: a browser download is
+quarantined, and Gatekeeper refuses to run the unsigned binary. If you did
+use a browser, clear it with `xattr -d com.apple.quarantine agent-history`.
+
+### With mise
+
+[mise](https://mise.jdx.dev) works too:
 
 ```sh
 mise use -g github:tedkulp/agent-history
 agent-history init --hub http://<host>:8080
 ```
 
-`init` writes `~/.config/agent-history/collector.toml`, registers the
-machine with the Hub, and installs a launchd or systemd user service that
-keeps shipping new history in the background. Check on it with:
+The service then runs mise's shim, and `mise upgrade` upgrades it; the
+running service restarts itself onto the new version.
 
-```sh
-agent-history status
-```
-
-Upgrade with `mise upgrade`; the running service restarts itself onto the
-new version.
+`init` and `service install` pick the mise shim when it exists, otherwise
+the binary you ran. Pass `--exec <path>` to choose another path.
 
 ## Develop
 

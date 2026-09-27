@@ -15,8 +15,8 @@ This spec covers:
 - the CLI, config file, state directory and control socket
 - the Source adapter interface on the Collector side
 - the run loop: startup reconcile, file watching, rescan, debounce, uploads
-- the service definitions for launchd and systemd, and how they survive `mise upgrade`
-- the Collector side of the release: archives, the mise install, self-restart, stale-service warnings
+- the service definitions for launchd and systemd, and how they survive an upgrade
+- the Collector side of the release: archives, manual and mise installs, self-restart, stale-service warnings
 
 The wire protocol is in [`protocol.md`](protocol.md). Each Source's Layouts, Record-key rules and cwd extraction are in `adapters/*.md`. The Hub is in [`hub.md`](hub.md).
 
@@ -28,7 +28,9 @@ Source: [Collector design: discovery, config and lifecycle](https://github.com/t
 
 - The Collector binary is **`agent-history`**. The Hub's entrypoint is a separate binary, `agent-history-hub`, shipped only in the Hub image.
 - Both live in one Go module and share the `protocol` package (see `protocol.md` §2.1).
-- The Collector is installed with mise's `github:` backend:
+- The default install is manual: download `agent-history_<os>_<arch>.tar.gz` from the latest GitHub Release with `curl -L`, extract it, and `install -m 755 agent-history ~/.local/bin/` (any directory on `PATH` works). Then `agent-history init --hub <url>`.
+  - On macOS, a browser download is quarantined and Gatekeeper refuses the unsigned binary. `curl` avoids that; otherwise `xattr -d com.apple.quarantine agent-history`.
+- mise's `github:` backend is also supported:
 
   ```sh
   mise use -g github:tedkulp/agent-history
@@ -37,7 +39,7 @@ Source: [Collector design: discovery, config and lifecycle](https://github.com/t
   mise picks the right archive from the GitHub Release (`agent-history_<os>_<arch>.tar.gz`) with no `asset_pattern`, and verifies the build attestation.
 - Supported platforms: `darwin` and `linux`, each on `amd64` and `arm64`. The binary is static (`CGO_ENABLED=0`), so one Linux build serves both glibc and musl. opencode's database is read with `modernc.org/sqlite`, so no CGO is needed.
 
-Source: [Installing the Collector via mise and running it as a user service](https://github.com/tedkulp/agent-history/issues/6), [Release pipeline](https://github.com/tedkulp/agent-history/issues/17), [Collector design](https://github.com/tedkulp/agent-history/issues/11)
+Source: [Installing the Collector via mise and running it as a user service](https://github.com/tedkulp/agent-history/issues/6), [Release pipeline](https://github.com/tedkulp/agent-history/issues/17), [Collector design](https://github.com/tedkulp/agent-history/issues/11), [Collector: install and upgrade without mise](https://github.com/tedkulp/agent-history/issues/50)
 
 ### 2.2 CLI
 
@@ -370,13 +372,15 @@ Source: [Source format drift](https://github.com/tedkulp/agent-history/issues/16
 
 ### 4.8 Service definitions
 
-The Collector writes its own service definition with a small built-in template. It does **not** use `kardianos/service`, whose default path resolution uses `os.Executable()`. That call resolves the mise shim through its symlink to the `mise` binary itself, which would break the service.
+The Collector writes its own service definition with a small built-in template. It does **not** use `kardianos/service`, which always takes the path from `os.Executable()`. Under mise that is a versioned install path (the shim is a symlink to the `mise` binary, which execs the real one), and an upgrade breaks it. So the Collector checks for the shim first (below).
 
-**The service always runs the mise shim**, never a versioned install path:
+**The service runs a stable path**, never a versioned mise install path. `init` and `service install` pick it in this order:
 
-- Shim path: `$MISE_DATA_DIR/shims/agent-history`, defaulting to `~/.local/share/mise/shims/agent-history`. The `--shim <path>` flag on `service install` overrides it.
-- If the shim doesn't exist, `service install` fails with a message explaining how to install through mise, unless `--shim` is given.
-- The shim stays at the same path across `mise upgrade`, so the definition never needs rewriting for an upgrade.
+1. `--exec <path>`, when given. `--shim <path>` is a hidden alias for one release.
+2. The mise shim, when it exists: `$MISE_DATA_DIR/shims/agent-history`, defaulting to `~/.local/share/mise/shims/agent-history`. The shim must come first: under mise, the running binary's own path is a versioned install directory that `mise upgrade` removes.
+3. The running binary's own path (`os.Executable()`), e.g. `~/.local/bin/agent-history` for a manual install. If that path is inside mise's installs directory (`$MISE_DATA_DIR/installs`), install fails with an error naming `--exec`, rather than writing a service that breaks on upgrade.
+
+Either way the path stays put across an upgrade (the user replaces the file, or mise repoints the shim), so the definition never needs rewriting for one.
 
 Each definition carries a **template version** (an integer in the binary, starting at `1`). It's written as a comment on macOS and as an `X-` key on Linux.
 
@@ -426,29 +430,29 @@ RestartSec=5
 WantedBy=default.target
 ```
 
-`ExecStart` is written as the resolved absolute shim path (`%h` is shown here for the default). Installed with `systemctl --user daemon-reload`, `systemctl --user enable agent-history.service`, then `systemctl --user restart agent-history.service`, so a reinstall also restarts a running service on the new definition.
+`ExecStart` is written as the resolved absolute path (`%h` is shown here for the default). Installed with `systemctl --user daemon-reload`, `systemctl --user enable agent-history.service`, then `systemctl --user restart agent-history.service`, so a reinstall also restarts a running service on the new definition.
 
-- **Environment.** Besides `HOME`, the definition carries `MISE_DATA_DIR`, `XDG_CONFIG_HOME` and `XDG_STATE_HOME` when they are set where `init` or `service install` runs, so the service finds the same shim, config and state directories.
+- **Environment.** Besides `HOME`, the definition carries `MISE_DATA_DIR`, `XDG_CONFIG_HOME` and `XDG_STATE_HOME` when they are set where `init` or `service install` runs, so the service finds the same mise shim, config and state directories.
 
 - **`Restart=always` / `KeepAlive=true`** matter: the self-restart (§4.9) exits `0`, and the service manager must start it again.
 - **`service install` is idempotent**: it rewrites the file and reloads the service.
 - **Stale definition.** On start and in `status`, the Collector reads the installed definition's template version. If it's older than its own, `status` warns "service definition outdated, run `agent-history service install`". The Collector never rewrites the definition on its own.
 
-Source: [Installing the Collector via mise and running it as a user service](https://github.com/tedkulp/agent-history/issues/6), [Release pipeline](https://github.com/tedkulp/agent-history/issues/17); label, unit name, `ThrottleInterval`, `RestartSec` and the template-version markers filled in while writing this spec
+Source: [Installing the Collector via mise and running it as a user service](https://github.com/tedkulp/agent-history/issues/6), [Release pipeline](https://github.com/tedkulp/agent-history/issues/17), [Collector: install and upgrade without mise](https://github.com/tedkulp/agent-history/issues/50); label, unit name, `ThrottleInterval`, `RestartSec` and the template-version markers filled in while writing this spec
 
 ### 4.9 Upgrades and self-restart
 
-1. The user runs `mise upgrade`. mise installs the new version next to the old one. The shim now resolves to the new binary. The running process is still the old one.
-2. On each rescan, the Collector runs `<shim> version` with a 10 s timeout.
+1. The user replaces the binary at the service's path (`install -m 755` or `mv`, never `cp` over it: Linux refuses to overwrite a running binary with "text file busy", and an in-place overwrite can break a signed binary on macOS), or runs `mise upgrade`, which installs the new version next to the old one and repoints the shim. The running process is still the old one.
+2. On each rescan, the Collector runs `<path> version`, the path the service runs, with a 10 s timeout.
 3. If the output differs from its own version, it logs `info` "new version X found, restarting", stops taking new work, drains in-flight uploads (up to 30 s), writes the cache, and **exits `0`**.
 4. launchd `KeepAlive` or systemd `Restart=always` starts it again, now running the new binary.
 
-- The shim is the one the installed service definition runs. With no service installed there is nothing to restart the Collector, so there is no check.
-- If running the shim fails, log a `warn` and carry on. It is checked again on the next rescan.
+- The path is the one the installed service definition runs. With no service installed there is nothing to restart the Collector, so there is no check.
+- If running it fails, log a `warn` and carry on. It is checked again on the next rescan.
 - `agent-history service restart` restarts immediately.
-- The Collector never downloads or installs anything itself. mise does that.
+- The Collector never downloads or installs anything itself. The user or mise does that.
 
-Source: [Release pipeline](https://github.com/tedkulp/agent-history/issues/17), [Installing the Collector via mise and running it as a user service](https://github.com/tedkulp/agent-history/issues/6)
+Source: [Release pipeline](https://github.com/tedkulp/agent-history/issues/17), [Installing the Collector via mise and running it as a user service](https://github.com/tedkulp/agent-history/issues/6), [Collector: install and upgrade without mise](https://github.com/tedkulp/agent-history/issues/50)
 
 ### 4.10 Logging
 
@@ -489,10 +493,10 @@ Source: [Release pipeline](https://github.com/tedkulp/agent-history/issues/17)
 - Parsing any Source format beyond the cheap starting-cwd read for `exclude`.
 - A spool or offline queue. The files on disk are the queue.
 - Reporting local deletions to the Hub.
-- Self-upgrade. mise upgrades the binary.
+- Self-upgrade. The user or mise replaces the binary.
 - Automatically rewriting a stale service definition.
 - Reading Codex's `thread_history_*.sqlite` store. It's known-ignored in v1.
-- Windows, and install methods other than mise (Homebrew, distro packages).
+- Windows, Homebrew and distro packages.
 - Authentication and TLS (VPN only).
 - System-wide (root) services, or collecting from other users' home directories.
 
@@ -500,13 +504,13 @@ Source: [Release pipeline](https://github.com/tedkulp/agent-history/issues/17)
 
 M1 is Claude Code end to end. Only the `claude-code` adapter needs to exist; the others may be absent.
 
-- [ ] `mise use -g github:tedkulp/agent-history` installs the binary on macOS arm64 and Linux amd64 from a real GitHub Release.
+- [ ] A manual install (`curl -L` the release archive, `install -m 755 agent-history ~/.local/bin/`) works on macOS arm64 and Linux amd64 from a real GitHub Release, and so does `mise use -g github:tedkulp/agent-history`.
 - [ ] `agent-history version` prints the ldflags-injected version.
 - [ ] `agent-history init --hub <url>` generates a Machine UUID, writes `collector.toml` with the resolved Claude Code root, registers with the Hub, installs and starts the service.
 - [ ] Re-running `init` keeps the same `machine_id` and any user-added keys.
 - [ ] `init` against an unreachable Hub fails clearly; `--offline` succeeds.
 - [ ] `CLAUDE_CONFIG_DIR` set in the shell rc (not in the service's environment) is picked up by `init` and used by the service.
-- [ ] The installed plist / unit points at the mise shim path, not a versioned path and not the `mise` binary.
+- [ ] The installed plist / unit points at `~/.local/bin/agent-history` for a manual install, and at the mise shim under mise: never a versioned path and never the `mise` binary.
 - [ ] On Linux, the service keeps running after logout (linger enabled).
 - [ ] On a fresh Machine with existing Claude Code history, the startup reconcile ships every Session and Child Session file; the Hub manifest matches disk.
 - [ ] A new message in an active Claude Code Session reaches the Hub within about 5 s of being written.
@@ -516,7 +520,7 @@ M1 is Claude Code end to end. Only the `claude-code` adapter needs to exist; the
 - [ ] A file under the Claude Code root that no Layout claims shows up as unclaimed in `status` and is logged once.
 - [ ] `agent-history sync` with the service running goes through the socket; with the service stopped, it reconciles itself. Two `sync`s never upload at once.
 - [ ] Deleting the state directory and restarting uploads nothing the Hub already has.
-- [ ] After `mise upgrade` to a newer release, the running Collector restarts itself within one rescan and reports the new version to the Hub.
+- [ ] After replacing `~/.local/bin/agent-history` with a newer release (or `mise upgrade` under mise), the running Collector restarts itself within one rescan and reports the new version to the Hub.
 - [ ] Bumping the template version makes `status` warn about an outdated service definition; `service install` clears it.
 - [ ] `SIGTERM` during an upload drains it and writes the cache before exit.
 - [ ] macOS: `collector.log` rotates at 10 MB, keeping 3 files.

@@ -143,7 +143,7 @@ On every PR and on `main`: `go vet`, `go test ./...`, `goreleaser check`, `gorel
 ### 5.5 Upgrading
 
 - **Hub**: pull the new image and restart. The Hub backs up before any migration, then re-parses stale Sessions in the background (`hub.md` §4.1, §4.5).
-- **Collector**: `mise upgrade` on each Machine. The running Collector notices the new version within one rescan and restarts itself; `agent-history service restart` restarts at once (`collector.md` §4.9).
+- **Collector**: on each Machine, replace the binary at the service's path with the new release (`install -m 755`, never `cp` over it), or `mise upgrade` under mise. The running Collector notices the new version within one rescan and restarts itself; `agent-history service restart` restarts at once (`collector.md` §4.9).
 - **Order**: upgrade the Hub first. With additive `/api/v1` changes either order works. When the floor moves, old Collectors get `426` until their Machine upgrades, and lose nothing: the files on disk are the queue, and the reconcile after upgrading ships whatever they held back.
 - **Rollback** of the Hub: restore the `pre-migrate-*.db` backup and run the old image (`hub.md` §4.8).
 
@@ -157,7 +157,7 @@ Each document lists its own exclusions. Across the whole system:
 - Analytics: token, cost and activity dashboards. Usage is stored per Message but not charted.
 - Secret redaction in Transcripts. Raw retention keeps it possible later.
 - Mirroring local deletions to the Hub.
-- Windows Collectors, and install methods other than mise.
+- Windows Collectors, Homebrew and distro packages.
 - Reading Codex's `thread_history_*.sqlite` store. It is known-ignored while Codex still writes JSONL.
 
 Source: [Agent History v1: find the way to a build-ready spec](https://github.com/tedkulp/agent-history/issues/1)
@@ -169,7 +169,7 @@ M1 passes when every item in these four checklists is ticked:
 | Checklist | Proves |
 |---|---|
 | [`protocol.md` §6](protocol.md#6-m1-acceptance-checklist) | Registration, manifest, append / replace / `409`, chunking, durability of the ack, the version floor |
-| [`collector.md` §6](collector.md#6-m1-acceptance-checklist) | mise install, `init`, the service surviving logout and upgrades, reconcile, live shipping, `exclude`, `status` / `sync` |
+| [`collector.md` §6](collector.md#6-m1-acceptance-checklist) | Manual and mise install, `init`, the service surviving logout and upgrades, reconcile, live shipping, `exclude`, `status` / `sync` |
 | [`hub.md` §6](hub.md#6-m1-acceptance-checklist) | The image, migrations, storage, the parse queue and Re-parse flow, Projects, feed, search, Transcript page, backups |
 | [`adapters/claude-code.md` §6](adapters/claude-code.md#6-m1-acceptance-checklist) | Claude Code's keys and mapping: branches, compaction, spilled output, sub-agents, titles |
 
@@ -177,12 +177,12 @@ As one end-to-end run, M1 looks like this:
 
 - [ ] Push a `vX.Y.Z` tag. The GitHub Release has four Collector archives, and GHCR has the Hub image for amd64 and arm64.
 - [ ] `docker compose up` on the Hub host. The container reports healthy.
-- [ ] On a Mac and a Linux Machine with existing Claude Code history: `mise use -g github:tedkulp/agent-history`, then `agent-history init --hub <url>`.
+- [ ] On a Mac and a Linux Machine with existing Claude Code history: download the release archive into `~/.local/bin` (or `mise use -g github:tedkulp/agent-history`), then `agent-history init --hub <url>`.
 - [ ] Within minutes, the Hub's feed shows both Machines' Sessions, grouped by day, with Machine and Project chips.
 - [ ] A new prompt in a live Claude Code Session appears on its Transcript page, after a reload, within about 15 s.
 - [ ] Searching a word from that prompt finds it, opens the Transcript at that Message, and highlights it.
 - [ ] A Session with a sub-agent shows its Tool call cluster with a working "↳ Child Session" link, and the child links back.
-- [ ] Tag `vX.Y.(Z+1)`. `mise upgrade` on a Machine; its Collector restarts on its own and reports the new version to the Hub.
+- [ ] Tag `vX.Y.(Z+1)`. Replace the binary on a Machine (or `mise upgrade`); its Collector restarts on its own and reports the new version to the Hub.
 
 The after-M1 checklists for [Codex](adapters/codex.md#6-acceptance-checklist-after-m1), [oh-my-pi](adapters/oh-my-pi.md#6-acceptance-checklist-after-m1) and [opencode](adapters/opencode.md#6-acceptance-checklist-after-m1) gate their own milestones (§4.2).
 

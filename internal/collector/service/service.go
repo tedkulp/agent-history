@@ -1,7 +1,8 @@
 // Package service writes and controls the Collector's per-user service
 // definition: a launchd agent on macOS, a systemd user unit on Linux
-// (collector.md §4.8). The definition always runs the mise shim, never a
-// versioned install path, so it survives `mise upgrade`.
+// (collector.md §4.8). The definition runs a stable path, the mise shim or
+// the binary's own path, never a versioned mise install path, so it
+// survives an upgrade.
 package service
 
 import (
@@ -40,8 +41,8 @@ var passedEnv = []string{"MISE_DATA_DIR", "XDG_CONFIG_HOME", "XDG_STATE_HOME"}
 
 // Definition is what a service definition is rendered from.
 type Definition struct {
-	// Shim is the absolute path of the mise shim the service runs.
-	Shim string
+	// Exec is the absolute path of the binary the service runs.
+	Exec string
 	Home string
 	// LogPath receives stdout and stderr on macOS; systemd uses journald.
 	LogPath string
@@ -52,21 +53,34 @@ type Definition struct {
 // ShimPath is $MISE_DATA_DIR/shims/agent-history, defaulting to
 // ~/.local/share/mise/shims/agent-history.
 func ShimPath(getenv func(string) string, home string) string {
-	base := getenv("MISE_DATA_DIR")
-	if base == "" {
-		base = filepath.Join(home, ".local", "share", "mise")
-	}
-	return filepath.Join(base, "shims", "agent-history")
+	return filepath.Join(miseDataDir(getenv, home), "shims", "agent-history")
 }
 
-// CheckShim fails with install guidance if the shim doesn't exist.
-func CheckShim(shim string) error {
-	if _, err := os.Stat(shim); errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("no mise shim at %s: install the Collector with `mise use -g github:tedkulp/agent-history`, or pass --shim <path>", shim)
-	} else if err != nil {
-		return err
+// miseDataDir is $MISE_DATA_DIR, defaulting to ~/.local/share/mise.
+func miseDataDir(getenv func(string) string, home string) string {
+	if dir := getenv("MISE_DATA_DIR"); dir != "" {
+		return dir
 	}
-	return nil
+	return filepath.Join(home, ".local", "share", "mise")
+}
+
+// DefaultExec is the path the service runs when none is given: the mise
+// shim when it exists, else self, the running binary's own path. The shim
+// comes first because under mise self is a versioned install directory that
+// an upgrade removes; for the same reason self inside mise's installs
+// directory is refused.
+func DefaultExec(getenv func(string) string, home, self string) (string, error) {
+	shim := ShimPath(getenv, home)
+	if _, err := os.Stat(shim); err == nil {
+		return shim, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	installs := filepath.Join(miseDataDir(getenv, home), "installs") + string(filepath.Separator)
+	if strings.HasPrefix(filepath.Clean(self), installs) {
+		return "", fmt.Errorf("%s is a versioned mise install that an upgrade removes, and there is no mise shim at %s: pass --exec <path> with a path that stays put", self, shim)
+	}
+	return self, nil
 }
 
 // DefinitionEnv returns the variables from getenv that the service needs to
@@ -111,7 +125,7 @@ func Plist(d Definition) []byte {
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-`, TemplateVersion, Label, xmlEscape(d.Shim))
+`, TemplateVersion, Label, xmlEscape(d.Exec))
 	for _, kv := range d.envList() {
 		fmt.Fprintf(&b, "    <key>%s</key>%s<string>%s</string>\n", kv[0], pad(kv[0], 17), xmlEscape(kv[1]))
 	}
@@ -147,7 +161,7 @@ X-AgentHistoryTemplate=%d
 
 [Service]
 ExecStart=%s run
-`, TemplateVersion, strings.ReplaceAll(systemdQuote(d.Shim), "$", "$$"))
+`, TemplateVersion, strings.ReplaceAll(systemdQuote(d.Exec), "$", "$$"))
 	for _, kv := range d.envList() {
 		fmt.Fprintf(&b, "Environment=%s\n", systemdQuote(kv[0]+"="+kv[1]))
 	}
@@ -206,29 +220,29 @@ func Outdated(path string) (installed, outdated bool, err error) {
 	return true, v < TemplateVersion, nil
 }
 
-// InstalledShim reads the shim path from the definition at path, the
-// binary the service runs. It returns an error wrapping fs.ErrNotExist when
+// InstalledExec reads the path of the binary the service runs from the
+// definition at path. It returns an error wrapping fs.ErrNotExist when
 // no definition is installed.
-func InstalledShim(path string) (string, error) {
+func InstalledExec(path string) (string, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
-	var shim string
+	var exe string
 	var ok bool
 	if strings.HasSuffix(path, ".plist") {
-		shim, ok = plistShim(b)
+		exe, ok = plistExec(b)
 	} else {
-		shim, ok = unitShim(b)
+		exe, ok = unitExec(b)
 	}
 	if !ok {
 		return "", fmt.Errorf("no program in %s", path)
 	}
-	return shim, nil
+	return exe, nil
 }
 
-// plistShim is the first string of ProgramArguments.
-func plistShim(b []byte) (string, bool) {
+// plistExec is the first string of ProgramArguments.
+func plistExec(b []byte) (string, bool) {
 	dec := xml.NewDecoder(bytes.NewReader(b))
 	dec.Strict = false
 	var inKey, inString, afterKey bool
@@ -264,8 +278,8 @@ func plistShim(b []byte) (string, bool) {
 	}
 }
 
-// unitShim is the first word of ExecStart, undoing Unit's quoting.
-func unitShim(b []byte) (string, bool) {
+// unitExec is the first word of ExecStart, undoing Unit's quoting.
+func unitExec(b []byte) (string, bool) {
 	for line := range strings.Lines(string(b)) {
 		v, ok := strings.CutPrefix(strings.TrimRight(line, "\r\n"), "ExecStart=")
 		if !ok {
@@ -298,17 +312,17 @@ func unitShim(b []byte) (string, bool) {
 	return "", false
 }
 
-// ShimVersion runs `<shim> version` and returns what it prints.
-func ShimVersion(ctx context.Context, shim string) (string, error) {
-	cmd := exec.CommandContext(ctx, shim, "version")
+// ExecVersion runs `<exe> version` and returns what it prints.
+func ExecVersion(ctx context.Context, exe string) (string, error) {
+	cmd := exec.CommandContext(ctx, exe, "version")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return "", fmt.Errorf("%s version: %w: %s", shim, err, msg)
+			return "", fmt.Errorf("%s version: %w: %s", exe, err, msg)
 		}
-		return "", fmt.Errorf("%s version: %w", shim, err)
+		return "", fmt.Errorf("%s version: %w", exe, err)
 	}
 	return strings.TrimSpace(string(out)), nil
 }

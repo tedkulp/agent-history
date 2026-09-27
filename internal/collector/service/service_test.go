@@ -32,7 +32,7 @@ func golden(t *testing.T, name string, got []byte) {
 }
 
 var tedDef = Definition{
-	Shim:    "/Users/ted/.local/share/mise/shims/agent-history",
+	Exec:    "/Users/ted/.local/share/mise/shims/agent-history",
 	Home:    "/Users/ted",
 	LogPath: "/Users/ted/.local/state/agent-history/collector.log",
 }
@@ -43,7 +43,7 @@ func TestPlistGolden(t *testing.T) {
 
 func TestPlistEscapesAndPassesEnv(t *testing.T) {
 	d := Definition{
-		Shim:    "/Users/a&b/shims/agent-history",
+		Exec:    "/Users/a&b/shims/agent-history",
 		Home:    "/Users/a&b",
 		LogPath: "/Users/a&b/state/collector.log",
 		Env:     map[string]string{"XDG_STATE_HOME": "/Users/a&b/state", "MISE_DATA_DIR": "/opt/<mise>"},
@@ -52,13 +52,13 @@ func TestPlistEscapesAndPassesEnv(t *testing.T) {
 }
 
 func TestUnitGolden(t *testing.T) {
-	d := Definition{Shim: "/home/ted/.local/share/mise/shims/agent-history", Home: "/home/ted"}
+	d := Definition{Exec: "/home/ted/.local/share/mise/shims/agent-history", Home: "/home/ted"}
 	golden(t, "default.service", Unit(d))
 }
 
 func TestUnitQuotesAndPassesEnv(t *testing.T) {
 	d := Definition{
-		Shim: "/home/ted/my tools/100%/$bin/agent-history",
+		Exec: "/home/ted/my tools/100%/$bin/agent-history",
 		Home: "/home/ted",
 		Env:  map[string]string{"XDG_CONFIG_HOME": "/home/ted/my config", "MISE_DATA_DIR": `/home/ted/"mise"`},
 	}
@@ -136,7 +136,7 @@ func newManager(t *testing.T, goos string) (*Manager, *fakeRunner) {
 }
 
 func (m *Manager) def() Definition {
-	return Definition{Shim: "/shim", Home: m.Home, LogPath: filepath.Join(m.Home, "state", "collector.log")}
+	return Definition{Exec: "/shim", Home: m.Home, LogPath: filepath.Join(m.Home, "state", "collector.log")}
 }
 
 func wantCmds(t *testing.T, f *fakeRunner, want ...string) {
@@ -315,16 +315,36 @@ func TestUnsupportedOS(t *testing.T) {
 	}
 }
 
-func TestCheckShim(t *testing.T) {
-	dir := t.TempDir()
-	err := CheckShim(filepath.Join(dir, "agent-history"))
-	if err == nil || !strings.Contains(err.Error(), "mise use -g github:tedkulp/agent-history") {
-		t.Fatalf("missing shim: %v, want install guidance", err)
+func TestDefaultExec(t *testing.T) {
+	home := t.TempDir()
+	env := map[string]string{}
+	getenv := func(k string) string { return env[k] }
+	self := filepath.Join(home, ".local", "bin", "agent-history")
+
+	// No mise: the binary's own path.
+	if got, err := DefaultExec(getenv, home, self); err != nil || got != self {
+		t.Fatalf("no shim: %q, %v; want %q", got, err, self)
 	}
-	shim := filepath.Join(dir, "agent-history")
+
+	// Run from mise's installs dir with no shim: refused, naming --exec.
+	versioned := filepath.Join(home, ".local", "share", "mise", "installs", "github-tedkulp-agent-history", "0.3.0", "agent-history")
+	if _, err := DefaultExec(getenv, home, versioned); err == nil || !strings.Contains(err.Error(), "--exec") {
+		t.Fatalf("versioned path: %v, want an error naming --exec", err)
+	}
+	env["MISE_DATA_DIR"] = filepath.Join(home, "mise")
+	if _, err := DefaultExec(getenv, home, filepath.Join(home, "mise", "installs", "x", "agent-history")); err == nil {
+		t.Fatal("versioned path under MISE_DATA_DIR: want an error")
+	}
+	if got, err := DefaultExec(getenv, home, versioned); err != nil || got != versioned {
+		t.Fatalf("path outside MISE_DATA_DIR's installs: %q, %v", got, err)
+	}
+
+	// A shim present wins over the binary's own path.
+	shim := ShimPath(getenv, home)
+	os.MkdirAll(filepath.Dir(shim), 0o755)
 	os.WriteFile(shim, nil, 0o755)
-	if err := CheckShim(shim); err != nil {
-		t.Fatal(err)
+	if got, err := DefaultExec(getenv, home, self); err != nil || got != shim {
+		t.Fatalf("with shim: %q, %v; want %q", got, err, shim)
 	}
 }
 
@@ -364,45 +384,54 @@ func TestOutdatedUntilReinstalled(t *testing.T) {
 	}
 }
 
-func TestInstalledShimRoundTrips(t *testing.T) {
+func TestInstalledExecRoundTrips(t *testing.T) {
 	dir := t.TempDir()
 	for _, shim := range []string{
 		"/Users/ted/.local/share/mise/shims/agent-history",
 		"/Users/a&b/<shims>/agent-history",
 		`/home/ted/my tools/100%/$bin/"q"\agent-history`,
 	} {
-		d := Definition{Shim: shim, Home: "/h", LogPath: "/h/collector.log"}
+		d := Definition{Exec: shim, Home: "/h", LogPath: "/h/collector.log"}
 		for name, b := range map[string][]byte{"a.plist": Plist(d), "a.service": Unit(d)} {
 			p := filepath.Join(dir, name)
 			os.WriteFile(p, b, 0o644)
-			if got, err := InstalledShim(p); err != nil || got != shim {
+			if got, err := InstalledExec(p); err != nil || got != shim {
 				t.Fatalf("%s: shim %q, %v; want %q", name, got, err, shim)
 			}
 		}
 	}
-	if _, err := InstalledShim(filepath.Join(dir, "missing")); !errors.Is(err, fs.ErrNotExist) {
+	if _, err := InstalledExec(filepath.Join(dir, "missing")); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("missing definition: err %v, want ErrNotExist", err)
 	}
 	bad := filepath.Join(dir, "bad.service")
 	os.WriteFile(bad, []byte("[Service]\n"), 0o644)
-	if _, err := InstalledShim(bad); err == nil {
+	if _, err := InstalledExec(bad); err == nil {
 		t.Fatal("no error for a definition without ExecStart")
 	}
 }
 
-func TestShimVersion(t *testing.T) {
+func TestExecVersion(t *testing.T) {
 	dir := t.TempDir()
 	shim := filepath.Join(dir, "agent-history")
 	os.WriteFile(shim, []byte("#!/bin/sh\n[ \"$1\" = version ] && echo 0.4.0\n"), 0o755)
-	if v, err := ShimVersion(context.Background(), shim); err != nil || v != "0.4.0" {
+	if v, err := ExecVersion(context.Background(), shim); err != nil || v != "0.4.0" {
 		t.Fatalf("version %q, %v", v, err)
+	}
+	// A manual upgrade replaces the file at the same path.
+	next := filepath.Join(dir, "agent-history.new")
+	os.WriteFile(next, []byte("#!/bin/sh\n[ \"$1\" = version ] && echo 0.5.0\n"), 0o755)
+	if err := os.Rename(next, shim); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := ExecVersion(context.Background(), shim); err != nil || v != "0.5.0" {
+		t.Fatalf("after replacing: version %q, %v", v, err)
 	}
 	failing := filepath.Join(dir, "failing")
 	os.WriteFile(failing, []byte("#!/bin/sh\necho boom >&2\nexit 3\n"), 0o755)
-	if _, err := ShimVersion(context.Background(), failing); err == nil || !strings.Contains(err.Error(), "boom") {
+	if _, err := ExecVersion(context.Background(), failing); err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("err %v, want the shim's stderr", err)
 	}
-	if _, err := ShimVersion(context.Background(), filepath.Join(dir, "missing")); err == nil {
+	if _, err := ExecVersion(context.Background(), filepath.Join(dir, "missing")); err == nil {
 		t.Fatal("no error for a missing shim")
 	}
 }

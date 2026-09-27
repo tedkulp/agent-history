@@ -41,7 +41,7 @@ import (
 const usage = `usage: agent-history <command>
 
 commands:
-  init --hub <url> [--name <display>] [--offline] [--reset-roots] [--shim <path>]
+  init --hub <url> [--name <display>] [--offline] [--reset-roots] [--exec <path>]
             set up this Machine: write collector.toml, register with the Hub,
             and install and start the service
   run       ship every Source's records to the Hub and keep it current
@@ -49,7 +49,7 @@ commands:
   sync      reconcile every record with the Hub now
   set-name <display>
             change this Machine's display name
-  service install [--shim <path>] | uninstall | start | stop | restart | status
+  service install [--exec <path>] | uninstall | start | stop | restart | status
             manage the launchd / systemd user service that runs the Collector
   version   print the version
 `
@@ -124,7 +124,7 @@ func run() error {
 	if installed, outdated, err := service.Outdated(svcPath); err == nil && installed && outdated {
 		log.Warn("service definition outdated, run `agent-history service install`")
 	}
-	rc.CheckVersion = shimVersionCheck(svcPath, log)
+	rc.CheckVersion = execVersionCheck(svcPath, log)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -171,12 +171,12 @@ func logRotation(dir string, log *slog.Logger) func() {
 	}
 }
 
-// shimVersionCheck runs the installed service's shim with `version`, so the
-// runner can restart into a new version after `mise upgrade` (collector.md
-// §4.9). Without an installed service there is nothing to restart it, so
+// execVersionCheck runs the binary the installed service runs with
+// `version`, so the runner can restart into a new version after an upgrade
+// replaces it (collector.md §4.9). Without an installed service there is nothing to restart it, so
 // there is no check.
-func shimVersionCheck(svcPath string, log *slog.Logger) func(context.Context) (string, error) {
-	shim, err := service.InstalledShim(svcPath)
+func execVersionCheck(svcPath string, log *slog.Logger) func(context.Context) (string, error) {
+	exe, err := service.InstalledExec(svcPath)
 	if errors.Is(err, fs.ErrNotExist) {
 		log.Info("no service installed, not checking for new versions")
 		return nil
@@ -185,7 +185,7 @@ func shimVersionCheck(svcPath string, log *slog.Logger) func(context.Context) (s
 		log.Warn("reading the service definition, not checking for new versions", "err", err)
 		return nil
 	}
-	return func(ctx context.Context) (string, error) { return service.ShimVersion(ctx, shim) }
+	return func(ctx context.Context) (string, error) { return service.ExecVersion(ctx, exe) }
 }
 
 // runnerConfig sets up a Run, or a one-shot sync, from cfg.
@@ -427,7 +427,7 @@ func initCmd(args []string) error {
 	name := fs.String("name", "", "display name (default: the hostname)")
 	offline := fs.Bool("offline", false, "don't register with the Hub")
 	resetRoots := fs.Bool("reset-roots", false, "replace configured Source roots with the defaults")
-	shim := fs.String("shim", "", "path the service runs (default: the mise shim)")
+	exe := execFlag(fs)
 	if err := fs.Parse(args); errors.Is(err, flag.ErrHelp) {
 		return nil
 	} else if err != nil {
@@ -498,7 +498,7 @@ func initCmd(args []string) error {
 	// The service uses this process's environment, the same one the config
 	// path came from, so it reads the config init just wrote.
 	m := newServiceManager(os.Getenv, home)
-	if err := installService(ctx, m, os.Getenv, home, *shim); err != nil {
+	if err := installService(ctx, m, os.Getenv, home, *exe); err != nil {
 		return fmt.Errorf("installing the service: %w", err)
 	}
 	fmt.Printf("Service  %s  installed and started\n", m.Path())
@@ -511,7 +511,7 @@ func initCmd(args []string) error {
 }
 
 func serviceCmd(args []string) error {
-	const usage = "usage: agent-history service install [--shim <path>] | uninstall | start | stop | restart | status"
+	const usage = "usage: agent-history service install [--exec <path>] | uninstall | start | stop | restart | status"
 	if len(args) == 0 {
 		return errors.New(usage)
 	}
@@ -529,7 +529,7 @@ func serviceCmd(args []string) error {
 	switch sub {
 	case "install":
 		fs := flag.NewFlagSet("service install", flag.ContinueOnError)
-		shim := fs.String("shim", "", "path the service runs (default: the mise shim)")
+		exe := execFlag(fs)
 		if err := fs.Parse(rest); errors.Is(err, flag.ErrHelp) {
 			return nil
 		} else if err != nil {
@@ -538,7 +538,7 @@ func serviceCmd(args []string) error {
 		if fs.NArg() > 0 {
 			return fmt.Errorf("service install: unexpected argument %q", fs.Arg(0))
 		}
-		if err := installService(ctx, m, os.Getenv, home, *shim); err != nil {
+		if err := installService(ctx, m, os.Getenv, home, *exe); err != nil {
 			return err
 		}
 		fmt.Printf("installed and started %s\n", m.Path())
@@ -563,23 +563,45 @@ func serviceCmd(args []string) error {
 	}
 }
 
-// installService writes the service definition, running shim (the mise shim
-// when empty), and starts it.
-func installService(ctx context.Context, m *service.Manager, getenv func(string) string, home, shim string) error {
-	if shim == "" {
-		shim = service.ShimPath(getenv, home)
-		if err := service.CheckShim(shim); err != nil {
+// execFlag defines --exec on fs, plus --shim, its old name, kept working for
+// one release but left out of the usage.
+func execFlag(fs *flag.FlagSet) *string {
+	exe := fs.String("exec", "", "path the service runs (default: the mise shim if installed, else this binary)")
+	fs.StringVar(exe, "shim", "", "")
+	fs.Usage = func() {
+		shown := flag.NewFlagSet(fs.Name(), flag.ContinueOnError)
+		shown.SetOutput(fs.Output())
+		fs.VisitAll(func(f *flag.Flag) {
+			if f.Name != "shim" {
+				shown.Var(f.Value, f.Name, f.Usage)
+			}
+		})
+		fmt.Fprintf(fs.Output(), "Usage of %s:\n", fs.Name())
+		shown.PrintDefaults()
+	}
+	return exe
+}
+
+// installService writes the service definition, running exe (see
+// service.DefaultExec when empty), and starts it.
+func installService(ctx context.Context, m *service.Manager, getenv func(string) string, home, exe string) error {
+	if exe == "" {
+		self, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("finding this binary: %w; pass --exec <path>", err)
+		}
+		if exe, err = service.DefaultExec(getenv, home, self); err != nil {
 			return err
 		}
 	} else {
-		abs, err := filepath.Abs(shim)
+		abs, err := filepath.Abs(exe)
 		if err != nil {
 			return err
 		}
-		shim = abs
+		exe = abs
 	}
 	return m.Install(ctx, service.Definition{
-		Shim:    shim,
+		Exec:    exe,
 		Home:    home,
 		LogPath: filepath.Join(state.DefaultDir(getenv, home), "collector.log"),
 		Env:     service.DefinitionEnv(getenv),
