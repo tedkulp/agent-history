@@ -3,11 +3,13 @@
 package config
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/tedkulp/agent-history/protocol"
@@ -31,41 +33,88 @@ type TimeOfDay struct{ Hour, Minute int }
 
 func (t TimeOfDay) String() string { return fmt.Sprintf("%02d:%02d", t.Hour, t.Minute) }
 
-// setting is one env var and its matching flag.
+// DefaultListen is the listen address when neither AGENT_HISTORY_LISTEN nor
+// --listen is set.
+const DefaultListen = ":8080"
+
+var levels = map[string]slog.Level{"debug": slog.LevelDebug, "info": slog.LevelInfo, "warn": slog.LevelWarn, "error": slog.LevelError}
+
+// setting is one env var and its matching flag. parse validates the value
+// and stores it in the Config.
 type setting struct {
 	env, flag, def, usage string
-	value                 *string
+	parse                 func(v string, c *Config) error
 }
 
-// name is how an error refers to the setting: the flag when it was given,
-// else the env var.
-func (s setting) name(set map[string]bool) string {
-	if set[s.flag] {
-		return "--" + s.flag
+var settings = []setting{
+	{"AGENT_HISTORY_LISTEN", "listen", DefaultListen, "listen address", func(v string, c *Config) error {
+		if _, _, err := splitListen(v); err != nil {
+			return err
+		}
+		c.Listen = v
+		return nil
+	}},
+	{"AGENT_HISTORY_DATA", "data", "/data", "directory holding hub.db", func(v string, c *Config) error {
+		c.Data = v
+		return notEmpty(v)
+	}},
+	{"AGENT_HISTORY_BACKUP_DIR", "backup-dir", "/backups", "backup target directory", func(v string, c *Config) error {
+		c.BackupDir = v
+		return notEmpty(v)
+	}},
+	{"AGENT_HISTORY_BACKUP_AT", "backup-at", "03:00", "daily backup time HH:MM, empty to disable", func(v string, c *Config) error {
+		if v == "" {
+			return nil
+		}
+		t, err := time.Parse("15:04", v)
+		if err != nil {
+			return fmt.Errorf("%q is not a time like 03:00", v)
+		}
+		c.BackupAt = &TimeOfDay{Hour: t.Hour(), Minute: t.Minute()}
+		return nil
+	}},
+	{"AGENT_HISTORY_BACKUP_KEEP", "backup-keep", "7", "number of scheduled backups kept", func(v string, c *Config) error {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			return fmt.Errorf("%q is not a whole number 0 or more", v)
+		}
+		c.BackupKeep = n
+		return nil
+	}},
+	{"AGENT_HISTORY_LOG_LEVEL", "log-level", "info", "debug | info | warn | error", func(v string, c *Config) error {
+		level, ok := levels[strings.ToLower(v)]
+		if !ok {
+			return fmt.Errorf("%q is not one of debug, info, warn, error", v)
+		}
+		c.LogLevel = level
+		return nil
+	}},
+	{"AGENT_HISTORY_MIN_COLLECTOR_VERSION", "min-collector-version", "", "raise the minimum Collector version", func(v string, c *Config) error {
+		var err error
+		c.MinCollectorVersion, err = protocol.EffectiveMinCollectorVersion(v)
+		return err
+	}},
+}
+
+func notEmpty(v string) error {
+	if v == "" {
+		return errors.New("must not be empty")
 	}
-	return s.env
+	return nil
 }
 
 // Parse reads the settings from lookupEnv (os.LookupEnv in production), then
-// from the `serve` flags in args, and validates them.
+// from the `serve` flags in args, and validates them. The error names every
+// invalid setting: the flag when it was given, else the env var.
 func Parse(args []string, lookupEnv func(string) (string, bool)) (Config, error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	var listen, data, backupDir, backupAt, backupKeep, logLevel, minVersion string
-	settings := []setting{
-		{"AGENT_HISTORY_LISTEN", "listen", ":8080", "listen address", &listen},
-		{"AGENT_HISTORY_DATA", "data", "/data", "directory holding hub.db", &data},
-		{"AGENT_HISTORY_BACKUP_DIR", "backup-dir", "/backups", "backup target directory", &backupDir},
-		{"AGENT_HISTORY_BACKUP_AT", "backup-at", "03:00", "daily backup time HH:MM, empty to disable", &backupAt},
-		{"AGENT_HISTORY_BACKUP_KEEP", "backup-keep", "7", "number of scheduled backups kept", &backupKeep},
-		{"AGENT_HISTORY_LOG_LEVEL", "log-level", "info", "debug | info | warn | error", &logLevel},
-		{"AGENT_HISTORY_MIN_COLLECTOR_VERSION", "min-collector-version", "", "raise the minimum Collector version", &minVersion},
-	}
-	for _, s := range settings {
+	values := make([]*string, len(settings))
+	for i, s := range settings {
 		def := s.def
 		if v, ok := lookupEnv(s.env); ok {
 			def = v
 		}
-		fs.StringVar(s.value, s.flag, def, s.usage+" (env "+s.env+")")
+		values[i] = fs.String(s.flag, def, s.usage+" (env "+s.env+")")
 	}
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
@@ -75,55 +124,45 @@ func Parse(args []string, lookupEnv func(string) (string, bool)) (Config, error)
 	}
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
-	invalid := func(s setting, why string) error {
-		return fmt.Errorf("%s: %q %s", s.name(set), *s.value, why)
-	}
 
-	c := Config{Listen: listen, Data: data, BackupDir: backupDir}
-	if _, port, err := net.SplitHostPort(listen); err != nil {
-		return Config{}, invalid(settings[0], "is not a host:port listen address")
-	} else if n, err := strconv.Atoi(port); err != nil || n < 0 || n > 65535 {
-		return Config{}, invalid(settings[0], "needs a numeric port")
-	}
-	for _, s := range settings[1:3] {
-		if *s.value == "" {
-			return Config{}, fmt.Errorf("%s: must not be empty", s.name(set))
+	var c Config
+	var errs []error
+	for i, s := range settings {
+		if err := s.parse(*values[i], &c); err != nil {
+			name := s.env
+			if set[s.flag] {
+				name = "--" + s.flag
+			}
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 		}
 	}
-	if backupAt != "" {
-		t, err := time.Parse("15:04", backupAt)
-		if err != nil {
-			return Config{}, invalid(settings[3], "is not a time like 03:00")
-		}
-		c.BackupAt = &TimeOfDay{Hour: t.Hour(), Minute: t.Minute()}
-	}
-	keep, err := strconv.Atoi(backupKeep)
-	if err != nil || keep < 0 {
-		return Config{}, invalid(settings[4], "is not a whole number 0 or more")
-	}
-	c.BackupKeep = keep
-	levels := map[string]slog.Level{"debug": slog.LevelDebug, "info": slog.LevelInfo, "warn": slog.LevelWarn, "error": slog.LevelError}
-	level, ok := levels[logLevel]
-	if !ok {
-		return Config{}, invalid(settings[5], "is not one of debug, info, warn, error")
-	}
-	c.LogLevel = level
-	c.MinCollectorVersion, err = protocol.EffectiveMinCollectorVersion(minVersion)
-	if err != nil {
-		return Config{}, invalid(settings[6], "is not a semantic version like 0.4.0")
+	if err := errors.Join(errs...); err != nil {
+		return Config{}, err
 	}
 	return c, nil
 }
 
+// splitListen splits a listen address into host and numeric port.
+func splitListen(listen string) (host, port string, err error) {
+	host, port, err = net.SplitHostPort(listen)
+	if err != nil {
+		return "", "", fmt.Errorf("%q is not a host:port listen address", listen)
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 0 || n > 65535 {
+		return "", "", fmt.Errorf("%q needs a numeric port", listen)
+	}
+	return host, port, nil
+}
+
 // HealthURL is the /healthz URL of a Hub listening on listen. An unspecified
 // host (":8080", "0.0.0.0", "::") is reached on 127.0.0.1.
-func HealthURL(listen string) string {
-	host, port, err := net.SplitHostPort(listen)
+func HealthURL(listen string) (string, error) {
+	host, port, err := splitListen(listen)
 	if err != nil {
-		host, port = "", "8080"
+		return "", err
 	}
 	if ip := net.ParseIP(host); host == "" || ip != nil && ip.IsUnspecified() {
 		host = "127.0.0.1"
 	}
-	return "http://" + net.JoinHostPort(host, port) + "/healthz"
+	return "http://" + net.JoinHostPort(host, port) + "/healthz", nil
 }

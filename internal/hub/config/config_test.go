@@ -105,7 +105,7 @@ func TestInvalidValuesNameTheSetting(t *testing.T) {
 		{"negative keep", nil, map[string]string{"AGENT_HISTORY_BACKUP_KEEP": "-2"}, `AGENT_HISTORY_BACKUP_KEEP: "-2"`},
 		{"non-numeric keep", []string{"--backup-keep", "seven"}, nil, `--backup-keep: "seven"`},
 		{"log level", nil, map[string]string{"AGENT_HISTORY_LOG_LEVEL": "loud"}, `AGENT_HISTORY_LOG_LEVEL: "loud"`},
-		{"semver", nil, map[string]string{"AGENT_HISTORY_MIN_COLLECTOR_VERSION": "1.2"}, `AGENT_HISTORY_MIN_COLLECTOR_VERSION: "1.2"`},
+		{"semver", nil, map[string]string{"AGENT_HISTORY_MIN_COLLECTOR_VERSION": "1.2"}, `AGENT_HISTORY_MIN_COLLECTOR_VERSION: minimum Collector version "1.2"`},
 		{"listen", nil, map[string]string{"AGENT_HISTORY_LISTEN": "8080"}, `AGENT_HISTORY_LISTEN: "8080"`},
 		{"listen port", []string{"--listen", ":http"}, nil, `--listen: ":http"`},
 		{"empty data", nil, map[string]string{"AGENT_HISTORY_DATA": ""}, `AGENT_HISTORY_DATA: must not be empty`},
@@ -135,8 +135,25 @@ func TestHealthURL(t *testing.T) {
 		"localhost:7000": "http://localhost:7000/healthz",
 	}
 	for listen, want := range cases {
-		if got := HealthURL(listen); got != want {
-			t.Errorf("HealthURL(%q) = %q, want %q", listen, got, want)
+		if got, err := HealthURL(listen); err != nil || got != want {
+			t.Errorf("HealthURL(%q) = %q, %v; want %q", listen, got, err, want)
 		}
+	}
+	if _, err := HealthURL("8080"); err == nil {
+		t.Error("HealthURL(\"8080\"): no error")
+	}
+}
+
+func TestLogLevelIgnoresCase(t *testing.T) {
+	c, err := Parse([]string{"--log-level", "WARN"}, env(nil))
+	if err != nil || c.LogLevel != slog.LevelWarn {
+		t.Errorf("got %v, %v; want warn", c.LogLevel, err)
+	}
+}
+
+func TestEveryInvalidSettingIsReported(t *testing.T) {
+	_, err := Parse([]string{"--backup-keep", "-1"}, env(map[string]string{"AGENT_HISTORY_BACKUP_AT": "noon"}))
+	if err == nil || !strings.Contains(err.Error(), "--backup-keep") || !strings.Contains(err.Error(), "AGENT_HISTORY_BACKUP_AT") {
+		t.Errorf("error %v does not name both settings", err)
 	}
 }

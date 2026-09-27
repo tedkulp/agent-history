@@ -141,11 +141,14 @@ func reparse(args []string) error {
 // with 200, for the image's HEALTHCHECK (hub.md §2.2).
 func healthcheck(args []string) error {
 	fs := flag.NewFlagSet("healthcheck", flag.ContinueOnError)
-	listen := fs.String("listen", envOr("AGENT_HISTORY_LISTEN", ":8080"), "the Hub's listen address")
+	listen := fs.String("listen", envOr("AGENT_HISTORY_LISTEN", config.DefaultListen), "the Hub's listen address")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	url := config.HealthURL(*listen)
+	url, err := config.HealthURL(*listen)
+	if err != nil {
+		return err
+	}
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
