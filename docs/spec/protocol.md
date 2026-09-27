@@ -300,6 +300,8 @@ Source: [Collector → Hub ingestion protocol](https://github.com/tedkulp/agent-
 | `413` | Body over the size limit | Log at `error` (it's a Collector bug) |
 | `415` | `Content-Encoding` not `zstd`, or the body fails to decompress | Log at `error`, retry once, then skip until the next change |
 | `426` | Collector below the minimum version | Stop uploading, retry hourly (§4.6) |
+| `503` `busy` | Hub database stayed locked beyond its `busy_timeout` | Back off like any `5xx` |
+| `507` `insufficient_storage` | Hub disk full | Back off like any `5xx` |
 | `5xx`, connection error | Hub trouble | Back off and reconcile (§4.5) |
 
 Error bodies are JSON with at least an `error` code string.

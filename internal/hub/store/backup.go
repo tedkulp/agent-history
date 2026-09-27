@@ -7,41 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
-
-	"modernc.org/sqlite"
-	sqlite3 "modernc.org/sqlite/lib"
 )
-
-// Ingest errors the API maps to status codes (hub.md §4.10).
-var (
-	// ErrBusy means the database stayed locked beyond busy_timeout.
-	ErrBusy = errors.New("database is locked")
-	// ErrDiskFull means SQLite could not grow the database or its WAL.
-	ErrDiskFull = errors.New("disk is full")
-)
-
-// classify wraps a SQLite busy or disk-full error in ErrBusy or ErrDiskFull,
-// keeping the original in the chain. Other errors pass through unchanged.
-func classify(err error) error {
-	if err == nil {
-		return nil
-	}
-	if errors.Is(err, syscall.ENOSPC) {
-		return fmt.Errorf("%w: %w", ErrDiskFull, err)
-	}
-	var se *sqlite.Error
-	if !errors.As(err, &se) {
-		return err
-	}
-	switch se.Code() & 0xff { // primary code of an extended result code
-	case sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED:
-		return fmt.Errorf("%w: %w", ErrBusy, err)
-	case sqlite3.SQLITE_FULL:
-		return fmt.Errorf("%w: %w", ErrDiskFull, err)
-	}
-	return err
-}
 
 // Backup writes a consistent copy of the database to dst with VACUUM INTO on
 // a reader connection, so ingest keeps going (hub.md §4.8). It writes
@@ -63,7 +29,7 @@ func vacuumInto(ctx context.Context, db *sql.DB, dst string) error {
 		os.Remove(tmp)
 		return fmt.Errorf("backup to %s: %w", dst, err)
 	}
-	if err := syncFile(tmp); err != nil {
+	if err := fsyncPath(tmp); err != nil {
 		os.Remove(tmp)
 		return err
 	}
@@ -71,11 +37,11 @@ func vacuumInto(ctx context.Context, db *sql.DB, dst string) error {
 		os.Remove(tmp)
 		return err
 	}
-	return syncFile(filepath.Dir(dst))
+	return fsyncPath(filepath.Dir(dst))
 }
 
-// syncFile fsyncs a file or directory: VACUUM INTO doesn't sync its output.
-func syncFile(path string) error {
+// fsyncPath fsyncs a file or directory: VACUUM INTO doesn't sync its output.
+func fsyncPath(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err

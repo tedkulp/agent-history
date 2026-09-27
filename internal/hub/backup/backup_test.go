@@ -114,44 +114,80 @@ func TestRunOnceBacksUpThenPrunes(t *testing.T) {
 	}
 }
 
+func TestRunOnceWithKeepZeroKeepsTheNewBackup(t *testing.T) {
+	dir := t.TempDir()
+	touch(t, dir, "hub-20260901.db")
+	now := time.Date(2026, 9, 4, 3, 0, 0, 0, time.Local)
+	s := &Scheduler{Store: &fakeStore{}, Dir: dir, Keep: 0, Log: slog.New(slog.DiscardHandler), Now: func() time.Time { return now }}
+	if err := s.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := ls(t, dir), []string{"hub-20260904.db"}; !slices.Equal(got, want) {
+		t.Errorf("left %v, want %v", got, want)
+	}
+}
+
 func TestRunRetriesAfterFailureAtNextScheduledTime(t *testing.T) {
 	dir := t.TempDir()
 	st := &fakeStore{err: errors.New("disk on fire")}
-	// A clock that runs fast: each call is a day on, so every timer is due.
+	// Each sleep jumps the clock to the time it waited for.
 	var mu sync.Mutex
-	day := time.Date(2026, 9, 1, 12, 0, 0, 0, time.Local)
-	s := &Scheduler{Store: st, Dir: dir, At: config.TimeOfDay{Hour: 3}, Keep: 7, Log: slog.New(slog.DiscardHandler), Now: func() time.Time {
-		mu.Lock()
-		defer mu.Unlock()
-		day = day.AddDate(0, 0, 1)
-		return day
-	}}
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.Local)
+	var waited []time.Duration
+	s := &Scheduler{Store: st, Dir: dir, At: config.TimeOfDay{Hour: 3}, Keep: 7, Log: slog.New(slog.DiscardHandler),
+		Now: func() time.Time {
+			mu.Lock()
+			defer mu.Unlock()
+			return now
+		},
+		Sleep: func(d time.Duration) <-chan time.Time {
+			mu.Lock()
+			defer mu.Unlock()
+			waited = append(waited, d)
+			if len(waited) > 2 {
+				return nil // two days are enough: block until cancelled
+			}
+			if len(waited) == 2 {
+				st.mu.Lock()
+				st.err = nil // the disk recovers before the second day
+				st.mu.Unlock()
+			}
+			now = now.Add(d)
+			c := make(chan time.Time, 1)
+			c <- now
+			return c
+		},
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { s.Run(ctx); close(done) }()
-
-	waitFor := func(n int) {
-		t.Helper()
-		deadline := time.Now().Add(5 * time.Second)
-		for time.Now().Before(deadline) {
-			st.mu.Lock()
-			got := len(st.calls)
-			st.mu.Unlock()
-			if got >= n {
-				return
-			}
-			time.Sleep(5 * time.Millisecond)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		st.mu.Lock()
+		n := len(st.calls)
+		st.mu.Unlock()
+		if n >= 2 {
+			break
 		}
-		t.Fatalf("fewer than %d backups", n)
+		if time.Now().After(deadline) {
+			t.Fatal("fewer than 2 backups")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
-	waitFor(1)
-	st.mu.Lock()
-	st.err = nil
-	st.mu.Unlock()
-	waitFor(3)
 	cancel()
 	<-done
-	if files, _ := filepath.Glob(filepath.Join(dir, scheduledGlob)); len(files) == 0 {
+
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if want := []string{"hub-20260902.db", "hub-20260903.db"}; !slices.Equal(st.calls[:2], want) {
+		t.Errorf("backups %v, want %v: the failed one retried a day later", st.calls, want)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if waited[0] != 15*time.Hour || waited[1] != 24*time.Hour {
+		t.Errorf("waited %v, want 15h then 24h", waited[:2])
+	}
+	if _, err := os.Stat(filepath.Join(dir, "hub-20260903.db")); err != nil {
 		t.Error("no backup written after the failure")
 	}
 }

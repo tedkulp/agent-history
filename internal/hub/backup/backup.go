@@ -69,6 +69,8 @@ type Scheduler struct {
 	Keep  int
 	Log   *slog.Logger
 	Now   func() time.Time // time.Now when nil
+	// Sleep returns a channel that fires after d; time.After when nil.
+	Sleep func(d time.Duration) <-chan time.Time
 }
 
 func (s *Scheduler) now() time.Time {
@@ -81,20 +83,24 @@ func (s *Scheduler) now() time.Time {
 // Run takes a backup at every scheduled time until ctx is done. A failure is
 // logged and the next day's backup runs as usual.
 func (s *Scheduler) Run(ctx context.Context) {
-	var prev time.Time
+	var next time.Time
 	for {
-		// From prev too, so a timer that fires early can't repeat a day.
+		// From the last scheduled time too, so a timer that fires early
+		// can't repeat a day.
 		now := s.now()
-		if prev.After(now) {
-			now = prev
+		from := now
+		if next.After(from) {
+			from = next
 		}
-		prev = Next(now, s.At)
-		t := time.NewTimer(prev.Sub(s.now()))
+		next = Next(from, s.At)
+		sleep := time.After
+		if s.Sleep != nil {
+			sleep = s.Sleep
+		}
 		select {
 		case <-ctx.Done():
-			t.Stop()
 			return
-		case <-t.C:
+		case <-sleep(next.Sub(now)):
 		}
 		if err := s.RunOnce(ctx); err != nil && ctx.Err() == nil {
 			s.Log.Error("scheduled backup failed", "err", err)
@@ -102,7 +108,8 @@ func (s *Scheduler) Run(ctx context.Context) {
 	}
 }
 
-// RunOnce takes today's scheduled backup, then prunes old ones.
+// RunOnce takes today's scheduled backup, then prunes old ones. The backup
+// it just wrote is always kept, even with Keep 0.
 func (s *Scheduler) RunOnce(ctx context.Context) error {
 	start := time.Now()
 	dst := filepath.Join(s.Dir, ScheduledName(s.now()))
@@ -110,7 +117,7 @@ func (s *Scheduler) RunOnce(ctx context.Context) error {
 		return err
 	}
 	s.Log.Info("wrote backup", "path", dst, "duration", time.Since(start))
-	removed, err := Prune(s.Dir, s.Keep)
+	removed, err := Prune(s.Dir, max(s.Keep, 1))
 	for _, f := range removed {
 		s.Log.Info("pruned backup", "path", f)
 	}

@@ -295,7 +295,7 @@ func (s *server) fail(w http.ResponseWriter, r *http.Request, status int, e prot
 func (s *server) storeFailure(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, store.ErrBusy):
-		s.log.Warn("database busy", "method", r.Method, "path", r.URL.Path, "err", err)
+		s.log.Error("database busy", "method", r.Method, "path", r.URL.Path, "err", err)
 		writeJSON(w, http.StatusServiceUnavailable, protocol.Error{Error: protocol.ErrBusy})
 	case errors.Is(err, store.ErrDiskFull):
 		s.log.Error("disk full", "method", r.Method, "path", r.URL.Path, "err", err)

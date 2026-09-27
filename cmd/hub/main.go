@@ -100,12 +100,29 @@ func startup(ctx context.Context, st *store.Store, log *slog.Logger) error {
 	return nil
 }
 
+// side is the database flags of a subcommand that runs in a second process
+// next to the live Hub (hub.md §2.2).
+type side struct{ data, backupDir *string }
+
+func sideFlags(fs *flag.FlagSet) side {
+	return side{
+		data:      fs.String("data", envOr("AGENT_HISTORY_DATA", "/data"), "directory holding hub.db"),
+		backupDir: fs.String("backup-dir", envOr("AGENT_HISTORY_BACKUP_DIR", "/backups"), "backup target directory"),
+	}
+}
+
+// open opens the database. The live Hub owns the info log, so this process
+// logs only warnings and prints just its result.
+func (f side) open(ctx context.Context) (*store.Store, error) {
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	return store.OpenWith(ctx, *f.data, parsers, store.Options{BackupDir: *f.backupDir})
+}
+
 // reparse queues Sessions at re-parse priority from a second process next to
 // the live Hub, whose worker picks them up on its next poll (hub.md §2.2).
 func reparse(args []string) error {
 	fs := flag.NewFlagSet("reparse", flag.ContinueOnError)
-	data := fs.String("data", envOr("AGENT_HISTORY_DATA", "/data"), "directory holding hub.db")
-	backupDir := fs.String("backup-dir", envOr("AGENT_HISTORY_BACKUP_DIR", "/backups"), "backup target directory")
+	side := sideFlags(fs)
 	all := fs.Bool("all", false, "every Session")
 	source := fs.String("source", "", "every Session of one Source")
 	session := fs.Int64("session", 0, "one Session, by the id in its Transcript URL")
@@ -124,10 +141,8 @@ func reparse(args []string) error {
 	if _, ok := parsers[*source]; *source != "" && !ok {
 		return fmt.Errorf("no parser for source %q", *source)
 	}
-	// The live Hub owns the info log; this process prints only its count.
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
 	ctx := context.Background()
-	st, err := store.OpenWith(ctx, *data, parsers, store.Options{BackupDir: *backupDir})
+	st, err := side.open(ctx)
 	if err != nil {
 		return err
 	}
@@ -148,22 +163,20 @@ func reparse(args []string) error {
 // live Hub (hub.md §2.2, §4.8).
 func backupNow(args []string) error {
 	fs := flag.NewFlagSet("backup", flag.ContinueOnError)
-	data := fs.String("data", envOr("AGENT_HISTORY_DATA", "/data"), "directory holding hub.db")
-	backupDir := fs.String("backup-dir", envOr("AGENT_HISTORY_BACKUP_DIR", "/backups"), "backup target directory")
+	side := sideFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {
 		return errors.New("usage: agent-history-hub backup [--data <dir>] [--backup-dir <dir>]")
 	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
 	ctx := context.Background()
-	st, err := store.OpenWith(ctx, *data, parsers, store.Options{BackupDir: *backupDir})
+	st, err := side.open(ctx)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
-	dst := filepath.Join(*backupDir, backup.ManualName(time.Now()))
+	dst := filepath.Join(*side.backupDir, backup.ManualName(time.Now()))
 	if err := st.Backup(ctx, dst); err != nil {
 		return err
 	}
@@ -223,7 +236,7 @@ func serve(args []string) error {
 		stopBackground()
 		bg.Wait()
 		if err := st.Checkpoint(context.Background()); err != nil {
-			log.Warn("shutdown checkpoint", "err", err)
+			log.Error("shutdown checkpoint", "err", err)
 		}
 	}()
 	bg.Go(func() { worker.New(st, parsers, log).Run(bgCtx) })

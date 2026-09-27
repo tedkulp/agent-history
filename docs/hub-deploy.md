@@ -54,7 +54,7 @@ Every file the Hub writes to `/backups` is a complete, consistent SQLite databas
 
 | File | Written | Pruned |
 |---|---|---|
-| `hub-YYYYMMDD.db` | Daily at `AGENT_HISTORY_BACKUP_AT` | Only the newest `AGENT_HISTORY_BACKUP_KEEP` are kept |
+| `hub-YYYYMMDD.db` | Daily at `AGENT_HISTORY_BACKUP_AT` | Only the newest `AGENT_HISTORY_BACKUP_KEEP` are kept (never fewer than the one just written) |
 | `hub-YYYYMMDD-HHMMSS.db` | On demand, by `agent-history-hub backup` | Never |
 | `pre-migrate-<n>.db` | Before an upgrade migrates the database from schema `n` | Never |
 

@@ -66,7 +66,7 @@ func (s *Store) migrate(ctx context.Context, backupDir string) error {
 		return err
 	}
 	if current > len(migs) {
-		return fmt.Errorf("database is from a newer Hub (schema %d, this Hub knows %d); restore a pre-migrate backup to roll back", current, len(migs))
+		return fmt.Errorf("database is from a newer Hub; restore a pre-migrate backup to roll back (schema %d, this Hub knows %d)", current, len(migs))
 	}
 	if current > 0 && current < len(migs) {
 		if backupDir == "" {
