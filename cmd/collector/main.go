@@ -136,24 +136,27 @@ func initCmd(args []string) error {
 	name := fs.String("name", "", "display name (default: the hostname)")
 	offline := fs.Bool("offline", false, "don't register with the Hub")
 	resetRoots := fs.Bool("reset-roots", false, "replace configured Source roots with the defaults")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(args); errors.Is(err, flag.ErrHelp) {
+		return nil
+	} else if err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {
 		return fmt.Errorf("init: unexpected argument %q", fs.Arg(0))
 	}
-	home, err := os.UserHomeDir()
+	home, path, err := configPath()
 	if err != nil {
 		return err
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 	getenv := os.Getenv
-	if env, err := setup.ShellEnv(context.Background(), os.Getenv("SHELL"), setup.ShellEnvTimeout); err != nil {
+	if env, err := setup.ShellEnv(ctx, os.Getenv("SHELL"), setup.ShellEnvTimeout); err != nil {
 		fmt.Fprintf(os.Stderr, "agent-history: reading the shell environment: %v; using this process's environment\n", err)
 	} else {
 		getenv = func(k string) string { return env[k] }
 	}
-	path := config.DefaultPath(os.Getenv, home)
-	cfg, info, err := setup.Init(context.Background(), setup.Options{
+	cfg, info, err := setup.Init(ctx, setup.Options{
 		ConfigPath: path,
 		HubURL:     *hubURL,
 		Name:       *name,
@@ -174,6 +177,9 @@ func initCmd(args []string) error {
 	})
 	if err != nil {
 		return err
+	}
+	for _, k := range cfg.Unknown {
+		fmt.Fprintf(os.Stderr, "agent-history: warning: unknown config key %q ignored\n", k)
 	}
 	fmt.Printf("agent-history %s   machine %s   %q\n", buildinfo.Version, cfg.MachineID, cfg.DisplayName)
 	fmt.Printf("Config   %s\n", path)
@@ -202,11 +208,20 @@ func setName(args []string) error {
 	if len(args) != 1 {
 		return errors.New("usage: agent-history set-name <display>")
 	}
-	home, err := os.UserHomeDir()
+	_, path, err := configPath()
 	if err != nil {
 		return err
 	}
-	return setup.SetName(config.DefaultPath(os.Getenv, home), args[0])
+	return setup.SetName(path, args[0])
+}
+
+// configPath returns the home directory and the collector.toml path.
+func configPath() (home, path string, err error) {
+	home, err = os.UserHomeDir()
+	if err != nil {
+		return "", "", err
+	}
+	return home, config.DefaultPath(os.Getenv, home), nil
 }
 
 // hostname is the Machine's hostname, or empty if it can't be read.

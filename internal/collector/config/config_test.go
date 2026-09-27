@@ -102,7 +102,7 @@ x = true
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(p)
-	if !strings.HasPrefix(string(b), Header) {
+	if !strings.HasPrefix(string(b), header) {
 		t.Fatalf("missing header:\n%s", b)
 	}
 	c, err := Load(p)

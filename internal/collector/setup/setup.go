@@ -8,8 +8,10 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -40,20 +42,14 @@ type Options struct {
 	Adapters []source.Adapter
 	// Register sends PUT /machines/{id} to the Hub at hubURL. Skipped when Offline.
 	Register func(ctx context.Context, hubURL, machineID string, info protocol.MachineInfo) error
-	// NewID generates a Machine id; nil means a random UUID v4.
-	NewID func() string
 }
 
 // Init creates or updates collector.toml and registers the Machine with the
 // Hub. It returns the loaded config and the info sent to the Hub.
 func Init(ctx context.Context, o Options) (*config.Config, protocol.MachineInfo, error) {
-	newID := o.NewID
-	if newID == nil {
-		newID = NewUUID
-	}
 	err := config.Edit(o.ConfigPath, func(d config.Doc) error {
 		if s, _ := d["machine_id"].(string); s == "" {
-			d["machine_id"] = newID()
+			d["machine_id"] = NewUUID()
 		}
 		switch {
 		case o.HubURL != "":
@@ -65,7 +61,7 @@ func Init(ctx context.Context, o Options) (*config.Config, protocol.MachineInfo,
 		case o.Name != "":
 			d["display_name"] = o.Name
 		case d["display_name"] == nil || d["display_name"] == "":
-			d["display_name"] = DisplayName(o.Hostname)
+			d["display_name"] = ShortHostname(o.Hostname)
 		}
 		if d["rescan_interval"] == nil {
 			d["rescan_interval"] = "10m"
@@ -80,7 +76,11 @@ func Init(ctx context.Context, o Options) (*config.Config, protocol.MachineInfo,
 				sc["enabled"] = true
 			}
 			if r, _ := sc["root"].(string); r == "" || o.ResetRoots {
-				sc["root"] = a.DefaultRoot(o.Env, o.Home)
+				root := a.DefaultRoot(o.Env, o.Home)
+				if !filepath.IsAbs(root) {
+					return fmt.Errorf("%s: default root %q is not an absolute path; check the environment variables it comes from", a.ID(), root)
+				}
+				sc["root"] = root
 			}
 		}
 		return nil
@@ -106,8 +106,10 @@ func SetName(path, name string) error {
 	if name == "" {
 		return errors.New("display name must not be empty")
 	}
-	if _, err := os.Stat(path); err != nil {
+	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("no config at %s: run `agent-history init` first", path)
+	} else if err != nil {
+		return err
 	}
 	return config.Edit(path, func(d config.Doc) error {
 		d["display_name"] = name
@@ -115,15 +117,15 @@ func SetName(path, name string) error {
 	})
 }
 
-// DisplayName is the default display name: the hostname without ".local".
-func DisplayName(hostname string) string { return strings.TrimSuffix(hostname, ".local") }
+// ShortHostname is the hostname without ".local", the default display name.
+func ShortHostname(hostname string) string { return strings.TrimSuffix(hostname, ".local") }
 
 // MachineInfo is the PUT /machines/{id} body for cfg, detecting each
 // enabled Source at its configured root.
 func MachineInfo(cfg *config.Config, adapters []source.Adapter, hostname, home, version string) protocol.MachineInfo {
 	info := protocol.MachineInfo{
 		DisplayName:      cfg.DisplayName,
-		Hostname:         DisplayName(hostname),
+		Hostname:         ShortHostname(hostname),
 		OS:               runtime.GOOS,
 		Arch:             runtime.GOARCH,
 		HomeDir:          home,
@@ -153,7 +155,7 @@ func MachineInfo(cfg *config.Config, adapters []source.Adapter, hostname, home, 
 }
 
 // ShellEnv reads the environment of the user's interactive shell by running
-// `shell -i -c 'env -0'`, since service managers can't see variables set in
+// `env -0` in `shell -i`, since service managers can't see variables set in
 // shell rc files. It fails if the shell errors or takes longer than timeout.
 func ShellEnv(ctx context.Context, shell string, timeout time.Duration) (map[string]string, error) {
 	if shell == "" {
@@ -161,7 +163,7 @@ func ShellEnv(ctx context.Context, shell string, timeout time.Duration) (map[str
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, shell, "-i", "-c", "env -0")
+	cmd := exec.CommandContext(ctx, shell, "-i", "-c", "printf '%s\\0' "+envMarker+"; env -0")
 	// An interactive shell may start background jobs that hold stdout open.
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
@@ -171,24 +173,26 @@ func ShellEnv(ctx context.Context, shell string, timeout time.Duration) (map[str
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", shell, err)
 	}
-	return parseEnv0(out), nil
+	return parseEnv0(out)
 }
 
-// parseEnv0 parses NUL-separated NAME=value entries. Anything an rc file
-// printed before env's output is joined to the first entry's name, so only
-// the text after the name's last newline is kept.
-func parseEnv0(b []byte) map[string]string {
+// envMarker precedes env's output, so anything the shell's rc files print
+// first is skipped.
+const envMarker = "__AGENT_HISTORY_ENV__"
+
+// parseEnv0 parses the NUL-separated NAME=value entries after envMarker.
+func parseEnv0(b []byte) (map[string]string, error) {
+	_, after, ok := bytes.Cut(b, []byte(envMarker+"\x00"))
+	if !ok {
+		return nil, errors.New("no environment in the shell's output")
+	}
 	env := map[string]string{}
-	for _, e := range bytes.Split(b, []byte{0}) {
-		k, v, ok := strings.Cut(string(e), "=")
-		if i := strings.LastIndexByte(k, '\n'); i >= 0 {
-			k = k[i+1:]
-		}
-		if ok && k != "" {
+	for _, e := range bytes.Split(after, []byte{0}) {
+		if k, v, ok := strings.Cut(string(e), "="); ok && k != "" {
 			env[k] = v
 		}
 	}
-	return env
+	return env, nil
 }
 
 // NewUUID returns a random UUID v4.

@@ -191,7 +191,7 @@ func TestInitUnreachableHub(t *testing.T) {
 func TestInitClaudeConfigDirFromShellRC(t *testing.T) {
 	home := t.TempDir()
 	rc := filepath.Join(home, "rc")
-	if err := os.WriteFile(rc, []byte("echo welcome to my shell\nexport CLAUDE_CONFIG_DIR=/opt/claude\n"), 0o644); err != nil {
+	if err := os.WriteFile(rc, []byte("echo welcome, user=ted\nexport CLAUDE_CONFIG_DIR=/opt/claude\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// A fake interactive shell that sources an rc file, like `zsh -i` does.
@@ -233,9 +233,31 @@ func TestShellEnvTimeout(t *testing.T) {
 }
 
 func TestParseEnv0(t *testing.T) {
-	env := parseEnv0([]byte("motd line\nA=1\x00B=two\nlines\x00C=\x00junk\x00"))
+	env, err := parseEnv0([]byte("Welcome, user=ted\nmotd\x00" + envMarker + "\x00A=1\x00B=two\nlines\x00C=\x00junk\x00"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if env["A"] != "1" || env["B"] != "two\nlines" || env["C"] != "" || len(env) != 3 {
 		t.Fatalf("env %q", env)
+	}
+	if _, err := parseEnv0([]byte("A=1\x00")); err == nil {
+		t.Fatal("output without the marker should fail")
+	}
+}
+
+func TestInitRejectsRelativeRoot(t *testing.T) {
+	f := newFixture(t)
+	f.opts.Env = func(k string) string {
+		if k == "CLAUDE_CONFIG_DIR" {
+			return "~/claude"
+		}
+		return ""
+	}
+	if _, _, err := Init(context.Background(), f.opts); err == nil || !strings.Contains(err.Error(), "not an absolute path") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := os.Stat(f.opts.ConfigPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("config written despite the error: %v", err)
 	}
 }
 
@@ -259,10 +281,10 @@ func TestSetName(t *testing.T) {
 	}
 }
 
-func TestDisplayName(t *testing.T) {
+func TestShortHostname(t *testing.T) {
 	for in, want := range map[string]string{"box.local": "box", "box": "box", "box.lan": "box.lan"} {
-		if got := DisplayName(in); got != want {
-			t.Errorf("DisplayName(%q) = %q", in, got)
+		if got := ShortHostname(in); got != want {
+			t.Errorf("ShortHostname(%q) = %q", in, got)
 		}
 	}
 }

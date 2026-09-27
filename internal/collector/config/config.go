@@ -91,8 +91,8 @@ func Load(path string) (*Config, error) {
 	return &c, nil
 }
 
-// Header is the comment written at the top of collector.toml.
-const Header = "# Written by `agent-history init`. Safe to edit; restart the service to apply.\n\n"
+// header is the comment written at the top of collector.toml.
+const header = "# Written by `agent-history init`. Safe to edit; restart the service to apply.\n\n"
 
 // Doc is collector.toml as a generic table, so keys the user added survive
 // a rewrite.
@@ -124,7 +124,7 @@ func Edit(path string, edit func(Doc) error) error {
 		return err
 	}
 	var b bytes.Buffer
-	b.WriteString(Header)
+	b.WriteString(header)
 	enc := toml.NewEncoder(&b)
 	enc.Indent = ""
 	if err := enc.Encode(map[string]any(d)); err != nil {
