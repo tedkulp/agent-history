@@ -30,7 +30,8 @@ func write(t *testing.T, root, rel string, mtime time.Time) {
 // Every path in the adapters/claude-code.md §2.2 table is claimed, memory
 // notes are known-ignored, and anything else is unclaimed.
 func TestScanClaudeCode(t *testing.T) {
-	root := t.TempDir()
+	// Glob metacharacters in the root are taken literally.
+	root := filepath.Join(t.TempDir(), "[x]*")
 	proj := "-Users-ted-src-app"
 	t0 := time.Date(2026, 9, 25, 18, 2, 0, 0, time.UTC)
 	for _, rel := range []string{
@@ -50,6 +51,7 @@ func TestScanClaudeCode(t *testing.T) {
 	unclaimed := []string{
 		proj + "/" + sess + "/notes.txt",
 		proj + "/not-a-uuid.jsonl",
+		"..hidden",
 		".DS_Store",
 	}
 	for _, rel := range unclaimed {
@@ -97,5 +99,13 @@ func TestReportCapsPaths(t *testing.T) {
 	}
 	if s.Ignored != 7 || len(s.IgnoredPaths) != 5 || s.IgnoredPaths[0].Path != "a" {
 		t.Errorf("ignored %d %+v", s.Ignored, s.IgnoredPaths)
+	}
+}
+
+func TestReportEmptyListsAreNotNull(t *testing.T) {
+	var s status.Source
+	Result{}.Report(&s)
+	if s.UnclaimedPaths == nil || s.IgnoredPaths == nil {
+		t.Fatalf("got %+v", s)
 	}
 }

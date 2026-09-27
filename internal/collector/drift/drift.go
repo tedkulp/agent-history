@@ -5,6 +5,7 @@ package drift
 
 import (
 	"io/fs"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -34,7 +35,7 @@ func Scan(a source.Adapter, root string) Result {
 		}
 		seen[path] = true
 		rel, err := filepath.Rel(root, path)
-		if err != nil || strings.HasPrefix(rel, "..") {
+		if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
@@ -56,7 +57,12 @@ func Scan(a source.Adapter, root string) Result {
 		return nil
 	}
 	for _, p := range a.ScanPaths(root) {
-		matches, _ := filepath.Glob(p)
+		// A path that exists is taken as is, so a root holding glob
+		// metacharacters isn't read as a pattern.
+		matches := []string{p}
+		if _, err := os.Lstat(p); err != nil {
+			matches, _ = filepath.Glob(p)
+		}
 		for _, m := range matches {
 			filepath.WalkDir(m, visit)
 		}
@@ -74,7 +80,7 @@ func Scan(a source.Adapter, root string) Result {
 // Report fills in s's unclaimed and known-ignored counts and paths.
 func (r Result) Report(s *status.Source) {
 	s.Unclaimed = len(r.Unclaimed)
-	s.UnclaimedPaths = r.Unclaimed[:min(len(r.Unclaimed), status.MaxPaths)]
+	s.UnclaimedPaths = append([]string{}, r.Unclaimed[:min(len(r.Unclaimed), status.MaxPaths)]...)
 	s.Ignored = len(r.Ignored)
-	s.IgnoredPaths = r.Ignored[:min(len(r.Ignored), status.MaxPaths)]
+	s.IgnoredPaths = append([]status.IgnoredPath{}, r.Ignored[:min(len(r.Ignored), status.MaxPaths)]...)
 }

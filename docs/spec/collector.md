@@ -259,7 +259,7 @@ Source: [Collector design](https://github.com/tedkulp/agent-history/issues/11), 
 - `length` and `sha256` are what the Hub acknowledged: decompressed bytes, cut at the last complete line for JSONL content (`protocol.md` §3.2).
 - `src_size` and `src_mtime` are the on-disk file's stat at the time of that ack. When both are unchanged, the record is skipped without reading it.
 - `opencode_last_time_updated` is the highest `session.time_updated` already exported (§4.5).
-- `unclaimed_seen` holds unclaimed paths already logged, as `source` + NUL + path relative to the root, so each one is logged only once (§4.7).
+- `unclaimed_seen` holds unclaimed paths already logged, as `source` + NUL + path relative to the root, so each one is logged only once (§4.7). A path that is no longer unclaimed is dropped from it, so the list doesn't grow forever; if it comes back, it's logged again.
 - The file is written atomically (write a temp file, then rename), at most once every 5 s and on shutdown.
 - If `hub_url` in the cache differs from config, or the file is missing or unreadable, the cache is discarded and rebuilt by the next reconcile.
 
