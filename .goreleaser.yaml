@@ -1,0 +1,71 @@
+# One lockstep vX.Y.Z tag releases the Collector archives and the Hub image
+# (docs/spec/README.md §5). CI runs `goreleaser release --snapshot`, which
+# builds all of it and publishes nothing.
+version: 2
+
+project_name: agent-history
+
+before:
+  hooks:
+    - go generate ./...
+
+builds:
+  - id: collector
+    main: ./cmd/collector
+    binary: agent-history
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X github.com/tedkulp/agent-history/internal/buildinfo.Version={{ .Version }}
+  - id: hub
+    main: ./cmd/hub
+    binary: agent-history-hub
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X github.com/tedkulp/agent-history/internal/buildinfo.Version={{ .Version }}
+
+# Collector archives only: mise's github: backend must find exactly one asset
+# per platform, so the Hub binary ships in the image and nowhere else.
+archives:
+  - ids: [collector]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+dockers_v2:
+  - ids: [hub]
+    dockerfile: Dockerfile
+    images: [ghcr.io/tedkulp/agent-history-hub]
+    platforms: [linux/amd64, linux/arm64]
+    # An rc tag gets only its own image tag; vX.Y and latest stay put.
+    tags:
+      - "{{ .Tag }}"
+      - "{{ if not .Prerelease }}v{{ .Major }}.{{ .Minor }}{{ end }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    labels:
+      org.opencontainers.image.source: https://github.com/tedkulp/agent-history
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+
+changelog:
+  use: git
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Other
+      order: 999
+
+release:
+  prerelease: auto

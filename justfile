@@ -25,6 +25,10 @@ image: generate
     CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -ldflags "{{ldflags}}" -o bin/image/linux/$arch/agent-history-hub ./cmd/hub
     docker build --platform linux/$arch -f Dockerfile -t agent-history-hub:dev bin/image
 
+# Build every release artifact into dist/ without publishing (needs goreleaser)
+snapshot:
+    goreleaser release --snapshot --clean
+
 # Run all tests, or one package: just test ./internal/collector/service
 test pkg="./...":
     go test {{pkg}}
