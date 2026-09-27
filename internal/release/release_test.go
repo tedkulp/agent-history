@@ -15,7 +15,7 @@ func TestCheckFloorRejectsTagBelowFloor(t *testing.T) {
 	if err == nil {
 		t.Fatal("CheckFloor(0.5.0, v0.4.9) = nil, want an error")
 	}
-	if got, want := err.Error(), "MinCollectorVersion 0.5.0 is above the release version 0.4.9"; got != want {
+	if got, want := err.Error(), "minimum Collector version 0.5.0 is above the release version 0.4.9"; got != want {
 		t.Errorf("error = %q, want %q", got, want)
 	}
 }

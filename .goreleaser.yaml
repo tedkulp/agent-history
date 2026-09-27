@@ -1,5 +1,5 @@
 # One lockstep vX.Y.Z tag releases the Collector archives and the Hub image
-# (docs/spec/README.md §5). CI runs `goreleaser release --snapshot`, which
+# (README.md §5). CI runs `goreleaser release --snapshot`, which
 # builds all of it and publishes nothing.
 version: 2
 
@@ -17,7 +17,7 @@ builds:
     goos: [darwin, linux]
     goarch: [amd64, arm64]
     flags: [-trimpath]
-    ldflags:
+    ldflags: &ldflags
       - -s -w -X github.com/tedkulp/agent-history/internal/buildinfo.Version={{ .Version }}
   - id: hub
     main: ./cmd/hub
@@ -26,8 +26,7 @@ builds:
     goos: [linux]
     goarch: [amd64, arm64]
     flags: [-trimpath]
-    ldflags:
-      - -s -w -X github.com/tedkulp/agent-history/internal/buildinfo.Version={{ .Version }}
+    ldflags: *ldflags
 
 # Collector archives only: mise's github: backend must find exactly one asset
 # per platform, so the Hub binary ships in the image and nowhere else.

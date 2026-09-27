@@ -1,4 +1,4 @@
-# CI gates on every PR and on main (docs/spec/README.md §5.3).
+# CI gates on every PR and on main (README.md §5.3).
 name: ci
 
 on:
