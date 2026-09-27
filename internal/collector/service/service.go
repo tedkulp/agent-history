@@ -232,7 +232,7 @@ func plistShim(b []byte) (string, bool) {
 	dec := xml.NewDecoder(bytes.NewReader(b))
 	dec.Strict = false
 	var inKey, inString, afterKey bool
-	var key strings.Builder
+	var text strings.Builder
 	for {
 		tok, err := dec.Token()
 		if err != nil {
@@ -243,22 +243,22 @@ func plistShim(b []byte) (string, bool) {
 			switch t.Name.Local {
 			case "key":
 				inKey, afterKey = true, false
-				key.Reset()
+				text.Reset()
 			case "string":
 				inString = afterKey
-				key.Reset()
+				text.Reset()
 			}
 		case xml.CharData:
 			if inKey || inString {
-				key.Write(t)
+				text.Write(t)
 			}
 		case xml.EndElement:
 			switch {
 			case inKey:
 				inKey = false
-				afterKey = key.String() == "ProgramArguments"
+				afterKey = text.String() == "ProgramArguments"
 			case inString:
-				return key.String(), true
+				return text.String(), true
 			}
 		}
 	}

@@ -66,6 +66,7 @@ type Config struct {
 	// prints a version other than Info.CollectorVersion, Run drains for up
 	// to RestartDrain, writes the cache and returns nil, so that the service
 	// manager restarts the Collector on the new binary (collector.md §4.9).
+	// CheckVersion's output is compared as is, so trim it.
 	CheckVersion   func(context.Context) (string, error)
 	VersionTimeout time.Duration // 10s for one CheckVersion
 	RestartDrain   time.Duration // 30s for in-flight uploads before a restart
@@ -298,9 +299,9 @@ func Run(ctx context.Context, cfg Config) error {
 				r.OnRescan()
 			}
 			r.rescan()
-			r.checkVersion(workCtx)
+			r.startVersionCheck(workCtx)
 		case vc := <-r.versions:
-			if r.newVersion(vc) {
+			if r.handleVersionCheck(vc) {
 				stopWork()
 				return r.shutdown(cancelUploads, r.RestartDrain)
 			}
@@ -855,8 +856,8 @@ func (r *runner) saveCache() {
 	}
 }
 
-// checkVersion starts a CheckVersion unless one is still running.
-func (r *runner) checkVersion(ctx context.Context) {
+// startVersionCheck starts a CheckVersion unless one is still running.
+func (r *runner) startVersionCheck(ctx context.Context) {
 	if r.CheckVersion == nil || r.checkingVersion {
 		return
 	}
@@ -865,12 +866,12 @@ func (r *runner) checkVersion(ctx context.Context) {
 		ctx, cancel := context.WithTimeout(ctx, r.VersionTimeout)
 		defer cancel()
 		v, err := r.CheckVersion(ctx)
-		r.versions <- versionCheck{strings.TrimSpace(v), err}
+		r.versions <- versionCheck{v, err}
 	}()
 }
 
-// newVersion reports whether vc found a version to restart into.
-func (r *runner) newVersion(vc versionCheck) bool {
+// handleVersionCheck reports whether vc found a version to restart into.
+func (r *runner) handleVersionCheck(vc versionCheck) bool {
 	r.checkingVersion = false
 	if vc.err == nil && vc.version == "" {
 		vc.err = errors.New("printed no version")
@@ -882,7 +883,7 @@ func (r *runner) newVersion(vc versionCheck) bool {
 	case vc.version == r.Info.CollectorVersion:
 		return false
 	}
-	r.Log.Info(fmt.Sprintf("new version %s found, restarting", vc.version), "version", r.Info.CollectorVersion, "new_version", vc.version)
+	r.Log.Info("new version "+vc.version+" found, restarting", "version", r.Info.CollectorVersion)
 	return true
 }
 

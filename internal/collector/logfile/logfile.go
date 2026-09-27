@@ -46,9 +46,9 @@ func Stderr(path string) *Rotator {
 // Rotate rotates the file if it is over the size limit, and reports whether
 // it did.
 func (r *Rotator) Rotate() (bool, error) {
-	max, keep, fds := r.MaxSize, r.Keep, r.Fds
-	if max == 0 {
-		max = MaxSize
+	maxSize, keep, fds := r.MaxSize, r.Keep, r.Fds
+	if maxSize == 0 {
+		maxSize = MaxSize
 	}
 	if keep == 0 {
 		keep = Keep
@@ -63,7 +63,7 @@ func (r *Rotator) Rotate() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if fi.Size() <= max {
+	if fi.Size() <= maxSize {
 		return false, nil
 	}
 	name := func(i int) string {

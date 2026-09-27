@@ -443,6 +443,7 @@ Source: [Installing the Collector via mise and running it as a user service](htt
 3. If the output differs from its own version, it logs `info` "new version X found, restarting", stops taking new work, drains in-flight uploads (up to 30 s), writes the cache, and **exits `0`**.
 4. launchd `KeepAlive` or systemd `Restart=always` starts it again, now running the new binary.
 
+- The shim is the one the installed service definition runs. With no service installed there is nothing to restart the Collector, so there is no check.
 - If running the shim fails, log a `warn` and carry on. It is checked again on the next rescan.
 - `agent-history service restart` restarts immediately.
 - The Collector never downloads or installs anything itself. mise does that.

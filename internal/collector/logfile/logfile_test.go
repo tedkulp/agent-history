@@ -94,3 +94,13 @@ func TestStderrOnlyWhenStderrIsTheLog(t *testing.T) {
 		t.Fatal("got a Rotator for a file stderr doesn't point at")
 	}
 }
+
+func TestStderrWhenStderrIsTheLog(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "collector.log")
+	orig := os.Stderr
+	t.Cleanup(func() { os.Stderr = orig })
+	os.Stderr = writer(t, log)
+	if r := Stderr(log); r == nil || r.Path != log {
+		t.Fatalf("got %+v, want a Rotator for %s", r, log)
+	}
+}
