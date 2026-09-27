@@ -69,7 +69,7 @@ templ feedRows(v feedView) {
 			<div class="day">{ d.Label }</div>
 		}
 		for _, r := range d.Rows {
-			<a class="row" href={ templ.SafeURL("/sessions/" + strconv.FormatInt(r.ID, 10)) }>
+			<a class="row" href={ templ.SafeURL(sessionHref(r.ID)) }>
 				<span class="tm">{ r.Time }</span>
 				<span>
 					<span class="t">{ r.Title }</span>

@@ -76,7 +76,7 @@ func (*Parser) MapKey(key string) (parser.Mapping, bool) {
 			if a[2] == "meta.json" {
 				role = parser.RoleAttachment
 			}
-			return m(name+"/agent-"+a[1], role)
+			return m(childNativeID(name, a[1]), role)
 		}
 	}
 	return m(name, parser.RoleAttachment)
@@ -350,7 +350,7 @@ type result struct {
 	pos     int
 	used    bool
 	raw     []byte
-	agentID string // toolUseResult.agentId of its line: the sub-agent it ran
+	agentID string // toolUseResult.agentId of its line: the Child Session it ran
 }
 
 // buildMessages turns path lines into Messages (claude-code.md §3.3, §3.4).
@@ -363,10 +363,17 @@ func buildMessages(in parser.Input, path []*line, warn *parser.Warnings) ([]pars
 		if l.Type != "user" {
 			continue
 		}
-		for _, bl := range userBlocks(l) {
-			if bl.Type == "tool_result" && bl.ToolUseID != "" {
+		blocks := userBlocks(l)
+		// The line's toolUseResult belongs to its only tool_result; with
+		// several, none can claim its agentId.
+		lineAgent := ""
+		if n := slices.IndexFunc(blocks, isToolResult); n >= 0 && !slices.ContainsFunc(blocks[n+1:], isToolResult) {
+			lineAgent = agentID(l)
+		}
+		for _, bl := range blocks {
+			if isToolResult(bl) && bl.ToolUseID != "" {
 				if _, dup := b.results[bl.ToolUseID]; !dup {
-					b.results[bl.ToolUseID] = &result{block: bl, pos: i, raw: l.raw, agentID: agentID(l)}
+					b.results[bl.ToolUseID] = &result{block: bl, pos: i, raw: l.raw, agentID: lineAgent}
 				}
 			}
 		}
@@ -612,9 +619,9 @@ func (b *builder) addToolCall(m *parser.Message, bl block, pos int) {
 		p.Status = parser.StatusError
 	}
 	if (bl.Name == "Agent" || bl.Name == "Task") && r.agentID != "" {
-		// Nested sub-agents are filed flat under the top-level Session.
+		// Nested Child Sessions are filed flat under the top-level Session.
 		top, _, _ := strings.Cut(b.in.NativeID, "/")
-		p.ChildSessions = []string{top + "/agent-" + r.agentID}
+		p.ChildSessions = []string{childNativeID(top, r.agentID)}
 	}
 	out, images := resultContent(r.Content)
 	out = b.stitchSpill(out, bl.ID)
@@ -625,7 +632,13 @@ func (b *builder) addToolCall(m *parser.Message, bl block, pos int) {
 	}
 }
 
-// agentID is the sub-agent a tool result line reports running, from its
+// childNativeID is the native id of the Child Session in subagents/agent-<agentID>
+// (claude-code.md §3.5).
+func childNativeID(session, agentID string) string { return session + "/agent-" + agentID }
+
+func isToolResult(bl block) bool { return bl.Type == "tool_result" }
+
+// agentID is the Child Session a tool result line reports running, from its
 // toolUseResult.agentId, or "".
 func agentID(l *line) string {
 	var v struct {

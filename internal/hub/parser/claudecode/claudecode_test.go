@@ -724,6 +724,16 @@ func TestParseAgentCallsLinkChildSessions(t *testing.T) {
 		result("r3", "a3", "t_bash", map[string]any{"agentId": "nope"}),
 		call("a4", "r3", "t_str", "Agent"),
 		result("r4", "a4", "t_str", "Error: interrupted"),
+		// Two results on one line share its toolUseResult, so neither can
+		// claim its agentId.
+		call("a5", "r4", "t_p1", "Agent"),
+		call("a6", "a5", "t_p2", "Agent"),
+		map[string]any{"type": "user", "uuid": "r5", "parentUuid": "a6", "timestamp": "2026-09-01T10:00:04.000Z",
+			"toolUseResult": map[string]any{"agentId": "ghi"},
+			"message": map[string]any{"role": "user", "content": []any{
+				map[string]any{"type": "tool_result", "tool_use_id": "t_p1", "content": "one"},
+				map[string]any{"type": "tool_result", "tool_use_id": "t_p2", "content": "two"},
+			}}},
 	)
 	children := func(res parser.Result) map[string][]string {
 		out := map[string][]string{}
@@ -736,12 +746,12 @@ func TestParseAgentCallsLinkChildSessions(t *testing.T) {
 		}
 		return out
 	}
-	want := map[string][]string{"t_agent": {sess + "/agent-abc"}, "t_task": {sess + "/agent-def"}, "t_bash": {}, "t_str": {}}
+	want := map[string][]string{"t_agent": {sess + "/agent-abc"}, "t_task": {sess + "/agent-def"}, "t_bash": {}, "t_str": {}, "t_p1": {}, "t_p2": {}}
 	if got := children(parse(t, main, nil)); !reflect.DeepEqual(got, want) {
 		t.Errorf("child_sessions = %v", got)
 	}
 
-	// A nested sub-agent's call links to a sibling filed under the top-level Session.
+	// A nested Child Session's call links to a sibling filed under the top-level Session.
 	res, err := New().Parse(parser.Input{NativeID: sess + "/agent-abc", Main: main})
 	if err != nil {
 		t.Fatal(err)

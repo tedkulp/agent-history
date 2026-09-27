@@ -562,7 +562,8 @@ func TestTranscriptChildSessionsLinkBothWays(t *testing.T) {
 	dir := "-Users-ted-src-app/" + sess
 	srv := newSite(t, map[string]string{
 		dir + ".jsonl":                       main,
-		dir + "/subagents/agent-a.jsonl":     childLine("child a"),
+		dir + "/subagents/agent-a.jsonl":     childLine("child a") + jsonLines(call("ca", "c1", "msg_c", "t_d", "Agent"), result("cr", "ca", "t_d", "d")),
+		dir + "/subagents/agent-d.jsonl":     childLine("child d"),
 		dir + "/subagents/agent-a.meta.json": `{"agentType":"Explore","description":"Explore the parser","toolUseId":"t_a"}`,
 		dir + "/subagents/agent-b.jsonl":     childLine("child b"),
 		dir + "/subagents/agent-c.jsonl":     childLine("child c"),
@@ -600,6 +601,17 @@ func TestTranscriptChildSessionsLinkBothWays(t *testing.T) {
 	}
 	if links[0][1] != childURLs[0] || links[1][1] != childURLs[1] {
 		t.Errorf("call links %v don't match children %v", links, childURLs)
+	}
+
+	// A nested child is filed under the top-level Session, but the call that
+	// spawned it still links forward (claude-code.md §3.5).
+	d := regexp.MustCompile(`<a href="(/sessions/\d+)">↳ child d</a>`).FindStringSubmatch(outline)
+	if d == nil {
+		t.Fatal("outline lacks the nested child")
+	}
+	_, childA := get(t, srv.URL+childURLs[0])
+	if !strings.Contains(childA, `<a class="child" href="`+d[1]+`">↳ Child Session</a>`) || !strings.Contains(childA, `<details class="cluster" open>`) {
+		t.Error("a nested child's spawning call doesn't link to it")
 	}
 
 	// Each child links back: through spawning_call_id, through the parent's

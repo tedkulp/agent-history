@@ -428,18 +428,20 @@ func (s *server) transcript(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var (
-		views    []messageView
-		outline  []outlineEntry
-		children []childEntry
-		hrefs    = map[string]string{}
+		views      []messageView
+		outline    []outlineEntry
+		children   []childEntry
+		childHrefs = map[string]string{}
 	)
 	for _, c := range h.Children {
-		hrefs[c.NativeID] = sessionHref(c.ID)
 		children = append(children, childEntry{Href: sessionHref(c.ID), Title: titleOr(c.Title, c.NativeID)})
+	}
+	for native, cid := range h.CallChildren {
+		childHrefs[native] = sessionHref(cid)
 	}
 	for _, m := range msgs {
 		v := messageView{ID: m.ID, Role: m.Role, Time: s.localTime(m.Timestamp, "Jan 2 15:04")}
-		v.Chunks = s.chunks(id, m.Parts, hrefs)
+		v.Chunks = s.chunks(id, m.Parts, childHrefs)
 		// Messages with nothing renderable yet are skipped.
 		if len(v.Chunks) == 0 {
 			continue

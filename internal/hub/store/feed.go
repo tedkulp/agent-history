@@ -239,9 +239,13 @@ type SessionHeader struct {
 	SourceVersion string
 	Warnings      []ParseWarning
 	// Parent is set for a Child Session; Children are the parsed Child
-	// Sessions it spawned, oldest first (hub.md §4.7).
+	// Sessions filed under it, oldest first (hub.md §4.7).
 	Parent   *ParentLink
 	Children []ChildLink
+	// CallChildren maps each parsed Child Session named by this Session's
+	// tool calls to its id. A nested Child Session is filed under the
+	// top-level Session, so it's here but not in Children (claude-code.md §3.5).
+	CallChildren map[string]int64
 }
 
 // ParentLink is a Child Session's parent and the spawning call in it.
@@ -305,6 +309,9 @@ func (s *Store) Transcript(ctx context.Context, id int64) (h SessionHeader, msgs
 		}
 	}
 	if h.Children, err = s.childLinks(ctx, id); err != nil {
+		return h, nil, false, err
+	}
+	if h.CallChildren, err = s.callChildren(ctx, id); err != nil {
 		return h, nil, false, err
 	}
 
@@ -380,6 +387,32 @@ func (s *Store) childLinks(ctx context.Context, id int64) ([]ChildLink, error) {
 			return nil, err
 		}
 		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// callChildren maps the native id of each parsed Child Session named in a
+// Session's tool_call Parts to its id.
+func (s *Store) callChildren(ctx context.Context, id int64) (map[string]int64, error) {
+	rows, err := s.read.QueryContext(ctx, `
+		SELECT DISTINCT c.native_id, c.id
+		FROM sessions s
+		JOIN parts p ON p.session_id = s.id AND p.kind = ?2
+		JOIN json_each(p.payload_json, '$.child_sessions') j
+		JOIN sessions c ON c.machine_id = s.machine_id AND c.source = s.source AND c.native_id = j.value
+		WHERE s.id = ?1 AND c.parsed_at IS NOT NULL`, id, parser.KindToolCall)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var native string
+		var cid int64
+		if err := rows.Scan(&native, &cid); err != nil {
+			return nil, err
+		}
+		out[native] = cid
 	}
 	return out, rows.Err()
 }

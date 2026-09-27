@@ -75,9 +75,9 @@ type diffLine struct {
 }
 
 // chunks turns a Message's Parts into rendered chunks. Consecutive tool_call
-// Parts fold into one cluster. children maps a Child Session's native id to
+// Parts fold into one cluster. childHrefs maps a Child Session's native id to
 // its page.
-func (s *server) chunks(sessionID int64, parts []store.TranscriptPart, children map[string]string) []chunkView {
+func (s *server) chunks(sessionID int64, parts []store.TranscriptPart, childHrefs map[string]string) []chunkView {
 	var out []chunkView
 	for _, p := range parts {
 		switch p.Kind {
@@ -116,7 +116,7 @@ func (s *server) chunks(sessionID int64, parts []store.TranscriptPart, children 
 			}
 			tv := newToolView(sessionID, p.ID, tc)
 			for _, c := range tc.ChildSessions {
-				if href, ok := children[c]; ok {
+				if href, ok := childHrefs[c]; ok {
 					tv.ChildHref = href
 					break
 				}
@@ -178,7 +178,7 @@ func newToolView(sessionID int64, partID string, tc parser.ToolCallPayload) tool
 		v.HasOutput = true
 		v.Stub = "Output collapsed · " + byteSize(tc.OutputSize) + " · click to load"
 		v.Preview = tc.OutputPreview
-		v.OutputURL = "/sessions/" + strconv.FormatInt(sessionID, 10) + "/parts/" + url.PathEscape(partID) + "/output"
+		v.OutputURL = sessionHref(sessionID) + "/parts/" + url.PathEscape(partID) + "/output"
 	case tc.Output != nil && *tc.Output != "":
 		v.HasOutput = true
 		v.Output = *tc.Output
