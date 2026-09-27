@@ -339,6 +339,17 @@ func TestDefaultExec(t *testing.T) {
 		t.Fatalf("path outside MISE_DATA_DIR's installs: %q, %v", got, err)
 	}
 
+	// MISE_DATA_DIR through a symlink, self resolved (as on Linux).
+	real := filepath.Join(home, "real-mise")
+	os.MkdirAll(filepath.Join(real, "installs", "x"), 0o755)
+	os.Symlink(real, filepath.Join(home, "linked-mise"))
+	env["MISE_DATA_DIR"] = filepath.Join(home, "linked-mise")
+	resolved := filepath.Join(real, "installs", "x", "agent-history")
+	os.WriteFile(resolved, nil, 0o755)
+	if _, err := DefaultExec(getenv, home, resolved); err == nil {
+		t.Fatal("versioned path under a symlinked MISE_DATA_DIR: want an error")
+	}
+
 	// A shim present wins over the binary's own path.
 	shim := ShimPath(getenv, home)
 	os.MkdirAll(filepath.Dir(shim), 0o755)
@@ -386,17 +397,17 @@ func TestOutdatedUntilReinstalled(t *testing.T) {
 
 func TestInstalledExecRoundTrips(t *testing.T) {
 	dir := t.TempDir()
-	for _, shim := range []string{
+	for _, exe := range []string{
 		"/Users/ted/.local/share/mise/shims/agent-history",
 		"/Users/a&b/<shims>/agent-history",
 		`/home/ted/my tools/100%/$bin/"q"\agent-history`,
 	} {
-		d := Definition{Exec: shim, Home: "/h", LogPath: "/h/collector.log"}
+		d := Definition{Exec: exe, Home: "/h", LogPath: "/h/collector.log"}
 		for name, b := range map[string][]byte{"a.plist": Plist(d), "a.service": Unit(d)} {
 			p := filepath.Join(dir, name)
 			os.WriteFile(p, b, 0o644)
-			if got, err := InstalledExec(p); err != nil || got != shim {
-				t.Fatalf("%s: shim %q, %v; want %q", name, got, err, shim)
+			if got, err := InstalledExec(p); err != nil || got != exe {
+				t.Fatalf("%s: exe %q, %v; want %q", name, got, err, exe)
 			}
 		}
 	}
@@ -412,26 +423,26 @@ func TestInstalledExecRoundTrips(t *testing.T) {
 
 func TestExecVersion(t *testing.T) {
 	dir := t.TempDir()
-	shim := filepath.Join(dir, "agent-history")
-	os.WriteFile(shim, []byte("#!/bin/sh\n[ \"$1\" = version ] && echo 0.4.0\n"), 0o755)
-	if v, err := ExecVersion(context.Background(), shim); err != nil || v != "0.4.0" {
+	exe := filepath.Join(dir, "agent-history")
+	os.WriteFile(exe, []byte("#!/bin/sh\n[ \"$1\" = version ] && echo 0.4.0\n"), 0o755)
+	if v, err := ExecVersion(context.Background(), exe); err != nil || v != "0.4.0" {
 		t.Fatalf("version %q, %v", v, err)
 	}
 	// A manual upgrade replaces the file at the same path.
 	next := filepath.Join(dir, "agent-history.new")
 	os.WriteFile(next, []byte("#!/bin/sh\n[ \"$1\" = version ] && echo 0.5.0\n"), 0o755)
-	if err := os.Rename(next, shim); err != nil {
+	if err := os.Rename(next, exe); err != nil {
 		t.Fatal(err)
 	}
-	if v, err := ExecVersion(context.Background(), shim); err != nil || v != "0.5.0" {
+	if v, err := ExecVersion(context.Background(), exe); err != nil || v != "0.5.0" {
 		t.Fatalf("after replacing: version %q, %v", v, err)
 	}
 	failing := filepath.Join(dir, "failing")
 	os.WriteFile(failing, []byte("#!/bin/sh\necho boom >&2\nexit 3\n"), 0o755)
 	if _, err := ExecVersion(context.Background(), failing); err == nil || !strings.Contains(err.Error(), "boom") {
-		t.Fatalf("err %v, want the shim's stderr", err)
+		t.Fatalf("err %v, want its stderr", err)
 	}
 	if _, err := ExecVersion(context.Background(), filepath.Join(dir, "missing")); err == nil {
-		t.Fatal("no error for a missing shim")
+		t.Fatal("no error for a missing binary")
 	}
 }

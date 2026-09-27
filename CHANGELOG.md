@@ -31,8 +31,13 @@ One version covers the Collector and the Hub together (see
 
 - The Collector no longer needs mise: install it by downloading the release
   archive into `~/.local/bin`. `init` and `service install` run the mise shim
-  when it exists, otherwise the binary you ran. `--shim` is renamed
-  `--exec`; `--shim` still works for this release.
+  when it exists, otherwise the binary you ran.
+- `init` and `service install` take `--exec <path>` in place of `--shim`.
+
+### Deprecated
+
+- `--shim` on `init` and `service install`: use `--exec`. It still works for
+  this release.
 
 ### Fixed
 

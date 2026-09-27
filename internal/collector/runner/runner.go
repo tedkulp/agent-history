@@ -547,7 +547,7 @@ func (r *runner) handleReconciled(rc reconciled) {
 // sync retries at once.
 func (r *runner) upgradeRequired(e *hubclient.TooOldError) {
 	if r.tooOld == nil || r.tooOld.MinVersion != e.MinVersion {
-		r.Log.Error("hub requires a newer Collector, stopped uploading until it is upgraded: upgrade the Collector",
+		r.Log.Error("hub requires a newer Collector, stopped uploading until the Collector is upgraded",
 			"min_collector_version", e.MinVersion, "retry_in", r.UpgradeRetry)
 	} else {
 		r.Log.Info("hub still requires a newer Collector", "min_collector_version", e.MinVersion, "retry_in", r.UpgradeRetry)

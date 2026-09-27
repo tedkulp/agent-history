@@ -173,8 +173,8 @@ func logRotation(dir string, log *slog.Logger) func() {
 
 // execVersionCheck runs the binary the installed service runs with
 // `version`, so the runner can restart into a new version after an upgrade
-// replaces it (collector.md §4.9). Without an installed service there is nothing to restart it, so
-// there is no check.
+// replaces it (collector.md §4.9). Without an installed service there is
+// nothing to restart it, so there is no check.
 func execVersionCheck(svcPath string, log *slog.Logger) func(context.Context) (string, error) {
 	exe, err := service.InstalledExec(svcPath)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -564,7 +564,7 @@ func serviceCmd(args []string) error {
 }
 
 // execFlag defines --exec on fs, plus --shim, its old name, kept working for
-// one release but left out of the usage.
+// one release. It replaces fs.Usage with one that leaves --shim out.
 func execFlag(fs *flag.FlagSet) *string {
 	exe := fs.String("exec", "", "path the service runs (default: the mise shim if installed, else this binary)")
 	fs.StringVar(exe, "shim", "", "")

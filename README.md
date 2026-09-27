@@ -74,7 +74,9 @@ The service then runs mise's shim, and `mise upgrade` upgrades it; the
 running service restarts itself onto the new version.
 
 `init` and `service install` pick the mise shim when it exists, otherwise
-the binary you ran. Pass `--exec <path>` to choose another path.
+the binary you ran, so after moving from mise to a manual install, remove
+the shim (`mise uninstall github:tedkulp/agent-history`) before running
+`init` again. Pass `--exec <path>` to choose another path.
 
 ## Develop
 

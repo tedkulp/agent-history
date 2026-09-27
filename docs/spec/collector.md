@@ -45,12 +45,12 @@ Source: [Installing the Collector via mise and running it as a user service](htt
 
 | Command | What it does |
 |---|---|
-| `agent-history init --hub <url> [--name <display>] [--offline] [--reset-roots]` | First-run setup, safe to re-run (§4.1) |
+| `agent-history init --hub <url> [--name <display>] [--offline] [--reset-roots] [--exec <path>]` | First-run setup, safe to re-run (§4.1) |
 | `agent-history run` | Runs the Collector in the foreground. The service invokes this. |
 | `agent-history status` | Prints the health report (§2.5) |
 | `agent-history sync` | Forces a full manifest reconcile (§4.3) |
 | `agent-history set-name <display>` | Changes the Machine's display name (§4.1) |
-| `agent-history service install` | Writes the service definition and loads it. Idempotent: rewrites and reloads (§4.8). |
+| `agent-history service install [--exec <path>]` | Writes the service definition, running `--exec` or the default path, and loads it. Idempotent: rewrites and reloads (§4.8). |
 | `agent-history service uninstall` | Stops the service and removes its definition. Config and state are kept. |
 | `agent-history service start` / `stop` / `restart` / `status` | Controls the service through `launchctl` or `systemctl --user` |
 | `agent-history version` | Prints the version, e.g. `0.3.1` (`0.0.0-dev` without release ldflags), and nothing else. Self-restart relies on this output (§4.9). |
@@ -271,7 +271,7 @@ Source: [Collector → Hub ingestion protocol](https://github.com/tedkulp/agent-
 
 ### 4.1 First run: `init`
 
-`agent-history init --hub <url> [--name <display>] [--offline] [--reset-roots]`:
+`agent-history init --hub <url> [--name <display>] [--offline] [--reset-roots] [--exec <path>]`:
 
 1. **Machine id.** Generate a UUID if the config has none. Never replace an existing one.
 2. **Resolve Source roots.** Service managers can't see shell environment variables, so `init` reads them once from the user's interactive shell. It runs `$SHELL -i -c 'env -0'` with a 10 s timeout, and falls back to its own environment if that fails. For each Source, it calls the adapter's `DefaultRoot(env)`. An existing `root` in config is kept unless `--reset-roots` is passed.

@@ -76,11 +76,22 @@ func DefaultExec(getenv func(string) string, home, self string) (string, error) 
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return "", err
 	}
-	installs := filepath.Join(miseDataDir(getenv, home), "installs") + string(filepath.Separator)
-	if strings.HasPrefix(filepath.Clean(self), installs) {
+	if within(self, filepath.Join(miseDataDir(getenv, home), "installs")) {
 		return "", fmt.Errorf("%s is a versioned mise install that an upgrade removes, and there is no mise shim at %s: pass --exec <path> with a path that stays put", self, shim)
 	}
 	return self, nil
+}
+
+// within reports whether path is inside dir, comparing them with symlinks
+// resolved where they exist: os.Executable resolves them on Linux.
+func within(path, dir string) bool {
+	for _, p := range []*string{&path, &dir} {
+		if r, err := filepath.EvalSymlinks(*p); err == nil {
+			*p = r
+		}
+	}
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // DefinitionEnv returns the variables from getenv that the service needs to
