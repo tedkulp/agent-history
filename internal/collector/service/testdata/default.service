@@ -1,0 +1,12 @@
+[Unit]
+Description=Agent History Collector
+X-AgentHistoryTemplate=1
+
+[Service]
+ExecStart=/home/ted/.local/share/mise/shims/agent-history run
+Environment=HOME=/home/ted
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

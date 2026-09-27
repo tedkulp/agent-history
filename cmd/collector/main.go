@@ -11,7 +11,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -22,6 +24,7 @@ import (
 	"github.com/tedkulp/agent-history/internal/collector/exclude"
 	"github.com/tedkulp/agent-history/internal/collector/hubclient"
 	"github.com/tedkulp/agent-history/internal/collector/runner"
+	"github.com/tedkulp/agent-history/internal/collector/service"
 	"github.com/tedkulp/agent-history/internal/collector/setup"
 	"github.com/tedkulp/agent-history/internal/collector/source"
 	"github.com/tedkulp/agent-history/internal/collector/source/claudecode"
@@ -32,11 +35,14 @@ import (
 const usage = `usage: agent-history <command>
 
 commands:
-  init --hub <url> [--name <display>] [--offline] [--reset-roots]
-            set up this Machine: write collector.toml and register with the Hub
+  init --hub <url> [--name <display>] [--offline] [--reset-roots] [--shim <path>]
+            set up this Machine: write collector.toml, register with the Hub,
+            and install and start the service
   run       ship every Source's records to the Hub and keep it current
   set-name <display>
             change this Machine's display name
+  service install [--shim <path>] | uninstall | start | stop | restart | status
+            manage the launchd / systemd user service that runs the Collector
   version   print the version
 `
 
@@ -56,6 +62,8 @@ func main() {
 		err = run()
 	case "set-name":
 		err = setName(os.Args[2:])
+	case "service":
+		err = serviceCmd(os.Args[2:])
 	case "version":
 		fmt.Println(buildinfo.Version)
 	default:
@@ -136,6 +144,7 @@ func initCmd(args []string) error {
 	name := fs.String("name", "", "display name (default: the hostname)")
 	offline := fs.Bool("offline", false, "don't register with the Hub")
 	resetRoots := fs.Bool("reset-roots", false, "replace configured Source roots with the defaults")
+	shim := fs.String("shim", "", "path the service runs (default: the mise shim)")
 	if err := fs.Parse(args); errors.Is(err, flag.ErrHelp) {
 		return nil
 	} else if err != nil {
@@ -201,7 +210,111 @@ func initCmd(args []string) error {
 		}
 		fmt.Printf("%-12s %-14s %s\n", si.Source, state, si.Root)
 	}
+	fmt.Println()
+
+	// The service must see the same directories as the shell init read.
+	m := newServiceManager(getenv, home)
+	if err := installService(ctx, m, getenv, home, *shim); err != nil {
+		return fmt.Errorf("installing the service: %w", err)
+	}
+	fmt.Printf("Service  %s  installed and started\n", m.Path())
+	if runtime.GOOS == "linux" {
+		if err := m.EnableLinger(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "agent-history: %v\nTo keep the service running after logout, run:\n  loginctl enable-linger %s\n", err, m.User)
+		}
+	}
 	return nil
+}
+
+func serviceCmd(args []string) error {
+	const usage = "usage: agent-history service install [--shim <path>] | uninstall | start | stop | restart | status"
+	if len(args) == 0 {
+		return errors.New(usage)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	m := newServiceManager(os.Getenv, home)
+	sub, rest := args[0], args[1:]
+	if sub != "install" && len(rest) > 0 {
+		return fmt.Errorf("service %s: unexpected argument %q", sub, rest[0])
+	}
+	switch sub {
+	case "install":
+		fs := flag.NewFlagSet("service install", flag.ContinueOnError)
+		shim := fs.String("shim", "", "path the service runs (default: the mise shim)")
+		if err := fs.Parse(rest); errors.Is(err, flag.ErrHelp) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		if fs.NArg() > 0 {
+			return fmt.Errorf("service install: unexpected argument %q", fs.Arg(0))
+		}
+		if err := installService(ctx, m, os.Getenv, home, *shim); err != nil {
+			return err
+		}
+		fmt.Printf("installed and started %s\n", m.Path())
+		return nil
+	case "uninstall":
+		return m.Uninstall(ctx)
+	case "start":
+		return m.Start(ctx)
+	case "stop":
+		return m.Stop(ctx)
+	case "restart":
+		return m.Restart(ctx)
+	case "status":
+		out, err := m.Status(ctx)
+		if err != nil {
+			return err
+		}
+		fmt.Print(strings.TrimRight(out, "\n") + "\n")
+		return nil
+	default:
+		return errors.New(usage)
+	}
+}
+
+// installService writes the service definition, running shim (the mise shim
+// when empty), and starts it.
+func installService(ctx context.Context, m *service.Manager, getenv func(string) string, home, shim string) error {
+	if shim == "" {
+		shim = service.ShimPath(getenv, home)
+		if err := service.CheckShim(shim); err != nil {
+			return err
+		}
+	} else {
+		abs, err := filepath.Abs(shim)
+		if err != nil {
+			return err
+		}
+		shim = abs
+	}
+	return m.Install(ctx, service.Definition{
+		Shim:    shim,
+		Home:    home,
+		LogPath: filepath.Join(state.DefaultDir(getenv, home), "collector.log"),
+		Env:     service.DefinitionEnv(getenv),
+	})
+}
+
+func newServiceManager(getenv func(string) string, home string) *service.Manager {
+	name := os.Getenv("USER")
+	if u, err := user.Current(); err == nil {
+		name = u.Username
+	}
+	return &service.Manager{
+		OS:     runtime.GOOS,
+		Home:   home,
+		UID:    os.Getuid(),
+		User:   name,
+		Getenv: getenv,
+		Run:    service.Exec,
+	}
 }
 
 func setName(args []string) error {

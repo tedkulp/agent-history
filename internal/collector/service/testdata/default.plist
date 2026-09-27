@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- agent-history service template 1 -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>              <string>com.tedkulp.agent-history</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/ted/.local/share/mise/shims/agent-history</string>
+    <string>run</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>             <string>/Users/ted</string>
+  </dict>
+  <key>RunAtLoad</key>          <true/>
+  <key>KeepAlive</key>          <true/>
+  <key>ThrottleInterval</key>   <integer>10</integer>
+  <key>StandardOutPath</key>    <string>/Users/ted/.local/state/agent-history/collector.log</string>
+  <key>StandardErrorPath</key>  <string>/Users/ted/.local/state/agent-history/collector.log</string>
+</dict>
+</plist>
