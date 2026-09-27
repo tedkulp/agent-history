@@ -184,6 +184,12 @@ func TestLaunchdControl(t *testing.T) {
 	m, f := newManager(t, "darwin")
 	target := "gui/501/com.tedkulp.agent-history"
 	ctx := context.Background()
+	if err := m.Start(ctx); err == nil || !strings.Contains(err.Error(), "service install") {
+		t.Fatalf("start before install: %v, want install guidance", err)
+	}
+	wantCmds(t, f)
+	m.Install(ctx, m.def())
+	f.cmds = nil
 
 	m.Start(ctx)
 	wantCmds(t, f, "launchctl print "+target, "launchctl kickstart "+target)
@@ -262,6 +268,8 @@ func TestSystemdPathHonoursXDGConfigHome(t *testing.T) {
 func TestSystemdControlAndUninstall(t *testing.T) {
 	m, f := newManager(t, "linux")
 	ctx := context.Background()
+	m.Install(ctx, m.def())
+	f.cmds = nil
 	m.Start(ctx)
 	m.Stop(ctx)
 	m.Restart(ctx)
@@ -276,8 +284,6 @@ func TestSystemdControlAndUninstall(t *testing.T) {
 		"systemctl --user restart agent-history.service",
 		"systemctl --user status agent-history.service")
 
-	m.Install(ctx, m.def())
-	f.cmds = nil
 	if err := m.Uninstall(ctx); err != nil {
 		t.Fatal(err)
 	}

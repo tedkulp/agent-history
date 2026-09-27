@@ -212,9 +212,10 @@ func initCmd(args []string) error {
 	}
 	fmt.Println()
 
-	// The service must see the same directories as the shell init read.
-	m := newServiceManager(getenv, home)
-	if err := installService(ctx, m, getenv, home, *shim); err != nil {
+	// The service uses this process's environment, the same one the config
+	// path came from, so it reads the config init just wrote.
+	m := newServiceManager(os.Getenv, home)
+	if err := installService(ctx, m, os.Getenv, home, *shim); err != nil {
 		return fmt.Errorf("installing the service: %w", err)
 	}
 	fmt.Printf("Service  %s  installed and started\n", m.Path())
@@ -303,7 +304,7 @@ func installService(ctx context.Context, m *service.Manager, getenv func(string)
 }
 
 func newServiceManager(getenv func(string) string, home string) *service.Manager {
-	name := os.Getenv("USER")
+	name := getenv("USER")
 	if u, err := user.Current(); err == nil {
 		name = u.Username
 	}

@@ -425,7 +425,9 @@ RestartSec=5
 WantedBy=default.target
 ```
 
-`ExecStart` is written as the resolved absolute shim path (`%h` is shown here for the default). Installed with `systemctl --user daemon-reload` then `systemctl --user enable --now agent-history.service`.
+`ExecStart` is written as the resolved absolute shim path (`%h` is shown here for the default). Installed with `systemctl --user daemon-reload`, `systemctl --user enable agent-history.service`, then `systemctl --user restart agent-history.service`, so a reinstall also restarts a running service on the new definition.
+
+- **Environment.** Besides `HOME`, the definition carries `MISE_DATA_DIR`, `XDG_CONFIG_HOME` and `XDG_STATE_HOME` when they are set where `init` or `service install` runs, so the service finds the same shim, config and state directories.
 
 - **`Restart=always` / `KeepAlive=true`** matter: the self-restart (§4.9) exits `0`, and the service manager must start it again.
 - **`service install` is idempotent**: it rewrites the file and reloads the service.

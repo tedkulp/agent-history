@@ -279,6 +279,8 @@ func (m *Manager) Install(ctx context.Context, d Definition) error {
 	if err := m.systemctl(ctx, "enable", UnitName); err != nil {
 		return err
 	}
+	// restart rather than `enable --now`, which leaves an already running
+	// service on the old definition.
 	return m.systemctl(ctx, "restart", UnitName)
 }
 
@@ -288,9 +290,9 @@ var bootstrapRetryDelay = 500 * time.Millisecond
 
 func (m *Manager) bootstrap(ctx context.Context) error {
 	var err error
-	for range 5 {
-		if err = m.cmd(ctx, "launchctl", "bootstrap", m.domain(), m.Path()); err == nil {
-			return nil
+	for i := range 5 {
+		if err = m.cmd(ctx, "launchctl", "bootstrap", m.domain(), m.Path()); err == nil || i == 4 {
+			break
 		}
 		select {
 		case <-ctx.Done():
@@ -299,6 +301,19 @@ func (m *Manager) bootstrap(ctx context.Context) error {
 		}
 	}
 	return err
+}
+
+// installed fails with guidance when there is no definition to control.
+func (m *Manager) installed() error {
+	if err := m.supported(); err != nil {
+		return err
+	}
+	if _, err := os.Stat(m.Path()); errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("service not installed: run `agent-history service install`")
+	} else if err != nil {
+		return err
+	}
+	return nil
 }
 
 // loaded reports whether launchd has the job.
@@ -330,7 +345,7 @@ func (m *Manager) Uninstall(ctx context.Context) error {
 
 // Start starts the installed service.
 func (m *Manager) Start(ctx context.Context) error {
-	if err := m.supported(); err != nil {
+	if err := m.installed(); err != nil {
 		return err
 	}
 	if m.OS == "linux" {
@@ -355,7 +370,7 @@ func (m *Manager) Stop(ctx context.Context) error {
 
 // Restart restarts the service, starting it if it isn't running.
 func (m *Manager) Restart(ctx context.Context) error {
-	if err := m.supported(); err != nil {
+	if err := m.installed(); err != nil {
 		return err
 	}
 	if m.OS == "linux" {
@@ -379,6 +394,9 @@ func (m *Manager) Status(ctx context.Context) (string, error) {
 		out, err = m.Run(ctx, "systemctl", "--user", "status", UnitName)
 	} else {
 		out, err = m.Run(ctx, "launchctl", "print", m.target())
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
 		if err != nil {
 			return "service not loaded", nil
 		}
