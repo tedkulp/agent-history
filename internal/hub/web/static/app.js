@@ -169,7 +169,6 @@
   var es = new EventSource(pill.dataset.events);
   es.addEventListener("changed", function (e) {
     e.data.split(",").forEach(function (id) { if (id) seen.add(id); });
-    if (!seen.size) return;
     pill.textContent = "↑ " + seen.size + (seen.size === 1 ? " Session" : " Sessions") + " updated";
     pill.hidden = false;
   });

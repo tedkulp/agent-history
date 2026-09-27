@@ -151,11 +151,13 @@ func feedParamsFrom(q url.Values) feedParams {
 	return p
 }
 
-// shows reports whether the feed with p's chips lists the live Session s.
+// shows reports whether the feed with p's chips lists the live Session s. It
+// is store.chipWhere in Go, so a feed stream needs no query: a new chip
+// changes both.
 func (p feedParams) shows(s live.FeedSession) bool {
-	return (p.Machine == "" || p.Machine == s.Machine) &&
+	return (p.Machine == "" || p.Machine == s.MachineID) &&
 		(p.Source == "" || p.Source == s.Source) &&
-		(p.Project == "" || p.Project == projectParam(s.Project)) &&
+		(p.Project == "" || p.Project == projectParam(s.ProjectCwd)) &&
 		(!p.Warnings || s.Warnings)
 }
 
@@ -661,9 +663,9 @@ func (s *server) feedEvents(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		var ids []int64
-		for _, fs := range sub.Take() {
-			if p.shows(fs) {
-				ids = append(ids, fs.ID)
+		for _, sess := range sub.Take() {
+			if p.shows(sess) {
+				ids = append(ids, sess.ID)
 			}
 		}
 		if len(ids) == 0 {

@@ -136,12 +136,13 @@ func (w *Worker) publish(ctx context.Context, sessionID int64) {
 		w.log.Warn("looking up Session to publish", "session", sessionID, "err", err)
 		return
 	}
-	switch {
-	case !ok:
-	case l.Parent != 0:
+	if !ok {
+		return
+	}
+	if l.Parent != 0 {
 		w.live.Publish(l.Parent)
-	case l.InFeed:
-		w.live.PublishFeed(live.FeedSession{ID: sessionID, Machine: l.MachineID, Source: l.Source, Project: l.ProjectCwd, Warnings: l.Warnings})
+	} else if l.InFeed {
+		w.live.PublishFeed(live.FeedSession{ID: sessionID, MachineID: l.MachineID, Source: l.Source, ProjectCwd: l.ProjectCwd, Warnings: l.Warnings})
 	}
 }
 

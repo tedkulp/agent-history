@@ -14,15 +14,15 @@ func TestFeedPageListensOnlyOnItsFirstPage(t *testing.T) {
 	_, page := get(t, ls.srv.URL+"/?machine=m1&source=claude-code")
 	for _, want := range []string{
 		`data-events="/events?machine=m1&amp;source=claude-code"`,
-		`data-reload="/?machine=m1&amp;source=claude-code"`,
+		`href="/?machine=m1&amp;source=claude-code"></a>`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("first page lacks %s", want)
 		}
 	}
 	// Input with no search terms shows the feed; the pill reloads it without.
-	if _, page := get(t, ls.srv.URL+"/?q=%22%22"); !strings.Contains(page, `data-events="/events"`) || !strings.Contains(page, `data-reload="/"`) {
-		t.Error("a feed from an empty search doesn't listen at /events or reload to /")
+	if _, page := get(t, ls.srv.URL+"/?q=%22%22"); !strings.Contains(page, `data-events="/events"`) || !strings.Contains(page, `data-events="/events" href="/"`) {
+		t.Error("a feed from an empty search doesn't listen at /events and reload to /")
 	}
 	for name, u := range map[string]string{
 		"a later page": "/?before=9999999999999&before_id=9",
@@ -67,23 +67,29 @@ func TestFeedEventsCarryLiveSessionsDebouncedWithoutReadingTheStore(t *testing.T
 	// left out.
 	ls.store.Close()
 	nextEvent(t, r, ": heartbeat")
+	ls.live.PublishFeed(live.FeedSession{ID: 5, MachineID: "m1"})
+	if got := nextEvent(t, r, "data:"); got != "data: 5" {
+		t.Fatalf("event data = %q", got)
+	}
 	start := time.Now()
-	ls.live.PublishFeed(live.FeedSession{ID: 9, Machine: "m1"})
-	ls.live.PublishFeed(live.FeedSession{ID: 3, Machine: "m1"})
-	ls.live.PublishFeed(live.FeedSession{ID: 4, Machine: "m2"})
-	ls.live.PublishFeed(live.FeedSession{ID: 9, Machine: "m1"})
+	ls.live.PublishFeed(live.FeedSession{ID: 9, MachineID: "m1"})
+	ls.live.PublishFeed(live.FeedSession{ID: 3, MachineID: "m1"})
+	ls.live.PublishFeed(live.FeedSession{ID: 4, MachineID: "m2"})
+	ls.live.PublishFeed(live.FeedSession{ID: 9, MachineID: "m1"})
 	if got := nextEvent(t, r, "data:"); got != "data: 3,9" {
 		t.Fatalf("debounced event data = %q", got)
 	}
-	if d := time.Since(start); d < feedDebounce/2 {
-		t.Errorf("the second event came %v after the first; want about %v", d, feedDebounce)
+	// The previous event went out just before start, so the debounce holds
+	// this one back for nearly all of feedDebounce.
+	if d := time.Since(start); d < feedDebounce*3/4 {
+		t.Errorf("the next event came %v after the last; want at least about %v", d, feedDebounce)
 	}
 }
 
 func TestFeedParamsShowMatchesTheChips(t *testing.T) {
-	s := live.FeedSession{ID: 1, Machine: "m1", Source: "codex", Project: "/src/app"}
-	noProj := live.FeedSession{ID: 2, Machine: "m1", Source: "codex"}
-	warn := live.FeedSession{ID: 3, Machine: "m1", Source: "codex", Warnings: true}
+	s := live.FeedSession{ID: 1, MachineID: "m1", Source: "codex", ProjectCwd: "/src/app"}
+	noProj := live.FeedSession{ID: 2, MachineID: "m1", Source: "codex"}
+	warn := live.FeedSession{ID: 3, MachineID: "m1", Source: "codex", Warnings: true}
 	cases := []struct {
 		p    feedParams
 		s    live.FeedSession

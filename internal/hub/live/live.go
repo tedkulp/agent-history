@@ -23,11 +23,11 @@ func New() *Broadcaster {
 // FeedSession is a Session the home feed lists, just parsed from live data,
 // with what the feed's chips match on (hub.md §4.7).
 type FeedSession struct {
-	ID       int64
-	Machine  string
-	Source   string
-	Project  string // "" = No project
-	Warnings bool   // the "has warnings" chip matches it
+	ID         int64
+	MachineID  string
+	Source     string
+	ProjectCwd string // "" = No project
+	Warnings   bool   // the "has warnings" chip matches it
 }
 
 // FeedSub is one open feed's subscription. Published Sessions wait in it,

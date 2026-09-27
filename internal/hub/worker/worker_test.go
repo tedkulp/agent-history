@@ -213,7 +213,7 @@ func TestLiveParsePublishesAndReparseStaysSilent(t *testing.T) {
 	default:
 		t.Fatal("a live parse told no feed")
 	}
-	want := live.FeedSession{ID: 1, Machine: "m1", Source: "claude-code", Project: "/x"}
+	want := live.FeedSession{ID: 1, MachineID: "m1", Source: "claude-code", ProjectCwd: "/x"}
 	if got := feedSub.Take(); len(got) != 1 || got[0] != want {
 		t.Errorf("feed got %+v, want %+v", got, want)
 	}

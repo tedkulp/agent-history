@@ -93,7 +93,8 @@ func (s *Store) Feed(ctx context.Context, f FeedFilter, limit int) ([]FeedRow, e
 	return out, rows.Err()
 }
 
-// chipWhere is the WHERE conditions and args for f's chips, on sessions s.
+// chipWhere is the WHERE conditions and args for f's chips, on sessions s. The
+// web package's feedParams.shows matches live Sessions the same way.
 func chipWhere(f FeedFilter) ([]string, []any) {
 	var (
 		where []string
