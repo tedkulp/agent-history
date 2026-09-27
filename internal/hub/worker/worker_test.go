@@ -9,6 +9,7 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 
+	"github.com/tedkulp/agent-history/internal/hub/live"
 	"github.com/tedkulp/agent-history/internal/hub/parser"
 	"github.com/tedkulp/agent-history/internal/hub/parser/claudecode"
 	"github.com/tedkulp/agent-history/internal/hub/store"
@@ -169,5 +170,52 @@ func TestShutdownDropsRunningParseAndKeepsQueueRow(t *testing.T) {
 	}
 	if feed, _ := s.Feed(context.Background(), store.FeedFilter{}, 10); len(feed) != 1 || feed[0].Title != "hello" {
 		t.Fatalf("feed = %+v", feed)
+	}
+}
+
+func TestLiveParsePublishesAndReparseStaysSilent(t *testing.T) {
+	reg := parser.NewRegistry(claudecode.New())
+	s := setup(t, reg)
+	b := live.New()
+	w := New(s, reg, nil).WithLive(b)
+	ctx := context.Background()
+	feed := func() int64 {
+		rows, err := s.Feed(ctx, store.FeedFilter{}, 10)
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("feed = %+v, %v", rows, err)
+		}
+		return rows[0].ID
+	}
+
+	// A subscriber that never reads: the worker must not block on it.
+	_, stopDeaf := b.Subscribe(1)
+	defer stopDeaf()
+	events, stop := b.Subscribe(1)
+	defer stop()
+
+	// Live ingest (priority 0) publishes.
+	if worked, _, err := w.RunOnce(ctx); !worked || err != nil {
+		t.Fatalf("live parse: worked=%v err=%v", worked, err)
+	}
+	if id := feed(); id != 1 {
+		t.Fatalf("Session id = %d, want 1", id)
+	}
+	select {
+	case <-events:
+	default:
+		t.Fatal("a live parse published no event")
+	}
+
+	// A re-parse (priority 1) is silent.
+	if n, err := s.Reparse(ctx, store.ReparseScope{}); err != nil || n != 1 {
+		t.Fatalf("Reparse = %d, %v", n, err)
+	}
+	if worked, _, err := w.RunOnce(ctx); !worked || err != nil {
+		t.Fatalf("re-parse: worked=%v err=%v", worked, err)
+	}
+	select {
+	case <-events:
+		t.Fatal("a re-parse published an event")
+	default:
 	}
 }

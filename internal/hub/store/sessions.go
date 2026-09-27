@@ -200,19 +200,20 @@ func reassignProjects(ctx context.Context, tx *sql.Tx, machineID, homeDir string
 type Job struct {
 	SessionID  int64
 	EnqueuedAt int64
+	Priority   int // 0 = live ingest, 1 = re-parse (hub.md §3.8)
 }
 
 // NextJob returns the next due job (hub.md §4.5), or ok=false with the time
 // of the earliest not_before (0 when the queue is empty).
 func (s *Store) NextJob(ctx context.Context) (job Job, ok bool, nextAt int64, err error) {
 	err = s.read.QueryRowContext(ctx, `
-		SELECT q.session_id, q.enqueued_at
+		SELECT q.session_id, q.enqueued_at, q.priority
 		FROM parse_queue q JOIN sessions s ON s.id = q.session_id
 		WHERE q.not_before <= ?
 		ORDER BY q.priority,
 			CASE WHEN q.priority = 0 THEN q.not_before END,
 			s.last_activity_at DESC NULLS LAST
-		LIMIT 1`, s.now()).Scan(&job.SessionID, &job.EnqueuedAt)
+		LIMIT 1`, s.now()).Scan(&job.SessionID, &job.EnqueuedAt, &job.Priority)
 	if err == nil {
 		return job, true, 0, nil
 	}

@@ -110,3 +110,7 @@ mark{background:var(--mark);color:inherit;border-radius:2px;padding:0 1px}
 
 /* Arriving from search: the target Message flashes. */
 .msg:target{animation:flash 2s ease-out} @keyframes flash{from{background:var(--mark)}}
+/* Live Transcript: the prompts heading waits for a prompt; the reload banner
+   floats where the reader is. */
+.outline-prompts:has(.prompts:empty){display:none}
+.banner.stale{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);margin:0;box-shadow:0 2px 8px #0003;z-index:10}

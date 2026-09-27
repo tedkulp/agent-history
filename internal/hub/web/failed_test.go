@@ -81,7 +81,7 @@ func TestFailedSessionsAndReparseBanner(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srv := httptest.NewServer(New(s, nil))
+	srv := httptest.NewServer(New(s, nil, nil))
 	t.Cleanup(srv.Close)
 
 	_, home := get(t, srv.URL+"/")

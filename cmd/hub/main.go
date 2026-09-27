@@ -23,6 +23,7 @@ import (
 	"github.com/tedkulp/agent-history/internal/hub/api"
 	"github.com/tedkulp/agent-history/internal/hub/backup"
 	"github.com/tedkulp/agent-history/internal/hub/config"
+	"github.com/tedkulp/agent-history/internal/hub/live"
 	"github.com/tedkulp/agent-history/internal/hub/parser"
 	"github.com/tedkulp/agent-history/internal/hub/parser/claudecode"
 	"github.com/tedkulp/agent-history/internal/hub/store"
@@ -239,7 +240,9 @@ func serve(args []string) error {
 			log.Error("shutdown checkpoint", "err", err)
 		}
 	}()
-	bg.Go(func() { worker.New(st, parsers, log).Run(bgCtx) })
+	// Live parses tell open Transcript pages to catch up (hub.md §4.5).
+	changes := live.New()
+	bg.Go(func() { worker.New(st, parsers, log).WithLive(changes).Run(bgCtx) })
 	if cfg.BackupAt != nil {
 		sched := &backup.Scheduler{Store: st, Dir: cfg.BackupDir, At: *cfg.BackupAt, Keep: cfg.BackupKeep, Log: log}
 		bg.Go(func() { sched.Run(bgCtx) })
@@ -247,13 +250,16 @@ func serve(args []string) error {
 
 	mux := http.NewServeMux()
 	mux.Handle(protocol.APIPrefix+"/", api.New(st, log, api.Floor{HubVersion: buildinfo.Version, Min: cfg.MinCollectorVersion}))
-	mux.Handle("/", web.New(st, log))
+	mux.Handle("/", web.New(st, changes, log))
 	srv := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+	// Shutdown waits for open requests; closing the broadcaster ends the
+	// Transcript pages' event streams.
+	srv.RegisterOnShutdown(changes.Close)
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()
 	backupAt := "disabled"

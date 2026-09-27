@@ -103,7 +103,7 @@ func newSiteRecords(t *testing.T, recs []record) *httptest.Server {
 			break
 		}
 	}
-	srv := httptest.NewServer(New(s, nil))
+	srv := httptest.NewServer(New(s, nil, nil))
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -500,7 +500,7 @@ func TestTranscriptMarkersWarningsAndOutline(t *testing.T) {
 	_, page := get(t, srv.URL+link[:strings.Index(link, `"`)])
 	for _, want := range []string{
 		// Outline of the user's prompts, first lines only.
-		`<a href="#m-u1">First prompt <span class="n">`, `<a href="#m-u2">Second prompt <span class="n">`,
+		`<a href="#m-u1" data-m="u1">First prompt <span class="n">`, `<a href="#m-u2" data-m="u2">Second prompt <span class="n">`,
 		// Notes with the warnings, source version and excerpts.
 		"⚠ 2 items not understood (unknown_type: brand_new ×1, unknown_type: future_type ×1)",
 		"· claude-code 2.1.999", "{&#34;data&#34;:1,&#34;type&#34;:&#34;future_type&#34;}",
@@ -568,7 +568,7 @@ func TestTranscriptShellCommands(t *testing.T) {
 		`<details class="marker shell_command"><summary>$ git status -sb</summary><pre class="out">## main &lt;b&gt;bold&lt;/b&gt;</pre></details>`,
 		`<div class="marker shell_command">$ true &amp;&amp;` + "\n  " + strings.Repeat("z", 130) + `</div>`,
 		`<summary>$ cat big</summary><pre class="out">` + strings.Repeat("x", 4<<10) + `</pre><p class="dim">… 2.0 KB more</p>`,
-		`<a href="#m-u1">Real prompt <span class="n">`,
+		`<a href="#m-u1" data-m="u1">Real prompt <span class="n">`,
 		// The row isn't itself a .marker, or it would get the pill's style.
 		`<div class="msg user marker-row" id="m-b1">`,
 	} {

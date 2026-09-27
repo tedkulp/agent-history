@@ -27,7 +27,7 @@ func TestHealthz(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(New(s, nil))
+	srv := httptest.NewServer(New(s, nil, nil))
 	t.Cleanup(srv.Close)
 
 	if code, body := getHealthz(t, srv); code != http.StatusOK || body != "ok\n" {

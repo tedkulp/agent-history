@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/tedkulp/agent-history/internal/hub/live"
 	"github.com/tedkulp/agent-history/internal/hub/parser"
 	"github.com/tedkulp/agent-history/internal/hub/store"
 )
@@ -22,6 +23,7 @@ type Worker struct {
 	store   *store.Store
 	parsers parser.Registry
 	log     *slog.Logger
+	live    *live.Broadcaster // nil: publish nothing
 }
 
 // New returns a worker. A nil logger means slog.Default().
@@ -30,6 +32,14 @@ func New(s *store.Store, parsers parser.Registry, log *slog.Logger) *Worker {
 		log = slog.Default()
 	}
 	return &Worker{store: s, parsers: parsers, log: log}
+}
+
+// WithLive makes the worker publish each Session it re-parses from live
+// ingest to b, after the save commits (hub.md §4.5). Re-parses stay silent,
+// so a re-parse storm doesn't reach open pages.
+func (w *Worker) WithLive(b *live.Broadcaster) *Worker {
+	w.live = b
+	return w
 }
 
 // Run drains the queue until ctx is done.
@@ -109,6 +119,9 @@ func (w *Worker) RunOnce(ctx context.Context) (worked bool, nextAt int64, err er
 	res := out.res
 	if err := w.store.SaveParse(saveCtx, job, p.Version(), res); err != nil {
 		return true, 0, err
+	}
+	if w.live != nil && job.Priority == 0 {
+		w.live.Publish(job.SessionID)
 	}
 	w.log.Debug("parsed session", "session", job.SessionID, "source", in.Source, "messages", len(res.Messages), "duration", time.Since(start))
 	return true, 0, nil

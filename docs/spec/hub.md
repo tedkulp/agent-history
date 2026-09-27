@@ -91,13 +91,15 @@ All on one listener, plain HTTP.
 |---|---|
 | `GET /` | Home: the feed, or search results when `q` is set. Query params: `q`, `machine`, `project` (`-` = "No project"), `source`, `warnings=1`, `before` and `before_id` (feed cursor), `offset` (search paging: hits are ranked, not dated). |
 | `GET /sessions/{id}` | A Transcript page. Optional `hl=<terms>` highlights search terms. Messages carry anchors `#m-<message id>`. |
+| `GET /sessions/{id}/events` | `text/event-stream`: a `changed` event each time the Session is re-parsed from live data (§4.7). `404` for a stub or unknown id. |
+| `GET /sessions/{id}/messages?after=<message id>&count=<n>` | htmx fragment: what an open Transcript page needs to catch up after a re-parse (§4.7), or `409` when earlier Messages moved |
 | `GET /sessions/{id}/parts/{part id}/output` | htmx fragment: the full output of one Tool call |
 | `GET /blobs/{sha256}` | An image blob with its stored MIME type and `Cache-Control: public, max-age=31536000, immutable`. Only PNG, JPEG, GIF and WebP are served as themselves; any other type (SVG included) is served as `application/octet-stream` with `X-Content-Type-Options: nosniff`, so a blob can't run script. |
 | `GET /static/…` | Embedded CSS and JS |
 | `GET /healthz` | `200 ok` once migrations are done and the database answers `SELECT 1`; `503` otherwise |
 
 - The UI routes have no JSON API. htmx requests get HTML fragments.
-- Server timeouts: `ReadHeaderTimeout` 10 s, `IdleTimeout` 120 s. No write timeout, since a large Transcript page can take a while to stream.
+- Server timeouts: `ReadHeaderTimeout` 10 s, `IdleTimeout` 120 s. No write timeout, since a large Transcript page can take a while to stream and an events stream stays open.
 
 Source: [Collector → Hub ingestion protocol](https://github.com/tedkulp/agent-history/issues/10), [Web UI: browse and search screens](https://github.com/tedkulp/agent-history/issues/13), [Hub language and web UI stack](https://github.com/tedkulp/agent-history/issues/7); UI routes filled in while writing this spec (the prototype's `?session=` URL became `/sessions/{id}`)
 
@@ -173,6 +175,7 @@ Documented next to it:
 - `/data` must be on a **local disk**, not NFS or SMB. SQLite's WAL breaks on network filesystems.
 - If the host directories aren't owned by uid 1000, set compose `user: "UID:GID"`.
 - TLS is the operator's choice: a Caddy reverse-proxy snippet is in the docs. The Hub itself speaks plain HTTP.
+- Each open Transcript page holds one events stream (§4.7). Over plain HTTP/1.1 a browser allows about 6 connections per host, so a 7th tab on the Hub stalls. A reverse proxy speaking HTTP/2 (Caddy does by default) removes the limit.
 - Litestream gets a mention as an optional extra. It is not built in.
 
 Source: [Hub deployment shape](https://github.com/tedkulp/agent-history/issues/15), [Release pipeline](https://github.com/tedkulp/agent-history/issues/17)
@@ -463,7 +466,7 @@ Source: [Hub storage schema](https://github.com/tedkulp/agent-history/issues/12)
 
 Steps 6 and 7 are single `INSERT … SELECT` style passes on the writer. They log counts at `info`.
 
-On `SIGTERM` / `SIGINT`: stop accepting connections, let in-flight requests finish (up to 10 s), let the worker finish its current write transaction (it drops any parse still running outside the transaction; the queue row stays), run `PRAGMA wal_checkpoint(TRUNCATE)`, close the database, exit `0`.
+On `SIGTERM` / `SIGINT`: stop accepting connections, end open events streams, let in-flight requests finish (up to 10 s), let the worker finish its current write transaction (it drops any parse still running outside the transaction; the queue row stays), run `PRAGMA wal_checkpoint(TRUNCATE)`, close the database, exit `0`.
 
 Source: [Hub deployment shape](https://github.com/tedkulp/agent-history/issues/15), [Re-parse flow when a parser changes](https://github.com/tedkulp/agent-history/issues/14), [Write the protocol spec](https://github.com/tedkulp/agent-history/issues/20) (unattached records); ordering, the newer-schema guard and shutdown filled in while writing this spec
 
@@ -537,6 +540,7 @@ Running a job:
    - **Failure** (error or recovered panic): set `parse_status = 'failed'`, `parse_error`, `parse_attempted_version` = current. If `last_activity_at` is NULL (never parsed), set it to now, so the Session sorts in the feed. Leave the previous Transcript, search rows and warnings untouched.
    - Delete the queue row **only if its `enqueued_at` is unchanged** since step 1. If new data arrived meanwhile, keep the row and set its `not_before = now + 10 s`.
 4. After a Session's **first** successful parse, re-enqueue at priority 1 any Session that names it as parent and has an `orphan` warning, so a Child Session parsed before its parent clears its warning.
+5. After a successful save of a **priority 0** job, publish the Session to the in-process broadcaster, which tells its open Transcript pages (§4.7). Priority 1 re-parses publish nothing, so a re-parse storm after a `parser_version` bump doesn't hit open tabs. Publishing never blocks the worker: each subscriber has a buffered channel of one, events coalesce, and a subscriber that isn't reading misses only duplicates.
 
 Only the delete+insert holds the single writer. An ingest ack waits for at most one Session's write, never for the backlog.
 
@@ -603,12 +607,18 @@ The UI is **search-first**: a search box over a feed of recent Sessions from eve
 - **Notes** under the header, collapsed by default:
   - Parse warnings: e.g. "12 items not understood (unknown_type: `foo_event` ×10, …)", with `source_version` and each `first_excerpt` on expand.
   - Parse failure: "parse failed" with `parse_error`, shown above the last good Transcript (or alone, if there never was one).
-- **Chat bubbles**: user Messages on the right, assistant Messages on the left, the timestamp under each. Every Message has the anchor `id="m-<message id>"`. All Messages render on one page (Ctrl-F works); there's no pagination. The page doesn't update live: new Messages show on reload.
+- **Chat bubbles**: user Messages on the right, assistant Messages on the left, the timestamp under each. Every Message has the anchor `id="m-<message id>"`. All Messages render on one page (Ctrl-F works); there's no pagination.
 - **Tool calls**: each run of consecutive `tool_call` Parts folds into one collapsed **cluster**, labelled like `⚙ 3 tool calls · Read, Edit, Bash`. A failed call is marked ✗ in the label. Opening the cluster lists each call as its own collapsible row. An open row shows the input and the output, or the rendered diff (§4.6).
 - **Large output**: output over 4 KB stays collapsed as a stub showing its size and `output_preview`. Clicking loads `/sessions/{id}/parts/{part id}/output` with htmx. The endpoint serves `tool_outputs` when the output was split out, else the inline `output`.
 - `thinking` Parts are collapsed (💭). `marker` Parts are centred pills. A `shell_command` reads the whole `$ <command>` in monospace, line breaks kept, as a left-aligned block with slightly rounded corners rather than a round pill, so a long command stays readable. With `output`, the pill is a `<details>` that opens below to show the output as preformatted text, never Markdown, HTML-escaped like tool output. Output over 4 KB is cut to its first 4 KB with a "… N KB more" note; there's no lazy-load endpoint, since the output lives in the payload. `unknown` Parts are a visible warning bubble with the Source type. `attachment` Parts are a 📎 label.
 - **Child Sessions**: a cluster containing a call that spawned one starts open, and that call shows a "↳ Child Session" link. The child's header links back to the spawning call.
 - A **sticky left outline** lists the user's prompts (first line of each), each linking to its anchor. The Child Sessions are listed below the prompts.
+- **Live updates**: the page opens an `EventSource` on `/sessions/{id}/events` and updates in place when its Session is re-parsed from live data.
+  - The stream sends `event: changed` after each live parse (§4.5 step 5), a heartbeat comment every 30 s, flushes on every write and sets `X-Accel-Buffering: no`. Once the Session is found it reads nothing from the database, so an idle open page costs no queries and no timers. It ends when the client disconnects or the Hub shuts down.
+  - On `changed`, and whenever the stream (re)opens, the page fetches `/sessions/{id}/messages?after=<its last Message id>&count=<its Message count>`. Both count every stored Message, including ones with nothing renderable yet.
+  - If the Message at ordinal `count-1` still has id `after`, the fragment holds that Message re-rendered (it may have grown, or a tool call may have finished) plus every later one, their outline entries, and the header and Child Session list afresh. The page swaps Messages and outline entries in by id and appends new ones. Open `<details>` stay open, the scroll position stays put, and the page follows new Messages only when the reader was already at the bottom.
+  - Otherwise (a rewind, a new branch or a compaction reshuffled earlier Messages) the endpoint answers `409`, and the page shows a "Transcript changed — reload" banner instead of patching.
+  - An update costs one Message query from `count-1` on plus the header, well under a full page render.
 - **Arriving from search**: the target Message flashes briefly, and each `hl` term is wrapped in `<mark>` in the rendered text, case-insensitive. Highlighting touches text nodes only, never tags or attributes.
 
 **Rejected:** drill-down pages (a page per level is slow for the most common action, "find that conversation"); a three-pane reader (tool calls always expanded bury the conversation, and three panes are cramped on narrow screens).

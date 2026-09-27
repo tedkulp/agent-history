@@ -303,6 +303,49 @@ type TranscriptPart struct {
 // unknown id or a Session that was never parsed and hasn't failed, such as
 // a stub (hub.md §4.10).
 func (s *Store) Transcript(ctx context.Context, id int64) (h SessionHeader, msgs []TranscriptMessage, ok bool, err error) {
+	if h, ok, err = s.sessionHeader(ctx, id); !ok || err != nil {
+		return h, nil, ok, err
+	}
+	msgs, err = s.messagesFrom(ctx, id, 0)
+	return h, msgs, err == nil, err
+}
+
+// ErrTranscriptChanged is returned by TranscriptTail when the Messages before
+// the page's last one moved: a rewind, a new branch or a compaction.
+var ErrTranscriptChanged = errors.New("transcript changed")
+
+// TranscriptTail returns a Session's header and the Messages a page holding
+// count Messages, the last with id after, needs to catch up: that last
+// Message again, then every later one. With count 0 it returns every
+// Message. It returns ErrTranscriptChanged when the Message at ordinal
+// count-1 is no longer after (hub.md §4.7), and ok=false like Transcript.
+func (s *Store) TranscriptTail(ctx context.Context, id int64, after string, count int) (h SessionHeader, msgs []TranscriptMessage, ok bool, err error) {
+	if h, ok, err = s.sessionHeader(ctx, id); !ok || err != nil {
+		return h, nil, ok, err
+	}
+	from := max(count-1, 0)
+	// One query, so the check and the Messages come from one snapshot.
+	if msgs, err = s.messagesFrom(ctx, id, from); err != nil {
+		return h, nil, false, err
+	}
+	if count > 0 && (len(msgs) == 0 || msgs[0].ID != after) {
+		return h, nil, true, ErrTranscriptChanged
+	}
+	return h, msgs, true, nil
+}
+
+// HasTranscript reports whether a Session has a Transcript page: it exists
+// and was parsed or failed, so it isn't a stub.
+func (s *Store) HasTranscript(ctx context.Context, id int64) (bool, error) {
+	var ok bool
+	err := s.read.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM sessions WHERE id = ? AND (parsed_at IS NOT NULL OR parse_status = 'failed'))`, id).Scan(&ok)
+	return ok, err
+}
+
+// sessionHeader loads the Session data shown above a Transcript, with ok
+// false like Transcript.
+func (s *Store) sessionHeader(ctx context.Context, id int64) (h SessionHeader, ok bool, err error) {
 	var (
 		parentID       sql.NullInt64
 		spawningCallID string
@@ -318,10 +361,10 @@ func (s *Store) Transcript(ctx context.Context, id int64) (h SessionHeader, msgs
 		&h.ID, &h.Source, &h.NativeID, &h.Title, &h.MachineID, &h.Machine, &h.ProjectCwd, &h.GitBranch, &h.Model, &h.StartedAt, &h.SourceVersion,
 		&parentID, &spawningCallID, &parseErr, &h.Parsed)
 	if errors.Is(err, sql.ErrNoRows) {
-		return h, nil, false, nil
+		return h, false, nil
 	}
 	if err != nil {
-		return h, nil, false, err
+		return h, false, err
 	}
 	if parseErr.Valid {
 		h.ParseError = parseErr.String
@@ -330,29 +373,35 @@ func (s *Store) Transcript(ctx context.Context, id int64) (h SessionHeader, msgs
 		}
 	}
 	if h.Warnings, err = s.parseWarnings(ctx, id); err != nil {
-		return h, nil, false, err
+		return h, false, err
 	}
 	if parentID.Valid {
 		if h.Parent, err = s.parentLink(ctx, parentID.Int64, spawningCallID, h.NativeID); err != nil {
-			return h, nil, false, err
+			return h, false, err
 		}
 	}
 	if h.Children, err = s.childLinks(ctx, id); err != nil {
-		return h, nil, false, err
+		return h, false, err
 	}
 	if h.CallChildren, err = s.callChildren(ctx, id); err != nil {
-		return h, nil, false, err
+		return h, false, err
 	}
+	return h, true, nil
+}
 
+// messagesFrom loads a Session's Messages from ordinal from on, with their
+// Parts, in order.
+func (s *Store) messagesFrom(ctx context.Context, id int64, from int) ([]TranscriptMessage, error) {
 	rows, err := s.read.QueryContext(ctx, `
 		SELECT m.id, m.role, coalesce(m.timestamp, 0), p.id, p.kind, p.payload_json
 		FROM messages m LEFT JOIN parts p ON p.session_id = m.session_id AND p.message_id = m.id
-		WHERE m.session_id = ?
-		ORDER BY m.ordinal, p.ordinal`, id)
+		WHERE m.session_id = ? AND m.ordinal >= ?
+		ORDER BY m.ordinal, p.ordinal`, id, from)
 	if err != nil {
-		return h, nil, false, err
+		return nil, err
 	}
 	defer rows.Close()
+	var msgs []TranscriptMessage
 	for rows.Next() {
 		var (
 			mid, role          string
@@ -360,7 +409,7 @@ func (s *Store) Transcript(ctx context.Context, id int64) (h SessionHeader, msgs
 			pid, kind, payload sql.NullString
 		)
 		if err := rows.Scan(&mid, &role, &ts, &pid, &kind, &payload); err != nil {
-			return h, nil, false, err
+			return nil, err
 		}
 		if len(msgs) == 0 || msgs[len(msgs)-1].ID != mid {
 			msgs = append(msgs, TranscriptMessage{ID: mid, Role: role, Timestamp: ts})
@@ -370,7 +419,7 @@ func (s *Store) Transcript(ctx context.Context, id int64) (h SessionHeader, msgs
 			m.Parts = append(m.Parts, TranscriptPart{ID: pid.String, Kind: kind.String, Payload: payload.String})
 		}
 	}
-	return h, msgs, true, rows.Err()
+	return msgs, rows.Err()
 }
 
 // parentLink finds a Child Session's parent and the call that spawned it:
