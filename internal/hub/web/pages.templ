@@ -182,22 +182,22 @@ templ searchHits(v searchView) {
 
 // transcriptPage is a Session's Transcript. The data attributes let app.js
 // catch up in place when the Session is re-parsed (hub.md §4.7).
-templ transcriptPage(st liveState, h headerView, outline []outlineEntry, children []childEntry, msgs []messageView) {
-	@layout(h.Title + " · Agent History") {
+templ transcriptPage(st liveState, v transcriptView) {
+	@layout(v.Head.Title + " · Agent History") {
 		<div class="tr">
 			<nav class="outline">
 				<div class="outline-prompts">
 					<div class="lab">Your prompts</div>
 					<div class="prompts">
-						@outlinePrompts(outline)
+						@outlinePrompts(v.Outline)
 					</div>
 				</div>
-				@childSessions(children)
+				@childSessions(v.Children)
 			</nav>
 			<div class="tr-main" data-events={ st.Events } data-messages={ st.Messages } data-after={ st.After } data-count={ strconv.Itoa(st.Count) }>
-				@transcriptHead(h)
+				@transcriptHead(v.Head)
 				<div class="tr-msgs">
-					for _, m := range msgs {
+					for _, m := range v.Messages {
 						@message(m)
 					}
 				</div>
@@ -209,15 +209,15 @@ templ transcriptPage(st liveState, h headerView, outline []outlineEntry, childre
 // transcriptUpdate is what an open Transcript page swaps in after a re-parse:
 // the header and Child Sessions afresh, the outline entries and Messages to
 // replace or append by id, and the page's new last Message and count.
-templ transcriptUpdate(st liveState, h headerView, outline []outlineEntry, children []childEntry, msgs []messageView) {
+templ transcriptUpdate(st liveState, v transcriptView) {
 	<div class="tr-update" data-after={ st.After } data-count={ strconv.Itoa(st.Count) }>
-		@transcriptHead(h)
+		@transcriptHead(v.Head)
 		<div class="prompts">
-			@outlinePrompts(outline)
+			@outlinePrompts(v.Outline)
 		</div>
-		@childSessions(children)
+		@childSessions(v.Children)
 		<div class="tr-msgs">
-			for _, m := range msgs {
+			for _, m := range v.Messages {
 				@message(m)
 			}
 		</div>

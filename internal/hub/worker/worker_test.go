@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"strings"
 	"testing"
 	"time"
 
@@ -217,5 +218,37 @@ func TestLiveParsePublishesAndReparseStaysSilent(t *testing.T) {
 	case <-events:
 		t.Fatal("a re-parse published an event")
 	default:
+	}
+}
+
+func TestLiveChildParsePublishesItsParent(t *testing.T) {
+	reg := parser.NewRegistry(claudecode.New())
+	s := setup(t, reg) // the parent, Session 1
+	w := New(s, reg, nil).WithLive(live.New())
+	ctx := context.Background()
+	if worked, _, err := w.RunOnce(ctx); !worked || err != nil {
+		t.Fatalf("parent parse: worked=%v err=%v", worked, err)
+	}
+	b := live.New()
+	w.WithLive(b)
+	parent, stop := b.Subscribe(1)
+	defer stop()
+
+	data := []byte(`{"type":"user","uuid":"c1","parentUuid":null,"isSidechain":true,"timestamp":"2026-09-01T10:00:05.000Z","cwd":"/x","message":{"role":"user","content":"child task"}}` + "\n")
+	enc, _ := zstd.NewWriter(nil)
+	sum := sha256.Sum256(nil)
+	if _, err := s.Append(ctx, store.AppendRequest{
+		MachineID: "m1", Source: protocol.SourceClaudeCode, RecordKey: strings.TrimSuffix(mainKey, ".jsonl") + "/subagents/agent-a.jsonl",
+		PrefixSha256: hex.EncodeToString(sum[:]), Data: data, Compressed: enc.EncodeAll(data, nil),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if worked, _, err := w.RunOnce(ctx); !worked || err != nil {
+		t.Fatalf("child parse: worked=%v err=%v", worked, err)
+	}
+	select {
+	case <-parent:
+	default:
+		t.Fatal("a live Child Session parse didn't tell its parent's pages")
 	}
 }

@@ -1,4 +1,4 @@
-// Package live tells open Transcript pages that their Session was re-parsed
+// Package live tells open Transcript pages that their Session was parsed again
 // from live data (hub.md §4.5, §4.7). It is an in-process pub/sub keyed by
 // Session id.
 package live

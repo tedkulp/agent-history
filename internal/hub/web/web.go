@@ -41,7 +41,7 @@ type server struct {
 }
 
 // New returns the Web UI handler. Open Transcript pages hear from b when their
-// Session is re-parsed from live data; a nil b means they never do. Times
+// Session is parsed again from live data; a nil b means they never do. Times
 // render in time.Local, the container's TZ. A nil logger means
 // slog.Default().
 func New(s *store.Store, b *live.Broadcaster, log *slog.Logger) http.Handler {
@@ -461,7 +461,7 @@ type outlineEntry struct {
 	Time string
 }
 
-// liveState is what a Transcript page needs to catch up with a re-parse
+// liveState is what a Transcript page needs to catch up with a live parse
 // (hub.md §4.7): where to listen and fetch, and the Messages it holds. After
 // and Count describe every stored Message, including ones with nothing
 // renderable yet.
@@ -470,6 +470,24 @@ type liveState struct {
 	Messages string
 	After    string // the last Message's id; "" when there are none
 	Count    int
+}
+
+// withTail is st holding count Messages ending with msgs, the ones just
+// loaded; with none loaded, After stays as it was.
+func (st liveState) withTail(msgs []store.TranscriptMessage, count int) liveState {
+	st.Count = count
+	if len(msgs) > 0 {
+		st.After = msgs[len(msgs)-1].ID
+	}
+	return st
+}
+
+// transcriptView is what the Transcript templates show.
+type transcriptView struct {
+	Head     headerView
+	Outline  []outlineEntry
+	Children []childEntry
+	Messages []messageView
 }
 
 func (s *server) transcript(w http.ResponseWriter, r *http.Request) {
@@ -487,15 +505,11 @@ func (s *server) transcript(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, http.StatusNotFound, notFoundPage())
 		return
 	}
-	st := liveState{Events: sessionHref(id) + "/events", Messages: sessionHref(id) + "/messages", Count: len(msgs)}
-	if len(msgs) > 0 {
-		st.After = msgs[len(msgs)-1].ID
-	}
-	hv, outline, children, views := s.transcriptView(h, msgs)
-	s.render(w, r, http.StatusOK, transcriptPage(st, hv, outline, children, views))
+	st := liveState{Events: sessionHref(id) + "/events", Messages: sessionHref(id) + "/messages"}.withTail(msgs, len(msgs))
+	s.render(w, r, http.StatusOK, transcriptPage(st, s.transcriptView(h, msgs)))
 }
 
-// transcriptTail serves what an open Transcript page needs after a re-parse:
+// transcriptTail serves what an open Transcript page needs after a live parse:
 // its last Message re-rendered plus every later one, the outline entries they
 // add, and the header and Child Sessions afresh (hub.md §4.7). after and
 // count are the page's last Message and how many it holds. When the Messages
@@ -525,19 +539,15 @@ func (s *server) transcriptTail(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	st := liveState{After: after, Count: max(count-1, 0) + len(msgs)}
-	if len(msgs) > 0 {
-		st.After = msgs[len(msgs)-1].ID
-	}
-	hv, outline, children, views := s.transcriptView(h, msgs)
-	s.render(w, r, http.StatusOK, transcriptUpdate(st, hv, outline, children, views))
+	st := liveState{After: after}.withTail(msgs, max(count-1, 0)+len(msgs))
+	s.render(w, r, http.StatusOK, transcriptUpdate(st, s.transcriptView(h, msgs)))
 }
 
 // heartbeatEvery is how often the events stream sends a comment, so proxies
 // and browsers keep an idle stream open.
 var heartbeatEvery = 30 * time.Second
 
-// events streams a "changed" event each time the Session is re-parsed from
+// events streams a "changed" event each time the Session is parsed again from
 // live data (hub.md §4.7). Once the Session is found it reads nothing from
 // the store, so an idle open page costs no queries.
 func (s *server) events(w http.ResponseWriter, r *http.Request) {
@@ -592,8 +602,13 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 
 // transcriptView turns a Session's header and Messages into what the
 // Transcript templates show.
-func (s *server) transcriptView(h store.SessionHeader, msgs []store.TranscriptMessage) (hv headerView, outline []outlineEntry, children []childEntry, views []messageView) {
-	hv = headerView{SessionHeader: h, Started: s.localTime(h.StartedAt, "Jan 2, 2006 15:04")}
+func (s *server) transcriptView(h store.SessionHeader, msgs []store.TranscriptMessage) transcriptView {
+	var (
+		outline  []outlineEntry
+		children []childEntry
+		views    []messageView
+	)
+	hv := headerView{SessionHeader: h, Started: s.localTime(h.StartedAt, "Jan 2, 2006 15:04")}
 	hv.Title = titleOr(h.Title, h.NativeID)
 	hv.Project, hv.ProjectFull = projectName(h.ProjectCwd)
 	hv.MachineHref = feedURL(h.MachineID, nil)
@@ -633,7 +648,7 @@ func (s *server) transcriptView(h store.SessionHeader, msgs []store.TranscriptMe
 			}
 		}
 	}
-	return hv, outline, children, views
+	return transcriptView{Head: hv, Outline: outline, Children: children, Messages: views}
 }
 
 // outlineMax is the most characters of a prompt the outline shows.

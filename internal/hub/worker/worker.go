@@ -34,7 +34,7 @@ func New(s *store.Store, parsers parser.Registry, log *slog.Logger) *Worker {
 	return &Worker{store: s, parsers: parsers, log: log}
 }
 
-// WithLive makes the worker publish each Session it re-parses from live
+// WithLive makes the worker publish each Session it parses from live
 // ingest to b, after the save commits (hub.md §4.5). Re-parses stay silent,
 // so a re-parse storm doesn't reach open pages.
 func (w *Worker) WithLive(b *live.Broadcaster) *Worker {
@@ -120,11 +120,25 @@ func (w *Worker) RunOnce(ctx context.Context) (worked bool, nextAt int64, err er
 	if err := w.store.SaveParse(saveCtx, job, p.Version(), res); err != nil {
 		return true, 0, err
 	}
-	if w.live != nil && job.Priority == 0 {
-		w.live.Publish(job.SessionID)
+	if w.live != nil && job.Live() {
+		w.publish(ctx, job.SessionID)
 	}
 	w.log.Debug("parsed session", "session", job.SessionID, "source", in.Source, "messages", len(res.Messages), "duration", time.Since(start))
 	return true, 0, nil
+}
+
+// publish tells the Session's open pages, and its parent's, whose Child
+// Session list may have gained it.
+func (w *Worker) publish(ctx context.Context, sessionID int64) {
+	w.live.Publish(sessionID)
+	parent, ok, err := w.store.ParentSession(ctx, sessionID)
+	if err != nil {
+		w.log.Warn("looking up parent to publish", "session", sessionID, "err", err)
+		return
+	}
+	if ok {
+		w.live.Publish(parent)
+	}
 }
 
 // safeParse turns a parser panic into an error (hub.md §2.5).

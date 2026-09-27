@@ -61,7 +61,7 @@
   target.scrollIntoView({ block: "center" });
 })();
 
-// Live Transcript (hub.md §4.7): when the Session is re-parsed from live data,
+// Live Transcript (hub.md §4.7): when the Session is parsed again from live data,
 // fetch the page's last Message and every later one, swap them in by id, and
 // refresh the header and outline. Open <details> stay open, the scroll
 // position stays put, and the page follows new Messages only when the reader
@@ -72,14 +72,15 @@
   if (!main || !window.EventSource || !window.fetch) return;
   var outline = document.querySelector(".outline");
   var es = new EventSource(main.dataset.events);
-  var busy = false, again = false;
+  var busy = false, again = false, gone = false;
 
-  // A re-parse can land between the page render and the stream opening, or
+  // A parse can land between the page render and the stream opening, or
   // while the stream was reconnecting, so catch up whenever it (re)opens.
   es.addEventListener("open", update);
   es.addEventListener("changed", update);
 
   function update() {
+    if (gone) return;
     if (busy) { again = true; return; }
     busy = true;
     var url = main.dataset.messages + "?after=" + encodeURIComponent(main.dataset.after) + "&count=" + main.dataset.count;
@@ -142,6 +143,7 @@
   }
 
   function stale() {
+    gone = true;
     es.close();
     if (document.querySelector(".banner.stale")) return;
     var b = document.createElement("div");

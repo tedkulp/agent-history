@@ -1081,7 +1081,7 @@ func searchHits(v searchView) templ.Component {
 
 // transcriptPage is a Session's Transcript. The data attributes let app.js
 // catch up in place when the Session is re-parsed (hub.md §4.7).
-func transcriptPage(st liveState, h headerView, outline []outlineEntry, children []childEntry, msgs []messageView) templ.Component {
+func transcriptPage(st liveState, v transcriptView) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -1118,7 +1118,7 @@ func transcriptPage(st liveState, h headerView, outline []outlineEntry, children
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = outlinePrompts(outline).Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = outlinePrompts(v.Outline).Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -1126,7 +1126,7 @@ func transcriptPage(st liveState, h headerView, outline []outlineEntry, children
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = childSessions(children).Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = childSessions(v.Children).Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -1186,7 +1186,7 @@ func transcriptPage(st liveState, h headerView, outline []outlineEntry, children
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = transcriptHead(h).Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = transcriptHead(v.Head).Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -1194,7 +1194,7 @@ func transcriptPage(st liveState, h headerView, outline []outlineEntry, children
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			for _, m := range msgs {
+			for _, m := range v.Messages {
 				templ_7745c5c3_Err = message(m).Render(ctx, templ_7745c5c3_Buffer)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
@@ -1206,7 +1206,7 @@ func transcriptPage(st liveState, h headerView, outline []outlineEntry, children
 			}
 			return nil
 		})
-		templ_7745c5c3_Err = layout(h.Title+" · Agent History").Render(templ.WithChildren(ctx, templ_7745c5c3_Var56), templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = layout(v.Head.Title+" · Agent History").Render(templ.WithChildren(ctx, templ_7745c5c3_Var56), templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1217,7 +1217,7 @@ func transcriptPage(st liveState, h headerView, outline []outlineEntry, children
 // transcriptUpdate is what an open Transcript page swaps in after a re-parse:
 // the header and Child Sessions afresh, the outline entries and Messages to
 // replace or append by id, and the page's new last Message and count.
-func transcriptUpdate(st liveState, h headerView, outline []outlineEntry, children []childEntry, msgs []messageView) templ.Component {
+func transcriptUpdate(st liveState, v transcriptView) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -1268,7 +1268,7 @@ func transcriptUpdate(st liveState, h headerView, outline []outlineEntry, childr
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = transcriptHead(h).Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = transcriptHead(v.Head).Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1276,7 +1276,7 @@ func transcriptUpdate(st liveState, h headerView, outline []outlineEntry, childr
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = outlinePrompts(outline).Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = outlinePrompts(v.Outline).Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1284,7 +1284,7 @@ func transcriptUpdate(st liveState, h headerView, outline []outlineEntry, childr
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = childSessions(children).Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = childSessions(v.Children).Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1292,7 +1292,7 @@ func transcriptUpdate(st liveState, h headerView, outline []outlineEntry, childr
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		for _, m := range msgs {
+		for _, m := range v.Messages {
 			templ_7745c5c3_Err = message(m).Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err

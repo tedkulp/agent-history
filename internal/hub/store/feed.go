@@ -324,7 +324,8 @@ func (s *Store) TranscriptTail(ctx context.Context, id int64, after string, coun
 		return h, nil, ok, err
 	}
 	from := max(count-1, 0)
-	// One query, so the check and the Messages come from one snapshot.
+	// One query, so the check and the Messages come from one snapshot. The
+	// header is read apart; a stale one is fixed by the next update.
 	if msgs, err = s.messagesFrom(ctx, id, from); err != nil {
 		return h, nil, false, err
 	}
@@ -332,6 +333,17 @@ func (s *Store) TranscriptTail(ctx context.Context, id int64, after string, coun
 		return h, nil, true, ErrTranscriptChanged
 	}
 	return h, msgs, true, nil
+}
+
+// ParentSession returns a Session's parent id, or ok=false for a top-level
+// Session.
+func (s *Store) ParentSession(ctx context.Context, id int64) (parent int64, ok bool, err error) {
+	var p sql.NullInt64
+	err = s.read.QueryRowContext(ctx, `SELECT parent_session_id FROM sessions WHERE id = ?`, id).Scan(&p)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	return p.Int64, p.Valid, err
 }
 
 // HasTranscript reports whether a Session has a Transcript page: it exists

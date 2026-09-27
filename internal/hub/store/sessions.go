@@ -203,6 +203,9 @@ type Job struct {
 	Priority   int // 0 = live ingest, 1 = re-parse (hub.md §3.8)
 }
 
+// Live reports whether the job came from live ingest rather than a re-parse.
+func (j Job) Live() bool { return j.Priority == 0 }
+
 // NextJob returns the next due job (hub.md §4.5), or ok=false with the time
 // of the earliest not_before (0 when the queue is empty).
 func (s *Store) NextJob(ctx context.Context) (job Job, ok bool, nextAt int64, err error) {
