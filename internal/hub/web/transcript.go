@@ -10,7 +10,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/sergi/go-diff/diffmatchpatch"
 
@@ -154,22 +153,17 @@ func decodePayload[T any](s *server, sessionID int64, p store.TranscriptPart) (T
 // summary; the summary opens below it.
 const compactionSummaryLabel = "Compaction summary"
 
-// newMarkerView labels a marker pill. A compaction summary, and any marker
-// text over one line, opens below the pill.
+// newMarkerView labels a marker pill. A compaction summary, and any other
+// marker text over one line, opens below the pill as Markdown. A
+// shell_command pill shows its whole command, and its output, cut to 4 KB,
+// opens below it as preformatted text.
 func newMarkerView(mp parser.MarkerPayload) *markerView {
 	v := &markerView{Kind: mp.Marker, Label: mp.Text}
 	if mp.Marker == parser.MarkerShellCommand {
 		// A command and its output are never Markdown.
-		first, _, _ := strings.Cut(mp.Text, "\n")
-		v.Label = cut(first, markerLabelMax)
-		v.Output = mp.Output
-		if len(v.Output) > stubOver {
-			n := stubOver
-			for n > 0 && !utf8.RuneStart(v.Output[n]) {
-				n--
-			}
-			v.More = "… " + byteSize(len(v.Output)-n) + " more"
-			v.Output = v.Output[:n]
+		v.Output = parser.CutBytes(mp.Output, stubOver)
+		if n := len(mp.Output) - len(v.Output); n > 0 {
+			v.More = "… " + byteSize(n) + " more"
 		}
 		return v
 	}

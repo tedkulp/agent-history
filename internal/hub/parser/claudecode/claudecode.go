@@ -439,9 +439,9 @@ func buildMessages(in parser.Input, path []*line, warn *parser.Warnings) ([]pars
 		cur, curAPIID = nil, ""
 	}
 	// marker appends a Message holding one marker Part.
-	marker := func(l *line, role, kind, text string) {
+	marker := func(l *line, role string, mp parser.MarkerPayload) {
 		m := parser.Message{ID: parser.SafeID(l.UUID), Role: role, Timestamp: l.ts}
-		addPart(&m, parser.KindMarker, parser.MarkerPayload{Marker: kind, Text: text})
+		addPart(&m, parser.KindMarker, mp)
 		msgs = append(msgs, m)
 	}
 	for i := 0; i < len(path); i++ {
@@ -463,7 +463,7 @@ func buildMessages(in parser.Input, path []*line, warn *parser.Warnings) ([]pars
 			if json.Unmarshal(l.Content, &text) != nil || text == "" {
 				text = parser.CompactionText
 			}
-			marker(l, parser.MessageAssistant, parser.MarkerCompaction, text)
+			marker(l, parser.MessageAssistant, parser.MarkerPayload{Marker: parser.MarkerCompaction, Text: text})
 		case "attachment":
 			// Injected context is Raw only, except a queued prompt.
 			var a struct {
@@ -507,10 +507,10 @@ func buildMessages(in parser.Input, path []*line, warn *parser.Warnings) ([]pars
 			case userSkip:
 				continue
 			case userCompaction:
-				marker(l, parser.MessageUser, parser.MarkerCompaction, text)
+				marker(l, parser.MessageUser, parser.MarkerPayload{Marker: parser.MarkerCompaction, Text: text})
 				continue
 			case userCommand:
-				marker(l, parser.MessageUser, parser.MarkerSlashCommand, text)
+				marker(l, parser.MessageUser, parser.MarkerPayload{Marker: parser.MarkerSlashCommand, Text: text})
 				continue
 			case userShell:
 				// Its output is the next path line, when that is one.
@@ -521,9 +521,7 @@ func buildMessages(in parser.Input, path []*line, warn *parser.Warnings) ([]pars
 						i++
 					}
 				}
-				m := parser.Message{ID: parser.SafeID(l.UUID), Role: parser.MessageUser, Timestamp: l.ts}
-				addPart(&m, parser.KindMarker, parser.MarkerPayload{Marker: parser.MarkerShellCommand, Text: text, Output: out})
-				msgs = append(msgs, m)
+				marker(l, parser.MessageUser, parser.MarkerPayload{Marker: parser.MarkerShellCommand, Text: text, Output: out})
 				continue
 			}
 			m := parser.Message{ID: parser.SafeID(l.UUID), Role: parser.MessageUser, Timestamp: l.ts}
@@ -815,7 +813,7 @@ func userText(l *line) string {
 var (
 	commandNameRe = regexp.MustCompile(`(?s)<command-name>(.*?)</command-name>`)
 	commandArgsRe = regexp.MustCompile(`(?s)<command-args>(.*?)</command-args>`)
-	bashInputRe   = regexp.MustCompile(`(?s)^<bash-input>(.*?)</bash-input>`)
+	bashInputRe   = regexp.MustCompile(`(?s)^<bash-input>(.*?)(?:</bash-input>|$)`)
 	bashStdoutRe  = regexp.MustCompile(`(?s)<bash-stdout>(.*?)</bash-stdout>`)
 	bashStderrRe  = regexp.MustCompile(`(?s)<bash-stderr>(.*?)</bash-stderr>`)
 )

@@ -542,7 +542,7 @@ func TestTranscriptShellCommands(t *testing.T) {
 	lines := []map[string]any{
 		user("b1", nil, 0, "<bash-input>git status -sb</bash-input>"),
 		user("b1o", "b1", 1, "<bash-stdout>## main <b>bold</b></bash-stdout><bash-stderr></bash-stderr>"),
-		user("b2", "b1o", 2, "<bash-input>true</bash-input>"),
+		user("b2", "b1o", 2, "<bash-input>true &&\n  "+strings.Repeat("z", 130)+"</bash-input>"),
 		user("u1", "b2", 3, "Real prompt"),
 		user("b3", "u1", 4, "<bash-input>cat big</bash-input>"),
 		user("b3o", "b3", 5, "<bash-stdout>"+long+"</bash-stdout><bash-stderr></bash-stderr>"),
@@ -566,7 +566,7 @@ func TestTranscriptShellCommands(t *testing.T) {
 	_, page := get(t, srv.URL+link[:strings.Index(link, `"`)])
 	for _, want := range []string{
 		`<details class="marker shell_command"><summary>$ git status -sb</summary><pre class="out">## main &lt;b&gt;bold&lt;/b&gt;</pre></details>`,
-		`<div class="marker shell_command">$ true</div>`,
+		`<div class="marker shell_command">$ true &amp;&amp;` + "\n  " + strings.Repeat("z", 130) + `</div>`,
 		`<summary>$ cat big</summary><pre class="out">` + strings.Repeat("x", 4<<10) + `</pre><p class="dim">… 2.0 KB more</p>`,
 		`<a href="#m-u1">Real prompt <span class="n">`,
 	} {
@@ -574,7 +574,7 @@ func TestTranscriptShellCommands(t *testing.T) {
 			t.Errorf("transcript lacks %q", want)
 		}
 	}
-	for _, bad := range []string{"<b>bold</b>", "bash-input", "bash-stdout", `href="#m-b1"`, `href="#m-b3"`, "y"+"yyy"} {
+	for _, bad := range []string{"<b>bold</b>", "bash-input", "bash-stdout", `href="#m-b1"`, `href="#m-b3"`, "yyyy"} {
 		if strings.Contains(page, bad) {
 			t.Errorf("transcript shows %q", bad)
 		}

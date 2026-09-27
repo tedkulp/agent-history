@@ -298,11 +298,13 @@ func (w *Warnings) Add(kind, sourceType, excerpt string) {
 const excerptMax = 500
 
 // Excerpt cuts s to at most 500 bytes, at a character boundary.
-func Excerpt(s string) string {
-	if len(s) <= excerptMax {
+func Excerpt(s string) string { return CutBytes(s, excerptMax) }
+
+// CutBytes cuts s to at most n bytes, at a character boundary.
+func CutBytes(s string, n int) string {
+	if len(s) <= n {
 		return s
 	}
-	n := excerptMax
 	for n > 0 && !utf8.RuneStart(s[n]) {
 		n--
 	}

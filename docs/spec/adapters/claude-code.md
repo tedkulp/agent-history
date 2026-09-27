@@ -134,7 +134,7 @@ Walking the path in order:
 | `isCompactSummary: true` | `marker` Part (`compaction`), text = the summary |
 | Only `tool_result` blocks | No Message. Each result merges into its Tool call (§3.4). |
 | A string starting with `<command-name>`, or with `<command-message>` (a skill invocation, followed by `<command-name>`) | `marker` Part (`slash_command`), text = the command name plus `<command-args>` if non-empty, e.g. `/review 42` |
-| A string starting with `<bash-input>` (a `!` shell command) | `marker` Part (`shell_command`), text = `$ ` plus the tag body with surrounding whitespace trimmed, e.g. `$ git status -sb` |
+| A string starting with `<bash-input>` (a `!` shell command) | `marker` Part (`shell_command`), text = `$ ` plus the tag body (to the end of the string when there is no closing tag) with surrounding whitespace trimmed, e.g. `$ git status -sb` |
 | A string starting with `<bash-stdout>` or `<bash-stderr>` that directly follows a `<bash-input>` line on the path | No Message. It is that marker's `output`: the `<bash-stdout>` body, then the `<bash-stderr>` body, each only when non-empty, joined with a newline. A command with no output line, or with both bodies empty, has no `output`. |
 | A string starting with `<bash-stdout>` or `<bash-stderr>` with no command before it | Raw only |
 | A string starting with `<local-command-stdout>`, `<local-command-stderr>` or `<local-command-caveat>` | Raw only |

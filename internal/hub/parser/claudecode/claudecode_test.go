@@ -227,7 +227,8 @@ func TestParseShellCommands(t *testing.T) {
 		userLine("u4", "u3p", "2026-09-01T10:00:03.000Z", "<bash-stdout>stray</bash-stdout><bash-stderr></bash-stderr>"),
 		userLine("u5", "u4", "2026-09-01T10:00:04.000Z", "<bash-input>false</bash-input>"),
 		userLine("u5o", "u5", "2026-09-01T10:00:04.100Z", "<bash-stderr>failed</bash-stderr>"),
-		userLine("u6", "u5o", "2026-09-01T10:00:05.000Z", "real prompt"),
+		userLine("u6", "u5o", "2026-09-01T10:00:05.000Z", "<bash-input>unclosed"),
+		userLine("u7", "u6", "2026-09-01T10:00:06.000Z", "real prompt"),
 	)
 	res := parse(t, main, nil)
 	want := []flat{
@@ -236,7 +237,8 @@ func TestParseShellCommands(t *testing.T) {
 		{ID: "u3", Role: "user", Texts: []string{"[shell_command $ true]"}},
 		{ID: "u3p", Role: "user", Texts: []string{"between"}},
 		{ID: "u5", Role: "user", Texts: []string{"[shell_command $ false]"}},
-		{ID: "u6", Role: "user", Texts: []string{"real prompt"}},
+		{ID: "u6", Role: "user", Texts: []string{"[shell_command $ unclosed]"}},
+		{ID: "u7", Role: "user", Texts: []string{"real prompt"}},
 	}
 	if got := flatten(res.Messages); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v", got)
