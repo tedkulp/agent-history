@@ -32,6 +32,7 @@ type chunkView struct {
 	Attachment string     // attachment: its label
 	Tools      []toolView // a cluster when non-empty
 	Label      string     // the cluster's label
+	Open       bool       // the cluster starts open: a call in it spawned a Child Session
 }
 
 // markerView is a marker pill. Body, when set, opens below it.
@@ -60,6 +61,7 @@ type toolView struct {
 	Stub      string // "Output collapsed · 5.2 KB"; "" when inline
 	Preview   string
 	OutputURL string
+	ChildHref string // the Child Session it spawned; "" when none
 }
 
 type diffView struct {
@@ -73,8 +75,9 @@ type diffLine struct {
 }
 
 // chunks turns a Message's Parts into rendered chunks. Consecutive tool_call
-// Parts fold into one cluster.
-func (s *server) chunks(sessionID int64, parts []store.TranscriptPart) []chunkView {
+// Parts fold into one cluster. children maps a Child Session's native id to
+// its page.
+func (s *server) chunks(sessionID int64, parts []store.TranscriptPart, children map[string]string) []chunkView {
 	var out []chunkView
 	for _, p := range parts {
 		switch p.Kind {
@@ -112,6 +115,12 @@ func (s *server) chunks(sessionID int64, parts []store.TranscriptPart) []chunkVi
 				continue
 			}
 			tv := newToolView(sessionID, p.ID, tc)
+			for _, c := range tc.ChildSessions {
+				if href, ok := children[c]; ok {
+					tv.ChildHref = href
+					break
+				}
+			}
 			if n := len(out); n > 0 && out[n-1].Tools != nil {
 				out[n-1].Tools = append(out[n-1].Tools, tv)
 			} else {
@@ -122,6 +131,7 @@ func (s *server) chunks(sessionID int64, parts []store.TranscriptPart) []chunkVi
 	for i := range out {
 		if out[i].Tools != nil {
 			out[i].Label = clusterLabel(out[i].Tools)
+			out[i].Open = slices.ContainsFunc(out[i].Tools, func(t toolView) bool { return t.ChildHref != "" })
 		}
 	}
 	return out

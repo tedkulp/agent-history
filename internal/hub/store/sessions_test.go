@@ -574,3 +574,46 @@ func TestSaveParseRebuildsParseWarnings(t *testing.T) {
 		t.Errorf("after re-parse: %+v", h.Warnings)
 	}
 }
+
+func TestParentFirstParseReenqueuesOrphanedChildren(t *testing.T) {
+	s, c := openParsing(t)
+	// The orphan's first line names a parent line that isn't in its file.
+	orphan := `{"type":"user","uuid":"c1","parentUuid":"gone","isSidechain":true,"timestamp":"2026-09-01T10:00:05.000Z","cwd":"/tmp","message":{"role":"user","content":"child"}}` + "\n"
+	clean := `{"type":"user","uuid":"c2","parentUuid":null,"isSidechain":true,"timestamp":"2026-09-01T10:00:05.000Z","cwd":"/tmp","message":{"role":"user","content":"child"}}` + "\n"
+	otherKey := "-Users-ted-src-app/" + sessUUID + "/subagents/agent-b2.jsonl"
+	appendTo(t, s, protocol.SourceClaudeCode, childKey, []byte(orphan))
+	appendTo(t, s, protocol.SourceClaudeCode, otherKey, []byte(clean))
+	for parseNext(t, s) {
+	}
+	orphanID, cleanID := sessionIDOf(t, s, sessUUID+"/agent-a1"), sessionIDOf(t, s, sessUUID+"/agent-b2")
+	var parent int64
+	if err := s.read.QueryRow(`SELECT parent_session_id FROM sessions WHERE id = ?`, orphanID).Scan(&parent); err != nil || parent != sessionIDOf(t, s, sessUUID) {
+		t.Fatalf("parent = %d, %v", parent, err)
+	}
+
+	appendTo(t, s, protocol.SourceClaudeCode, mainKey, []byte(line1))
+	parseNext(t, s)
+	if q, ok := queueOf(t, s, orphanID); !ok || q.priority != 1 {
+		t.Errorf("orphaned child queue = %+v, %v", q, ok)
+	}
+	if _, ok := queueOf(t, s, cleanID); ok {
+		t.Error("child without an orphan warning re-enqueued")
+	}
+
+	// Only the parent's first parse re-enqueues.
+	for parseNext(t, s) {
+	}
+	c.advance(parseInterval)
+	appendTo(t, s, protocol.SourceClaudeCode, mainKey, []byte(line2))
+	c.advance(parseInterval)
+	for parseNext(t, s) {
+	}
+	var parsedAt int64
+	s.read.QueryRow(`SELECT parsed_at FROM sessions WHERE id = ?`, parent).Scan(&parsedAt)
+	if parsedAt != c.t.UnixMilli() {
+		t.Fatalf("parent not re-parsed")
+	}
+	if _, ok := queueOf(t, s, orphanID); ok {
+		t.Error("a later parse of the parent re-enqueued the child")
+	}
+}

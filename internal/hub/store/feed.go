@@ -238,6 +238,26 @@ type SessionHeader struct {
 	// SourceVersion and Warnings are for the Notes (hub.md §4.7).
 	SourceVersion string
 	Warnings      []ParseWarning
+	// Parent is set for a Child Session; Children are the parsed Child
+	// Sessions it spawned, oldest first (hub.md §4.7).
+	Parent   *ParentLink
+	Children []ChildLink
+}
+
+// ParentLink is a Child Session's parent and the spawning call in it.
+type ParentLink struct {
+	ID       int64
+	NativeID string
+	Title    string
+	Parsed   bool   // false for a stub, which has no page
+	CallPart string // the spawning tool_call Part's id; "" when not found
+}
+
+// ChildLink is one Child Session of a Session.
+type ChildLink struct {
+	ID       int64
+	NativeID string
+	Title    string
 }
 
 // TranscriptMessage is one Message with its Parts, in order.
@@ -258,12 +278,18 @@ type TranscriptPart struct {
 // Transcript returns a Session's header and Messages. ok is false for an
 // unknown id or a Session that was never parsed (hub.md §4.10).
 func (s *Store) Transcript(ctx context.Context, id int64) (h SessionHeader, msgs []TranscriptMessage, ok bool, err error) {
+	var (
+		parentID       sql.NullInt64
+		spawningCallID string
+	)
 	err = s.read.QueryRowContext(ctx, `
 		SELECT s.id, s.source, s.native_id, coalesce(s.title, ''), m.id, `+machineLabel+`, coalesce(s.project_cwd, ''),
-			coalesce(s.git_branch, ''), coalesce(s.model, ''), coalesce(s.started_at, 0), coalesce(s.source_version, '')
+			coalesce(s.git_branch, ''), coalesce(s.model, ''), coalesce(s.started_at, 0), coalesce(s.source_version, ''),
+			s.parent_session_id, coalesce(s.spawning_call_id, '')
 		FROM sessions s JOIN machines m ON m.id = s.machine_id
 		WHERE s.id = ? AND s.parsed_at IS NOT NULL`, id).Scan(
-		&h.ID, &h.Source, &h.NativeID, &h.Title, &h.MachineID, &h.Machine, &h.ProjectCwd, &h.GitBranch, &h.Model, &h.StartedAt, &h.SourceVersion)
+		&h.ID, &h.Source, &h.NativeID, &h.Title, &h.MachineID, &h.Machine, &h.ProjectCwd, &h.GitBranch, &h.Model, &h.StartedAt, &h.SourceVersion,
+		&parentID, &spawningCallID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return h, nil, false, nil
 	}
@@ -271,6 +297,14 @@ func (s *Store) Transcript(ctx context.Context, id int64) (h SessionHeader, msgs
 		return h, nil, false, err
 	}
 	if h.Warnings, err = s.parseWarnings(ctx, id); err != nil {
+		return h, nil, false, err
+	}
+	if parentID.Valid {
+		if h.Parent, err = s.parentLink(ctx, parentID.Int64, spawningCallID, h.NativeID); err != nil {
+			return h, nil, false, err
+		}
+	}
+	if h.Children, err = s.childLinks(ctx, id); err != nil {
 		return h, nil, false, err
 	}
 
@@ -301,6 +335,53 @@ func (s *Store) Transcript(ctx context.Context, id int64) (h SessionHeader, msgs
 		}
 	}
 	return h, msgs, true, rows.Err()
+}
+
+// parentLink finds a Child Session's parent and the call that spawned it:
+// the tool_call Part with the child's spawning call id, else one whose
+// child_sessions names the child (hub.md §4.7).
+func (s *Store) parentLink(ctx context.Context, parentID int64, spawningCallID, childNativeID string) (*ParentLink, error) {
+	p := &ParentLink{ID: parentID}
+	if err := s.read.QueryRowContext(ctx, `
+		SELECT native_id, coalesce(title, ''), parsed_at IS NOT NULL FROM sessions WHERE id = ?`, parentID).Scan(
+		&p.NativeID, &p.Title, &p.Parsed); err != nil {
+		return nil, err
+	}
+	if !p.Parsed {
+		return p, nil
+	}
+	err := s.read.QueryRowContext(ctx, `
+		SELECT p.id FROM parts p JOIN messages m ON m.session_id = p.session_id AND m.id = p.message_id
+		WHERE p.session_id = ?1 AND p.kind = ?2 AND (
+			(?3 != '' AND p.payload_json ->> '$.call_id' = ?3)
+			OR EXISTS (SELECT 1 FROM json_each(p.payload_json, '$.child_sessions') WHERE value = ?4))
+		ORDER BY p.payload_json ->> '$.call_id' = ?3 DESC, m.ordinal, p.ordinal
+		LIMIT 1`, parentID, parser.KindToolCall, spawningCallID, childNativeID).Scan(&p.CallPart)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	return p, nil
+}
+
+// childLinks lists a Session's parsed Child Sessions, oldest first.
+func (s *Store) childLinks(ctx context.Context, id int64) ([]ChildLink, error) {
+	rows, err := s.read.QueryContext(ctx, `
+		SELECT id, native_id, coalesce(title, '') FROM sessions
+		WHERE parent_session_id = ? AND parsed_at IS NOT NULL
+		ORDER BY started_at, id`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ChildLink
+	for rows.Next() {
+		var c ChildLink
+		if err := rows.Scan(&c.ID, &c.NativeID, &c.Title); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 // parseWarnings lists a Session's Parse warnings, most frequent first.

@@ -480,6 +480,7 @@ func TestParseTitlePrecedence(t *testing.T) {
 func TestParseChildSessionParent(t *testing.T) {
 	line := asstLine("a1", "", "2026-09-01T10:00:01.000Z", "msg_1", text("child"), nil)
 	line["isSidechain"] = true
+	line["parentUuid"] = nil
 	res, err := New().Parse(parser.Input{NativeID: sess + "/agent-a1b2", Main: jsonl(t, line), Attachments: map[string][]byte{
 		"-Users-ted-src-app/" + sess + "/subagents/agent-a1b2.meta.json": []byte(`{"agentType":"Explore","description":"Find the parser","toolUseId":"toolu_9"}`),
 	}})
@@ -491,6 +492,16 @@ func TestParseChildSessionParent(t *testing.T) {
 	}
 	if res.Session.ParentNativeID != sess {
 		t.Errorf("parent = %q", res.Session.ParentNativeID)
+	}
+	if res.Session.SpawningCallID != "toolu_9" || len(res.Warnings) != 0 {
+		t.Errorf("spawning call = %q, warnings = %+v", res.Session.SpawningCallID, res.Warnings)
+	}
+
+	// Without its .meta.json the child has no title or spawning call.
+	res, _ = New().Parse(parser.Input{NativeID: sess + "/agent-a1b2", Main: jsonl(t, line)})
+	if res.Session.SpawningCallID != "" || res.Session.Title != "" || len(res.Warnings) != 1 ||
+		res.Warnings[0] != (parser.Warning{Kind: "missing_field", SourceType: "meta.json", Count: 1}) {
+		t.Errorf("session = %+v, warnings = %+v", res.Session, res.Warnings)
 	}
 	if len(res.Messages) != 1 {
 		t.Errorf("every line of a Child Session file is on its path; messages = %d", len(res.Messages))
@@ -689,5 +700,53 @@ func TestParseImageWithoutBytesWarns(t *testing.T) {
 	}
 	if len(res.Warnings) != 1 || res.Warnings[0].Kind != "unknown_type" || res.Warnings[0].SourceType != "image" {
 		t.Errorf("warnings = %+v", res.Warnings)
+	}
+}
+
+func TestParseAgentCallsLinkChildSessions(t *testing.T) {
+	call := func(uuid, parent, id, name string) map[string]any {
+		return asstLine(uuid, parent, "2026-09-01T10:00:01.000Z", "msg_"+uuid, map[string]any{"type": "tool_use", "id": id, "name": name, "input": map[string]any{}}, nil)
+	}
+	result := func(uuid, parent, id string, tur any) map[string]any {
+		l := userLine(uuid, parent, "2026-09-01T10:00:02.000Z", []any{map[string]any{"type": "tool_result", "tool_use_id": id, "content": "done"}})
+		if tur != nil {
+			l["toolUseResult"] = tur
+		}
+		return l
+	}
+	main := jsonl(t,
+		userLine("u1", "", "2026-09-01T10:00:00.000Z", "go"),
+		call("a1", "u1", "t_agent", "Agent"),
+		result("r1", "a1", "t_agent", map[string]any{"agentId": "abc", "status": "completed"}),
+		call("a2", "r1", "t_task", "Task"),
+		result("r2", "a2", "t_task", map[string]any{"agentId": "def"}),
+		call("a3", "r2", "t_bash", "Bash"),
+		result("r3", "a3", "t_bash", map[string]any{"agentId": "nope"}),
+		call("a4", "r3", "t_str", "Agent"),
+		result("r4", "a4", "t_str", "Error: interrupted"),
+	)
+	children := func(res parser.Result) map[string][]string {
+		out := map[string][]string{}
+		for _, m := range res.Messages {
+			for _, p := range m.Parts {
+				if c, ok := p.Payload.(parser.ToolCallPayload); ok {
+					out[c.CallID] = c.ChildSessions
+				}
+			}
+		}
+		return out
+	}
+	want := map[string][]string{"t_agent": {sess + "/agent-abc"}, "t_task": {sess + "/agent-def"}, "t_bash": {}, "t_str": {}}
+	if got := children(parse(t, main, nil)); !reflect.DeepEqual(got, want) {
+		t.Errorf("child_sessions = %v", got)
+	}
+
+	// A nested sub-agent's call links to a sibling filed under the top-level Session.
+	res, err := New().Parse(parser.Input{NativeID: sess + "/agent-abc", Main: main})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := children(res)["t_agent"]; !reflect.DeepEqual(got, []string{sess + "/agent-abc"}) {
+		t.Errorf("nested child_sessions = %v", got)
 	}
 }

@@ -262,9 +262,10 @@ func (s *Store) SaveParse(ctx context.Context, job Job, parserVersion int, res p
 
 	var machineID, source string
 	var homeDir sql.NullString
+	var parsedAt sql.NullInt64
 	if err := tx.QueryRowContext(ctx, `
-		SELECT s.machine_id, s.source, m.home_dir
-		FROM sessions s JOIN machines m ON m.id = s.machine_id WHERE s.id = ?`, id).Scan(&machineID, &source, &homeDir); err != nil {
+		SELECT s.machine_id, s.source, m.home_dir, s.parsed_at
+		FROM sessions s JOIN machines m ON m.id = s.machine_id WHERE s.id = ?`, id).Scan(&machineID, &source, &homeDir, &parsedAt); err != nil {
 		return err
 	}
 
@@ -371,6 +372,18 @@ func (s *Store) SaveParse(ctx context.Context, job Job, parserVersion int, res p
 		nullStr(res.Session.GitBranch), nullStr(res.Session.SourceVersion), nullStr(model), parentID,
 		nullStr(res.Session.SpawningCallID), usageJSON, t, parserVersion, parserVersion, id); err != nil {
 		return err
+	}
+	if !parsedAt.Valid {
+		// A Child Session parsed before its parent re-parses to clear its
+		// orphan warning (hub.md §4.5 step 4).
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO parse_queue (session_id, priority, enqueued_at, not_before)
+			SELECT s.id, 1, ?1, ?1 FROM sessions s
+			WHERE s.parent_session_id = ?2
+				AND EXISTS (SELECT 1 FROM parse_warnings w WHERE w.session_id = s.id AND w.kind = ?3)
+			ON CONFLICT (session_id) DO NOTHING`, t, id, parser.WarnOrphan); err != nil {
+			return err
+		}
 	}
 	if err := finishJob(ctx, tx, job, t); err != nil {
 		return err

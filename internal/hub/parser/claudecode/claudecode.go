@@ -19,7 +19,7 @@ import (
 
 // version is the parser_version. Bump it whenever output changes for
 // existing data (hub.md §4.5).
-const version = 3
+const version = 4
 
 const (
 	layout     = "jsonl"
@@ -102,6 +102,7 @@ type line struct {
 	CustomTitle       string          `json:"customTitle"`
 	AITitle           string          `json:"aiTitle"`
 	Summary           string          `json:"summary"`
+	ToolUseResult     json.RawMessage `json:"toolUseResult"`
 
 	raw []byte
 	ts  int64
@@ -240,7 +241,11 @@ func (*Parser) Parse(in parser.Input) (parser.Result, error) {
 		warn.Add(parser.WarnMissingField, "cwd", "")
 	}
 	if isChild {
-		res.Session.Title = childTitle(in)
+		var ok bool
+		res.Session.Title, res.Session.SpawningCallID, ok = childMeta(in)
+		if !ok {
+			warn.Add(parser.WarnMissingField, "meta.json", "")
+		}
 	} else {
 		res.Session.Title = firstNonEmpty(customTitle, titleFromFile(in), aiTitle, summary)
 	}
@@ -274,20 +279,22 @@ func titleFromFile(in parser.Input) string {
 	return ""
 }
 
-// childTitle reads a Child Session's title, the description in its
-// .meta.json attachment (claude-code.md §3.6).
-func childTitle(in parser.Input) string {
+// childMeta reads a Child Session's .meta.json attachment: its title (the
+// description) and the spawning call (claude-code.md §3.5, §3.6). ok is false
+// when the attachment is missing or doesn't decode.
+func childMeta(in parser.Input) (title, spawningCallID string, ok bool) {
 	for key, b := range in.Attachments {
 		if strings.HasSuffix(key, ".meta.json") {
 			var v struct {
 				Description string `json:"description"`
+				ToolUseID   string `json:"toolUseId"`
 			}
 			if json.Unmarshal(b, &v) == nil {
-				return v.Description
+				return v.Description, v.ToolUseID, true
 			}
 		}
 	}
-	return ""
+	return "", "", false
 }
 
 // transcriptPath returns the lines from the root to the latest leaf
@@ -340,9 +347,10 @@ type builder struct {
 // result is one tool_result block and where it sits on the path.
 type result struct {
 	block
-	pos  int
-	used bool
-	raw  []byte
+	pos     int
+	used    bool
+	raw     []byte
+	agentID string // toolUseResult.agentId of its line: the sub-agent it ran
 }
 
 // buildMessages turns path lines into Messages (claude-code.md §3.3, §3.4).
@@ -358,7 +366,7 @@ func buildMessages(in parser.Input, path []*line, warn *parser.Warnings) ([]pars
 		for _, bl := range userBlocks(l) {
 			if bl.Type == "tool_result" && bl.ToolUseID != "" {
 				if _, dup := b.results[bl.ToolUseID]; !dup {
-					b.results[bl.ToolUseID] = &result{block: bl, pos: i, raw: l.raw}
+					b.results[bl.ToolUseID] = &result{block: bl, pos: i, raw: l.raw, agentID: agentID(l)}
 				}
 			}
 		}
@@ -603,6 +611,11 @@ func (b *builder) addToolCall(m *parser.Message, bl block, pos int) {
 	if r.IsError {
 		p.Status = parser.StatusError
 	}
+	if (bl.Name == "Agent" || bl.Name == "Task") && r.agentID != "" {
+		// Nested sub-agents are filed flat under the top-level Session.
+		top, _, _ := strings.Cut(b.in.NativeID, "/")
+		p.ChildSessions = []string{top + "/agent-" + r.agentID}
+	}
 	out, images := resultContent(r.Content)
 	out = b.stitchSpill(out, bl.ID)
 	p.Output = &out
@@ -610,6 +623,18 @@ func (b *builder) addToolCall(m *parser.Message, bl block, pos int) {
 	for _, img := range images {
 		b.addImage(m, img, r.raw)
 	}
+}
+
+// agentID is the sub-agent a tool result line reports running, from its
+// toolUseResult.agentId, or "".
+func agentID(l *line) string {
+	var v struct {
+		AgentID string `json:"agentId"`
+	}
+	if json.Unmarshal(l.ToolUseResult, &v) != nil {
+		return ""
+	}
+	return v.AgentID
 }
 
 // resultContent is a tool_result's output text and its image blocks: a

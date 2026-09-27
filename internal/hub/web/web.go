@@ -369,6 +369,17 @@ type headerView struct {
 	MachineHref string
 	ProjectHref string
 	WarningNote string // the Notes summary; "" without warnings
+	ParentLabel string // "↰ child of …" for a Child Session
+	ParentHref  string // the spawning call in the parent; "" when the parent is a stub
+}
+
+// sessionHref is a Session's Transcript page.
+func sessionHref(id int64) string { return "/sessions/" + strconv.FormatInt(id, 10) }
+
+// childEntry is one Child Session in the Transcript's outline.
+type childEntry struct {
+	Href  string
+	Title string
 }
 
 type messageView struct {
@@ -407,13 +418,28 @@ func (s *server) transcript(w http.ResponseWriter, r *http.Request) {
 	hv.MachineHref = feedURL(h.MachineID, nil)
 	hv.ProjectHref = feedURL(h.MachineID, &h.ProjectCwd)
 	hv.WarningNote = warningNote(h.Warnings)
+	if p := h.Parent; p != nil {
+		hv.ParentLabel = "↰ child of " + titleOr(p.Title, p.NativeID)
+		if p.Parsed {
+			hv.ParentHref = sessionHref(p.ID)
+			if p.CallPart != "" {
+				hv.ParentHref += "#p-" + p.CallPart
+			}
+		}
+	}
 	var (
-		views   []messageView
-		outline []outlineEntry
+		views    []messageView
+		outline  []outlineEntry
+		children []childEntry
+		hrefs    = map[string]string{}
 	)
+	for _, c := range h.Children {
+		hrefs[c.NativeID] = sessionHref(c.ID)
+		children = append(children, childEntry{Href: sessionHref(c.ID), Title: titleOr(c.Title, c.NativeID)})
+	}
 	for _, m := range msgs {
 		v := messageView{ID: m.ID, Role: m.Role, Time: s.localTime(m.Timestamp, "Jan 2 15:04")}
-		v.Chunks = s.chunks(id, m.Parts)
+		v.Chunks = s.chunks(id, m.Parts, hrefs)
 		// Messages with nothing renderable yet are skipped.
 		if len(v.Chunks) == 0 {
 			continue
@@ -429,7 +455,7 @@ func (s *server) transcript(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	s.render(w, r, http.StatusOK, transcriptPage(hv, outline, views))
+	s.render(w, r, http.StatusOK, transcriptPage(hv, outline, children, views))
 }
 
 // outlineMax is the most characters of a prompt the outline shows.

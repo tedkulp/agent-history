@@ -88,7 +88,7 @@ templ feedRows(v feedView) {
 	}
 }
 
-templ transcriptPage(h headerView, outline []outlineEntry, msgs []messageView) {
+templ transcriptPage(h headerView, outline []outlineEntry, children []childEntry, msgs []messageView) {
 	@layout(h.Title + " · Agent History") {
 		<div class="tr">
 			<nav class="outline">
@@ -96,6 +96,12 @@ templ transcriptPage(h headerView, outline []outlineEntry, msgs []messageView) {
 					<div class="lab">Your prompts</div>
 					for _, o := range outline {
 						<a href={ templ.SafeURL("#m-" + o.ID) }>{ o.Text } <span class="n">{ o.Time }</span></a>
+					}
+				}
+				if len(children) > 0 {
+					<div class="lab">Child Sessions</div>
+					for _, c := range children {
+						<a href={ templ.SafeURL(c.Href) }>↳ { c.Title }</a>
 					}
 				}
 			</nav>
@@ -114,6 +120,11 @@ templ transcriptPage(h headerView, outline []outlineEntry, msgs []messageView) {
 						}
 						if h.Started != "" {
 							<span>{ h.Started }</span>
+						}
+						if h.ParentHref != "" {
+							<a class="parent" href={ templ.SafeURL(h.ParentHref) }>{ h.ParentLabel }</a>
+						} else if h.ParentLabel != "" {
+							<span class="parent">{ h.ParentLabel }</span>
 						}
 					</div>
 					if h.WarningNote != "" {
@@ -198,12 +209,15 @@ templ chunk(c chunkView) {
 // toolCluster is a run of consecutive tool calls, folded into one collapsed
 // row (hub.md §4.7).
 templ toolCluster(c chunkView) {
-	<details class="cluster">
+	<details class="cluster" open?={ c.Open }>
 		<summary>{ c.Label }</summary>
 		for _, t := range c.Tools {
 			<details class="tool" id={ "p-" + t.ID }>
 				<summary>
 					<b>{ t.Name }</b>
+					if t.ChildHref != "" {
+						<a class="child" href={ templ.SafeURL(t.ChildHref) }>↳ Child Session</a>
+					}
 					if t.Summary != "" {
 						<span class="dim">{ t.Summary }</span>
 					}

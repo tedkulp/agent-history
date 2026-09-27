@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -525,5 +526,101 @@ func TestTranscriptMarkersWarningsAndOutline(t *testing.T) {
 		if a, b := strings.Index(page, order[k-1]), strings.Index(page, order[k]); a < 0 || b < a {
 			t.Errorf("%s not before %s", order[k-1], order[k])
 		}
+	}
+}
+
+func TestTranscriptChildSessionsLinkBothWays(t *testing.T) {
+	jsonLines := func(lines ...map[string]any) string {
+		var b strings.Builder
+		for _, l := range lines {
+			j, _ := json.Marshal(l)
+			b.Write(append(j, '\n'))
+		}
+		return b.String()
+	}
+	call := func(uuid, parent, msg, id, name string) map[string]any {
+		return map[string]any{"type": "assistant", "uuid": uuid, "parentUuid": parent, "timestamp": "2026-09-01T10:00:01.000Z",
+			"message": map[string]any{"id": msg, "model": "m", "content": []any{map[string]any{"type": "tool_use", "id": id, "name": name, "input": map[string]any{}}}}}
+	}
+	result := func(uuid, parent, id, agent string) map[string]any {
+		return map[string]any{"type": "user", "uuid": uuid, "parentUuid": parent, "timestamp": "2026-09-01T10:00:02.000Z",
+			"toolUseResult": map[string]any{"agentId": agent},
+			"message":       map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": id, "content": "done"}}}}
+	}
+	childLine := func(prompt string) string {
+		return jsonLines(map[string]any{"type": "user", "uuid": "c1", "parentUuid": nil, "isSidechain": true, "timestamp": "2026-09-01T10:00:05.000Z",
+			"cwd": "/Users/ted/src/app", "message": map[string]any{"role": "user", "content": prompt}})
+	}
+	main := jsonLines(
+		map[string]any{"type": "user", "uuid": "u1", "parentUuid": nil, "timestamp": "2026-09-01T10:00:00.000Z", "cwd": "/Users/ted/src/app",
+			"message": map[string]any{"role": "user", "content": "go"}},
+		call("a1", "u1", "msg_1", "t_a", "Agent"), result("r1", "a1", "t_a", "a"),
+		call("a2", "r1", "msg_2", "t_b", "Task"), result("r2", "a2", "t_b", "b"),
+		call("a3", "r2", "msg_3", "t_c", "Bash"), result("r3", "a3", "t_c", ""),
+		map[string]any{"type": "custom-title", "customTitle": "Parent work"},
+	)
+	dir := "-Users-ted-src-app/" + sess
+	srv := newSite(t, map[string]string{
+		dir + ".jsonl":                       main,
+		dir + "/subagents/agent-a.jsonl":     childLine("child a"),
+		dir + "/subagents/agent-a.meta.json": `{"agentType":"Explore","description":"Explore the parser","toolUseId":"t_a"}`,
+		dir + "/subagents/agent-b.jsonl":     childLine("child b"),
+		dir + "/subagents/agent-c.jsonl":     childLine("child c"),
+	})
+
+	_, feed := get(t, srv.URL+"/")
+	if strings.Contains(feed, "child a") || strings.Contains(feed, "Explore the parser") {
+		t.Error("Child Session listed in the feed")
+	}
+	i := strings.Index(feed, `href="/sessions/`)
+	parentURL := feed[i+len(`href="`):]
+	parentURL = parentURL[:strings.Index(parentURL, `"`)]
+
+	_, parent := get(t, srv.URL+parentURL)
+	rows := regexp.MustCompile(`<details class="tool" id="p-([^"]+)"`).FindAllStringSubmatch(parent, -1)
+	if len(rows) != 3 {
+		t.Fatalf("tool rows = %v", rows)
+	}
+	if n := strings.Count(parent, `<details class="cluster" open>`); n != 2 {
+		t.Errorf("open clusters = %d, want the 2 spawning ones", n)
+	}
+	links := regexp.MustCompile(`<a class="child" href="(/sessions/\d+)">↳ Child Session</a>`).FindAllStringSubmatch(parent, -1)
+	if len(links) != 2 {
+		t.Fatalf("child links = %v", links)
+	}
+	// The outline lists every Child Session below the prompts.
+	outline := parent[strings.Index(parent, `<nav class="outline">`):strings.Index(parent, `</nav>`)]
+	var childURLs []string
+	for _, title := range []string{"Explore the parser", "child b", "child c"} {
+		m := regexp.MustCompile(`<a href="(/sessions/\d+)">↳ ` + title + `</a>`).FindStringSubmatch(outline)
+		if m == nil || strings.Index(outline, "Child Sessions") > strings.Index(outline, m[0]) {
+			t.Fatalf("outline lacks child %q below the prompts: %s", title, outline)
+		}
+		childURLs = append(childURLs, m[1])
+	}
+	if links[0][1] != childURLs[0] || links[1][1] != childURLs[1] {
+		t.Errorf("call links %v don't match children %v", links, childURLs)
+	}
+
+	// Each child links back: through spawning_call_id, through the parent's
+	// child_sessions, or to the top of the parent.
+	for i, want := range []string{parentURL + "#p-" + rows[0][1], parentURL + "#p-" + rows[1][1], parentURL} {
+		_, child := get(t, srv.URL+childURLs[i])
+		if !strings.Contains(child, `<a class="parent" href="`+want+`">↰ child of Parent work</a>`) {
+			t.Errorf("child %d lacks a link to %s", i, want)
+		}
+	}
+}
+
+func TestTranscriptChildOfStub(t *testing.T) {
+	child := `{"type":"user","uuid":"c1","parentUuid":null,"isSidechain":true,"timestamp":"2026-09-01T10:00:05.000Z","cwd":"/tmp","message":{"role":"user","content":"child task"}}` + "\n"
+	srv := newSite(t, map[string]string{"-Users-ted-src-app/" + sess + "/subagents/agent-a.jsonl": child})
+	// The child's row is 1; its parse creates the parent stub, 2.
+	code, body := get(t, srv.URL+"/sessions/1")
+	if code != 200 || !strings.Contains(body, `<span class="parent">↰ child of `+sess+`</span>`) {
+		t.Errorf("child of a stub: %d", code)
+	}
+	if code, _ := get(t, srv.URL+"/sessions/2"); code != 404 {
+		t.Errorf("stub status %d", code)
 	}
 }
