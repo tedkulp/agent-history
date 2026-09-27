@@ -221,7 +221,7 @@ func TestParseShellCommands(t *testing.T) {
 		userLine("u1", "", "2026-09-01T10:00:00.000Z", "<bash-input> git status -sb</bash-input>"),
 		userLine("u1o", "u1", "2026-09-01T10:00:00.100Z", "<bash-stdout>## main...origin/main</bash-stdout><bash-stderr></bash-stderr>"),
 		userLine("u2", "u1o", "2026-09-01T10:00:01.000Z", "<bash-input>make</bash-input>"),
-		userLine("u2o", "u2", "2026-09-01T10:00:01.100Z", "<bash-stdout>built</bash-stdout><bash-stderr>warning: <x></bash-stderr>"),
+		userLine("u2o", "u2", "2026-09-01T10:00:01.100Z", "<bash-stdout>main -&gt; main</bash-stdout><bash-stderr>warning: &lt;x&gt; &amp;amp;</bash-stderr>"),
 		userLine("u3", "u2o", "2026-09-01T10:00:02.000Z", "<bash-input>true</bash-input>"),
 		userLine("u3p", "u3", "2026-09-01T10:00:02.500Z", "between"),
 		userLine("u4", "u3p", "2026-09-01T10:00:03.000Z", "<bash-stdout>stray</bash-stdout><bash-stderr></bash-stderr>"),
@@ -247,7 +247,7 @@ func TestParseShellCommands(t *testing.T) {
 	for _, m := range []parser.Message{res.Messages[0], res.Messages[1], res.Messages[2], res.Messages[4]} {
 		outputs = append(outputs, m.Parts[0].Payload.(parser.MarkerPayload).Output)
 	}
-	if want := []string{"## main...origin/main", "built\nwarning: <x>", "", "failed"}; !reflect.DeepEqual(outputs, want) {
+	if want := []string{"## main...origin/main", "main -> main\nwarning: <x> &amp;", "", "failed"}; !reflect.DeepEqual(outputs, want) {
 		t.Errorf("outputs = %q, want %q", outputs, want)
 	}
 	if len(res.Warnings) != 0 {

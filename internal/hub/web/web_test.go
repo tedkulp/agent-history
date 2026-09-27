@@ -541,7 +541,7 @@ func TestTranscriptShellCommands(t *testing.T) {
 	long := strings.Repeat("x", 4<<10) + strings.Repeat("y", 2<<10)
 	lines := []map[string]any{
 		user("b1", nil, 0, "<bash-input>git status -sb</bash-input>"),
-		user("b1o", "b1", 1, "<bash-stdout>## main <b>bold</b></bash-stdout><bash-stderr></bash-stderr>"),
+		user("b1o", "b1", 1, "<bash-stdout>## main &lt;b&gt;bold&lt;/b&gt;</bash-stdout><bash-stderr></bash-stderr>"),
 		user("b2", "b1o", 2, "<bash-input>true &&\n  "+strings.Repeat("z", 130)+"</bash-input>"),
 		user("u1", "b2", 3, "Real prompt"),
 		user("b3", "u1", 4, "<bash-input>cat big</bash-input>"),
@@ -574,7 +574,7 @@ func TestTranscriptShellCommands(t *testing.T) {
 			t.Errorf("transcript lacks %q", want)
 		}
 	}
-	for _, bad := range []string{"<b>bold</b>", "bash-input", "bash-stdout", `href="#m-b1"`, `href="#m-b3"`, "yyyy"} {
+	for _, bad := range []string{"<b>bold</b>", "bash-input", "bash-stdout", `href="#m-b1"`, `href="#m-b3"`, "yyyy", "&amp;lt;"} {
 		if strings.Contains(page, bad) {
 			t.Errorf("transcript shows %q", bad)
 		}

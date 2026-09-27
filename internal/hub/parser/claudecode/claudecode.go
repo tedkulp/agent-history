@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"encoding/base64"
 	"encoding/json"
+	"html"
 	"regexp"
 	"slices"
 	"strconv"
@@ -19,7 +20,7 @@ import (
 
 // version is the parser_version. Bump it whenever output changes for
 // existing data (hub.md §4.5).
-const version = 6
+const version = 7
 
 const (
 	layout     = "jsonl"
@@ -824,8 +825,9 @@ func isShellOutput(s string) bool {
 }
 
 // shellOutput is a ! command's output from its output line: stdout, then
-// stderr, each only when non-empty, joined with a newline. ok is false when
-// l isn't an output line.
+// stderr, each only when non-empty, joined with a newline. Claude Code writes
+// both bodies HTML-escaped, so they are unescaped. ok is false when l isn't
+// an output line.
 func shellOutput(l *line) (out string, ok bool) {
 	if l.Type != "user" || l.IsMeta {
 		return "", false
@@ -838,7 +840,7 @@ func shellOutput(l *line) (out string, ok bool) {
 	var parts []string
 	for _, re := range []*regexp.Regexp{bashStdoutRe, bashStderrRe} {
 		if m := re.FindStringSubmatch(s); m != nil && m[1] != "" {
-			parts = append(parts, m[1])
+			parts = append(parts, html.UnescapeString(m[1]))
 		}
 	}
 	return strings.Join(parts, "\n"), true
