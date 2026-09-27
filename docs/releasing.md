@@ -8,7 +8,9 @@ One `vX.Y.Z` tag releases the Collector archives and the Hub image together
 
 1. In `CHANGELOG.md`, rename `## [Unreleased]` to `## [0.2.0] - <today>`,
    add a fresh empty `## [Unreleased]` above it, and update the compare
-   links at the bottom. Commit that on `main`.
+   links at the bottom. For a new minor version, also move the pinned
+   `vX.Y` image tag in `compose.yaml` and the README's "Run the Hub"
+   section. Commit that on `main`.
 2. On an up-to-date `main` with green CI, tag and push:
 
    ```sh

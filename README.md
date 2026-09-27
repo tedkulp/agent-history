@@ -18,16 +18,106 @@ and planned.
 
 ## Run the Hub
 
-The Hub is a Docker image, `ghcr.io/tedkulp/agent-history-hub`. With the
-[`compose.yaml`](compose.yaml) from this repo:
+The Hub is a Docker image, `ghcr.io/tedkulp/agent-history-hub`, for
+`linux/amd64` and `linux/arm64`. Run it with Docker Compose or plain
+Docker. Both keep the database in `./data` and daily backups in
+`./backups`.
+
+### Before you run it
+
+- **Local disk only.** `./data` must not be on NFS, SMB or any other
+  network filesystem; SQLite corrupts or deadlocks there.
+  [More](docs/hub-deploy.md#storage-local-disk-only)
+- **uid 1000.** The Hub runs as uid/gid 1000, so `data` and `backups` must
+  be writable by it. On Linux, if `id -u` isn't 1000, then after the
+  `mkdir` below either run `sudo chown -R 1000:1000 data backups`, or run
+  the Hub as their owner with `user: "<uid>:<gid>"` in `compose.yaml` or
+  `--user "$(id -u):$(id -g)"` on `docker run`. Otherwise the Hub exits at
+  start-up with a permission error in the logs. Docker Desktop on macOS
+  needs neither.
+  [More](docs/hub-deploy.md#file-ownership)
+- **Settings are env vars.** The ones you're most likely to set: `TZ`
+  (Web UI and backup time zone, default UTC), `AGENT_HISTORY_BACKUP_AT`
+  (daily backup time, default `03:00`) and `AGENT_HISTORY_BACKUP_KEEP`
+  (daily backups kept, default `7`). Pass them under `environment:` or
+  with `-e` on `docker run`.
+  [All settings](docs/hub-deploy.md#configuration)
+
+### Docker Compose
+
+Save this as `compose.yaml` (it is the [`compose.yaml`](compose.yaml) in
+this repo):
+
+```yaml
+services:
+  hub:
+    image: ghcr.io/tedkulp/agent-history-hub:v0.1
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+      - ./backups:/backups
+    environment:
+      TZ: America/New_York
+      # AGENT_HISTORY_BACKUP_KEEP: "7"
+    # user: "1000:1000"   # match the owner of ./data and ./backups
+```
+
+Then, in the same directory:
 
 ```sh
 mkdir -p data backups
 docker compose up -d
+docker compose ps        # STATUS shows "healthy" once the Hub is ready
 ```
 
-Open `http://<host>:8080/`. Storage, file ownership, configuration and
-backups are covered in [docs/hub-deploy.md](docs/hub-deploy.md).
+The healthcheck is built into the image, so `compose.yaml` doesn't need
+one.
+
+### Plain Docker
+
+```sh
+mkdir -p data backups
+docker run -d --name agent-history-hub -p 8080:8080 -v "$PWD/data:/data" -v "$PWD/backups:/backups" --restart unless-stopped ghcr.io/tedkulp/agent-history-hub:v0.1
+docker ps --filter name=agent-history-hub   # STATUS shows "(healthy)" once the Hub is ready
+```
+
+Either way, open `http://<host>:8080/`. That address is the `--hub` you
+give each Collector.
+
+### Image tags
+
+| Tag | Points at |
+|---|---|
+| `vX.Y.Z`, e.g. `v0.1.0` | That exact release |
+| `vX.Y`, e.g. `v0.1` | The newest `vX.Y.*` patch release |
+| `latest` | The newest release |
+
+Pin `vX.Y`: you get bug fixes with each pull, and move to a new minor
+version only when you change the tag.
+
+### Upgrade
+
+Upgrade the Hub before the Collectors. With Compose:
+
+```sh
+docker compose pull && docker compose up -d
+```
+
+With plain Docker, pull, remove the container, and run the same
+`docker run` command again; the data stays in `./data`:
+
+```sh
+docker pull ghcr.io/tedkulp/agent-history-hub:v0.1
+docker rm -f agent-history-hub
+docker run -d --name agent-history-hub -p 8080:8080 -v "$PWD/data:/data" -v "$PWD/backups:/backups" --restart unless-stopped ghcr.io/tedkulp/agent-history-hub:v0.1
+```
+
+To move to a new minor version, change the tag first. An upgrade that
+changes the database schema backs it up to `backups/pre-migrate-<n>.db`
+first; rolling back, backups and TLS are in
+[docs/hub-deploy.md](docs/hub-deploy.md).
 
 ## Install the Collector
 

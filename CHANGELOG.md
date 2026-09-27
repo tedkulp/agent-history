@@ -9,6 +9,10 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+### Changed
+
+- The sample `compose.yaml` pins the Hub image to `v0.1` instead of `latest`, so `docker compose pull` takes patch releases but not a new minor version.
+
 ## [0.1.0] - 2026-09-27
 
 ### Added

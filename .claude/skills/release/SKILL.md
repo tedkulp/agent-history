@@ -48,6 +48,8 @@ In `CHANGELOG.md`:
 4. Update the link references at the bottom: `[Unreleased]` compares `vX.Y.Z...HEAD`, and add `[X.Y.Z]` comparing the previous tag to `vX.Y.Z` (or `releases/tag/vX.Y.Z` for the first).
 5. Tidy the entries for people reading release notes: one line each, in the groups Added, Changed, Deprecated, Removed, Fixed, Security, with no entries for fixes to things never released.
 
+For a new minor version (final, not rc), also move the pinned `vX.Y` image tag in `compose.yaml` and the README's "Run the Hub" section. Done when `grep -n 'agent-history-hub:v' compose.yaml README.md` shows only the new `vX.Y`.
+
 Done when this prints the new section and exits 0:
 
 ```bash
@@ -59,7 +61,7 @@ go run ./internal/release/floorcheck vX.Y.Z
 
 ```bash
 go test ./...
-git add CHANGELOG.md
+git add CHANGELOG.md compose.yaml README.md
 git commit -m "Release vX.Y.Z: <one-line summary>"
 git push origin main
 git tag vX.Y.Z
@@ -78,7 +80,7 @@ gh run watch <run id> --exit-status
 gh release view vX.Y.Z
 ```
 
-Done when the run is green and the GitHub Release shows the CHANGELOG section as its notes, the four Collector archives, and checksums. The Hub image is `ghcr.io/tedkulp/agent-history-hub:X.Y.Z` (plus `X.Y` and `latest` for a final release).
+Done when the run is green and the GitHub Release shows the CHANGELOG section as its notes, the four Collector archives, and checksums. The Hub image is `ghcr.io/tedkulp/agent-history-hub:vX.Y.Z` (plus `vX.Y` and `latest` for a final release).
 
 If the run fails, report the failing step and its log (`gh run view <run id> --log-failed`), and stop.
 - Failed before the GoReleaser step: nothing was published. Fix on `main`, then, once the user approves, move the tag with `git tag -f vX.Y.Z && git push -f origin vX.Y.Z`.
