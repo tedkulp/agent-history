@@ -129,7 +129,7 @@ func run() error {
 	served := make(chan struct{})
 	go func() {
 		defer close(served)
-		if err := control.Serve(ctx, ln, backend{rc.Control, cfg}); err != nil {
+		if err := control.Serve(ctx, ln, socketService{rc.Control, cfg}); err != nil {
 			log.Error("control socket", "err", err)
 		}
 	}()
@@ -180,13 +180,13 @@ func socketPath(home string) string {
 	return filepath.Join(state.DefaultDir(os.Getenv, home), control.SocketName)
 }
 
-// backend serves the control socket from a running Collector.
-type backend struct {
+// socketService answers the control socket from a running Collector.
+type socketService struct {
 	ctl *runner.Control
 	cfg *config.Config
 }
 
-func (b backend) Status(ctx context.Context) (status.Report, error) {
+func (b socketService) Status(ctx context.Context) (status.Report, error) {
 	rep, err := b.ctl.Status(ctx)
 	if err != nil {
 		return rep, err
@@ -210,7 +210,7 @@ func (b backend) Status(ctx context.Context) (status.Report, error) {
 	return rep, nil
 }
 
-func (b backend) Sync(ctx context.Context, progress func(string)) (string, error) {
+func (b socketService) Sync(ctx context.Context, progress func(string)) (string, error) {
 	res, err := b.ctl.Sync(ctx, progress)
 	if err != nil {
 		return "", err
@@ -218,7 +218,9 @@ func (b backend) Sync(ctx context.Context, progress func(string)) (string, error
 	return summary(res), nil
 }
 
-func (b backend) SetName(ctx context.Context, name string) error { return b.ctl.SetName(ctx, name) }
+func (b socketService) SetName(ctx context.Context, name string) error {
+	return b.ctl.SetName(ctx, name)
+}
 
 func summary(r reconcile.Result) string {
 	s := fmt.Sprintf("synced: %d uploaded, %d replaced, %d unchanged, %d failed", r.Uploaded, r.Replaced, r.Unchanged, r.Failed)
@@ -249,7 +251,9 @@ func statusCmd(args []string) error {
 		return fmt.Errorf("asking the service: %w", err)
 	}
 	if rep.ServiceInstalled, rep.ServiceOutdated, err = service.Outdated(newServiceManager(os.Getenv, home).Path()); err != nil {
-		return err
+		// Still print the rest of the report.
+		fmt.Fprintf(os.Stderr, "agent-history: reading the service definition: %v\n", err)
+		rep.ServiceInstalled = true
 	}
 	status.Format(os.Stdout, rep, time.Now())
 	return nil
@@ -276,7 +280,7 @@ func localReport(ctx context.Context, cfg *config.Config, home string) status.Re
 	reachable := err == nil || errors.As(err, &se) && se.StatusCode < 500
 	rep.Hub.Reachable = &reachable
 	if err != nil {
-		rep.Hub.LastError = &status.Failure{Message: err.Error(), At: now}
+		rep.Hub.LastError = status.NewFailure(err, now)
 	}
 	for _, a := range adapters {
 		sc := cfg.Sources[a.ID()]
@@ -288,7 +292,7 @@ func localReport(ctx context.Context, cfg *config.Config, home string) status.Re
 			for _, l := range a.Layouts() {
 				recs, err := l.Discover(s.Root)
 				if err != nil {
-					s.LastError = &status.Failure{Message: "discovering " + l.Name() + " records: " + err.Error(), At: now}
+					s.LastError = status.NewFailure(fmt.Errorf("discovering %s records: %w", l.Name(), err), now)
 					continue
 				}
 				s.Layouts = append(s.Layouts, l.Name())

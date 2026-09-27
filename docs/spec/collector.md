@@ -134,6 +134,7 @@ Deleting the state directory is always safe. The next start does a full reconcil
 |---|---|
 | `GET /status` | The status report as JSON (§2.5). The CLI formats it. |
 | `POST /sync` | Starts a full reconcile and streams progress lines until it finishes. |
+| `PUT /name` | Takes `{"display_name": "..."}` from `set-name`, and sends `PUT /machines/{id}` with it (§4.1). |
 
 Source: [Collector design](https://github.com/tedkulp/agent-history/issues/11); file names and socket shape filled in while writing this spec
 

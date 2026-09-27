@@ -46,7 +46,7 @@ func socketPath(t *testing.T) string {
 	return filepath.Join(dir, SocketName)
 }
 
-func serve(t *testing.T, b Backend) (*Client, string) {
+func serve(t *testing.T, s Service) (*Client, string) {
 	t.Helper()
 	path := socketPath(t)
 	ln, err := Listen(path)
@@ -55,7 +55,7 @@ func serve(t *testing.T, b Backend) (*Client, string) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- Serve(ctx, ln, b) }()
+	go func() { done <- Serve(ctx, ln, s) }()
 	t.Cleanup(func() {
 		cancel()
 		if err := <-done; err != nil {

@@ -6,6 +6,7 @@ package runner
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"iter"
 	"log/slog"
@@ -157,12 +158,15 @@ type runner struct {
 	watchWarned map[string]bool
 
 	// What `status` reports.
-	infos     map[string]protocol.SourceInfo // from the last discover
-	records   map[string]int                 // every discovered record, per Source
-	srcErr    map[string]*status.Failure
-	contacted bool // a reconcile has reached the Hub or failed to
-	lastSync  time.Time
-	hubErr    *status.Failure
+	infos   map[string]protocol.SourceInfo // from the last discover
+	records map[string]int                 // every discovered record, per Source
+	// A Source's last error: from discovery until it next succeeds, from
+	// an upload until one of its records next ships.
+	discoverErr map[string]*status.Failure
+	uploadErr   map[string]*status.Failure
+	contacted   bool // a reconcile has reached the Hub or failed to
+	lastSync    time.Time
+	hubErr      *status.Failure
 
 	// Syncs waiting for the next reconcile, and those the running one will answer.
 	syncQueued  []*syncWaiter
@@ -189,7 +193,8 @@ func Run(ctx context.Context, cfg Config) error {
 		watchWarned:   map[string]bool{},
 		infos:         map[string]protocol.SourceInfo{},
 		records:       map[string]int{},
-		srcErr:        map[string]*status.Failure{},
+		discoverErr:   map[string]*status.Failure{},
+		uploadErr:     map[string]*status.Failure{},
 		results:       make(chan result, cfg.MaxUploads),
 		reconciled:    make(chan reconciled, 1),
 		lastSave:      time.Now(),
@@ -367,7 +372,6 @@ func (r *runner) ship(ctx context.Context, j job) result {
 	case errors.As(err, &mismatch):
 		log.Warn("hub state differs from local content", "err", err)
 		r.Cache.Set(j.key, mismatch.Entry())
-		res.acked = true
 	case errors.As(err, &pathErr):
 		if !j.warned {
 			log.Warn("can't read record, retrying on the next rescan", "err", err)
@@ -385,15 +389,16 @@ func (r *runner) ship(ctx context.Context, j job) result {
 func (r *runner) handleResult(res result) {
 	delete(r.inFlight, res.key)
 	now := time.Now()
-	if res.acked {
-		r.lastSync = now
-	}
+	src, _ := cache.Split(res.key)
 	switch {
+	case res.acked:
+		r.lastSync = now
+		r.hubErr = nil
+		delete(r.uploadErr, src)
 	case res.transient:
-		r.hubErr = &status.Failure{Message: res.err.Error(), At: now}
+		r.hubErr = status.NewFailure(res.err, now)
 	case res.err != nil:
-		src, _ := cache.Split(res.key)
-		r.srcErr[src] = &status.Failure{Message: res.err.Error(), At: now}
+		r.uploadErr[src] = status.NewFailure(res.err, now)
 	}
 	if res.failedAt != nil {
 		r.failed[res.key] = *res.failedAt
@@ -460,7 +465,7 @@ func (r *runner) handleReconciled(rc reconciled) {
 		// Shutting down.
 	default:
 		r.contacted = true
-		r.hubErr = &status.Failure{Message: rc.err.Error(), At: time.Now()}
+		r.hubErr = status.NewFailure(rc.err, time.Now())
 		d := r.scheduleReconcile()
 		r.Log.Warn("reconcile failed, backing off", "err", rc.err, "retry_in", d.Round(time.Millisecond))
 	}
@@ -559,7 +564,7 @@ func (r *runner) discover() ([]reconcile.Source, []protocol.SourceInfo) {
 				recs, err := l.Discover(s.Root)
 				if err != nil {
 					r.Log.Error("discovering records", "source", a.ID(), "layout", l.Name(), "err", err)
-					r.srcErr[a.ID()] = &status.Failure{Message: "discovering " + l.Name() + " records: " + err.Error(), At: time.Now()}
+					r.discoverErr[a.ID()] = status.NewFailure(fmt.Errorf("discovering %s records: %w", l.Name(), err), time.Now())
 					ok = false
 					break
 				}
@@ -573,6 +578,7 @@ func (r *runner) discover() ([]reconcile.Source, []protocol.SourceInfo) {
 			}
 			if ok {
 				r.records[a.ID()] = len(present)
+				delete(r.discoverErr, a.ID())
 				r.Exclude.Forget(a.ID(), present)
 				for k, w := range r.waitingIn(a.ID()) {
 					if !present[w.rec.Key] {

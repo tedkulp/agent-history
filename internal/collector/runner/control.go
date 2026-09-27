@@ -104,7 +104,8 @@ func Once(ctx context.Context, cfg Config, progress func(string)) (reconcile.Res
 
 // syncWaiter is one sync waiting for a reconcile to finish.
 type syncWaiter struct {
-	// progress drops lines the waiter is too slow to take.
+	// progress drops the oldest lines when the waiter is too slow, so
+	// the newest line always gets through.
 	progress chan string
 	done     chan reconciled
 }
@@ -114,9 +115,16 @@ func newSyncWaiter() *syncWaiter {
 }
 
 func (w *syncWaiter) say(line string) {
-	select {
-	case w.progress <- line:
-	default:
+	for {
+		select {
+		case w.progress <- line:
+			return
+		default:
+		}
+		select {
+		case <-w.progress:
+		default:
+		}
 	}
 }
 
@@ -173,6 +181,14 @@ func (r *runner) requestSync(w *syncWaiter) {
 	r.nextReconcile = time.Time{}
 }
 
+// latest is the newer of two failures, either of which may be nil.
+func latest(a, b *status.Failure) *status.Failure {
+	if a == nil || b != nil && b.At.After(a.At) {
+		return b
+	}
+	return a
+}
+
 // sourceInfos is every enabled Source as last discovered.
 func (r *runner) sourceInfos() []protocol.SourceInfo {
 	infos := []protocol.SourceInfo{}
@@ -204,7 +220,7 @@ func (r *runner) report() status.Report {
 	for _, s := range r.Sources {
 		id := s.Adapter.ID()
 		si := r.infos[id]
-		src := status.Source{ID: id, Root: s.Root, Enabled: true, Detected: si.Detected, Layouts: si.Layouts, LastError: r.srcErr[id]}
+		src := status.Source{ID: id, Root: s.Root, Enabled: true, Detected: si.Detected, Layouts: si.Layouts, LastError: latest(r.discoverErr[id], r.uploadErr[id])}
 		if si.Detected {
 			excluded := r.Exclude.Count(id)
 			src.Records, src.Excluded = r.records[id], &excluded

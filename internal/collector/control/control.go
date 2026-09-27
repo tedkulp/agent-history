@@ -28,8 +28,8 @@ const SocketName = "control.sock"
 // ErrNotRunning means no Collector is listening on the socket.
 var ErrNotRunning = errors.New("service not running")
 
-// Backend is what the socket exposes: the running Collector.
-type Backend interface {
+// Service is what the socket exposes: the running Collector.
+type Service interface {
 	Status(ctx context.Context) (status.Report, error)
 	// Sync runs a full reconcile, reporting progress lines as it goes, and
 	// returns a one-line summary.
@@ -56,13 +56,13 @@ func Listen(path string) (net.Listener, error) {
 }
 
 // Serve answers requests on ln until ctx is cancelled, then closes it.
-func Serve(ctx context.Context, ln net.Listener, b Backend) error {
-	srv := &http.Server{Handler: Handler(b), ReadHeaderTimeout: 10 * time.Second}
-	go func() {
-		<-ctx.Done()
+func Serve(ctx context.Context, ln net.Listener, s Service) error {
+	srv := &http.Server{Handler: handler(s), ReadHeaderTimeout: 10 * time.Second}
+	stop := context.AfterFunc(ctx, func() {
 		// A sync in progress is cut off: the Collector is shutting down.
 		srv.Close()
-	}()
+	})
+	defer stop()
 	if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
@@ -80,11 +80,11 @@ type nameBody struct {
 	DisplayName string `json:"display_name"`
 }
 
-// Handler serves the socket's endpoints.
-func Handler(b Backend) http.Handler {
+// handler serves the socket's endpoints.
+func handler(s Service) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
-		rep, err := b.Status(r.Context())
+		rep, err := s.Status(r.Context())
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
@@ -100,7 +100,7 @@ func Handler(b Backend) http.Handler {
 			io.WriteString(w, prefix+strings.ReplaceAll(s, "\n", " ")+"\n")
 			rc.Flush()
 		}
-		summary, err := b.Sync(r.Context(), func(s string) { line(linePrefixProgress, s) })
+		summary, err := s.Sync(r.Context(), func(s string) { line(linePrefixProgress, s) })
 		if err != nil {
 			line(linePrefixError, err.Error())
 			return
@@ -113,7 +113,7 @@ func Handler(b Backend) http.Handler {
 			http.Error(w, "display_name is required", http.StatusBadRequest)
 			return
 		}
-		if err := b.SetName(r.Context(), body.DisplayName); err != nil {
+		if err := s.SetName(r.Context(), body.DisplayName); err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}

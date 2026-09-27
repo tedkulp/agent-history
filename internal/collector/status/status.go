@@ -59,6 +59,11 @@ type Failure struct {
 	At      time.Time `json:"at"`
 }
 
+// NewFailure records err as happening at at.
+func NewFailure(err error, at time.Time) *Failure {
+	return &Failure{Message: err.Error(), At: at}
+}
+
 // Format writes r as the text report, with times relative to now.
 func Format(w io.Writer, r Report, now time.Time) {
 	service := "not running"

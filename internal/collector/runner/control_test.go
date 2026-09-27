@@ -3,6 +3,8 @@ package runner
 import (
 	"context"
 	"errors"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -282,4 +284,50 @@ func TestControlAfterRunReturns(t *testing.T) {
 	if _, err := cfg.Control.Status(ctx5s(t)); !errors.Is(err, ErrNotRunning) {
 		t.Errorf("err = %v, want ErrNotRunning", err)
 	}
+}
+
+func TestSlowSyncStillGetsTheLastProgressLine(t *testing.T) {
+	w := newSyncWaiter()
+	for i := range 100 {
+		w.say(strconv.Itoa(i))
+	}
+	w.done <- reconciled{}
+	var last string
+	if _, err := w.wait(ctx5s(t), func(s string) { last = s }); err != nil {
+		t.Fatal(err)
+	}
+	if last != "99" {
+		t.Errorf("last line = %q, want 99", last)
+	}
+}
+
+func TestSourceErrorClearsOnceARecordShips(t *testing.T) {
+	f := newFixture(t)
+	f.write(key, "{\"n\":1}\n")
+	cfg := f.config()
+	cfg.Debounce = 300 * time.Millisecond
+	cfg.Control = NewControl()
+	f.start(cfg)
+	waitFor(t, 5*time.Second, "startup reconcile", func() bool { return f.hubHas(key) })
+
+	// A record that turns unreadable before it ships gives the Source an error...
+	f.appendLine(key, "{\"n\":2}")
+	if err := os.Chmod(f.path(key), 0); err != nil {
+		t.Fatal(err)
+	}
+	lastErr := func() *status.Failure {
+		rep, err := cfg.Control.Status(ctx5s(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rep.Sources[0].LastError
+	}
+	waitFor(t, 5*time.Second, "a source error", func() bool { return lastErr() != nil })
+
+	// ...until it ships again.
+	if err := os.Chmod(f.path(key), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.appendLine(key, "{\"n\":3}")
+	waitFor(t, 5*time.Second, "the source error to clear", func() bool { return lastErr() == nil })
 }
