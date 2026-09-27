@@ -54,8 +54,10 @@ dockers_v2:
       org.opencontainers.image.revision: "{{ .FullCommit }}"
 
 # Release notes come from CHANGELOG.md (--release-notes in release.yml).
+# The changelog pipe must stay enabled: it is what reads that file, and
+# `disable: true` publishes a release with empty notes.
 changelog:
-  disable: true
+  use: git
 
 release:
   prerelease: auto
