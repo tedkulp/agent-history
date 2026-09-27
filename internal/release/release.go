@@ -21,3 +21,37 @@ func CheckFloor(floor, tag string) error {
 	}
 	return nil
 }
+
+// Notes returns the CHANGELOG.md section for tag (like v0.4.0), without its
+// heading: the GitHub Release notes. It is an error when the section is
+// missing or empty, so a release can't go out without its changes listed.
+func Notes(changelog []byte, tag string) (string, error) {
+	v, ok := strings.CutPrefix(tag, "v")
+	if !ok || !protocol.ValidVersion(v) {
+		return "", fmt.Errorf("tag %q is not a version tag like v0.4.0", tag)
+	}
+	var (
+		body  []string
+		found bool
+	)
+	for _, l := range strings.Split(string(changelog), "\n") {
+		if strings.HasPrefix(l, "## ") || strings.HasPrefix(l, "[") && strings.Contains(l, "]: ") {
+			if found {
+				break
+			}
+			found = l == "## ["+v+"]" || strings.HasPrefix(l, "## ["+v+"] ")
+			continue
+		}
+		if found {
+			body = append(body, l)
+		}
+	}
+	notes := strings.TrimSpace(strings.Join(body, "\n"))
+	switch {
+	case !found:
+		return "", fmt.Errorf("CHANGELOG.md has no section for %s; move the Unreleased entries under ## [%s] - <date>", v, v)
+	case notes == "":
+		return "", fmt.Errorf("CHANGELOG.md section %s is empty", v)
+	}
+	return notes + "\n", nil
+}

@@ -53,18 +53,9 @@ dockers_v2:
       org.opencontainers.image.version: "{{ .Version }}"
       org.opencontainers.image.revision: "{{ .FullCommit }}"
 
+# Release notes come from CHANGELOG.md (--release-notes in release.yml).
 changelog:
-  use: git
-  sort: asc
-  groups:
-    - title: Features
-      regexp: '^.*?feat(\(.+\))??!?:.+$'
-      order: 0
-    - title: Fixes
-      regexp: '^.*?fix(\(.+\))??!?:.+$'
-      order: 1
-    - title: Other
-      order: 999
+  disable: true
 
 release:
   prerelease: auto
