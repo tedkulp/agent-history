@@ -19,6 +19,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/tedkulp/agent-history/internal/collector/cache"
+	"github.com/tedkulp/agent-history/internal/collector/drift"
 	"github.com/tedkulp/agent-history/internal/collector/exclude"
 	"github.com/tedkulp/agent-history/internal/collector/hubclient"
 	"github.com/tedkulp/agent-history/internal/collector/reconcile"
@@ -163,6 +164,7 @@ type runner struct {
 	// What `status` reports.
 	infos   map[string]protocol.SourceInfo // from the last discover
 	records map[string]int                 // every discovered record, per Source
+	drifts  map[string]drift.Result        // unclaimed and known-ignored paths, per Source
 	// A Source's last error: from discovery until it next succeeds, from
 	// an upload until one of its records next ships.
 	discoverErr map[string]*status.Failure
@@ -199,6 +201,7 @@ func Run(ctx context.Context, cfg Config) error {
 		watchWarned:   map[string]bool{},
 		infos:         map[string]protocol.SourceInfo{},
 		records:       map[string]int{},
+		drifts:        map[string]drift.Result{},
 		discoverErr:   map[string]*status.Failure{},
 		uploadErr:     map[string]*status.Failure{},
 		results:       make(chan result, cfg.MaxUploads),
@@ -608,7 +611,9 @@ func (r *runner) discover() ([]reconcile.Source, []protocol.SourceInfo) {
 			}
 			r.wasDetected[a.ID()] = si.Detected
 		}
+		delete(r.drifts, a.ID())
 		if si.Detected {
+			r.scanDrift(s)
 			r.detected = append(r.detected, s)
 			src := reconcile.Source{ID: a.ID()}
 			ok := true
@@ -645,6 +650,17 @@ func (r *runner) discover() ([]reconcile.Source, []protocol.SourceInfo) {
 		infos = append(infos, si)
 	}
 	return sources, infos
+}
+
+// scanDrift looks for files under s that the Collector doesn't understand,
+// and logs each unclaimed one the first time it's seen (collector.md §4.7).
+func (r *runner) scanDrift(s Source) {
+	id := s.Adapter.ID()
+	res := drift.Scan(s.Adapter, s.Root)
+	for _, p := range r.Cache.SeeUnclaimed(id, res.Unclaimed) {
+		r.Log.Warn("unclaimed file under the source root, not shipping it", "source", id, "root", s.Root, "path", p)
+	}
+	r.drifts[id] = res
 }
 
 func (r *runner) markDirty(src string, rec source.Record) {

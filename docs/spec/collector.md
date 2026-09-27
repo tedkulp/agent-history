@@ -150,7 +150,7 @@ Source: [Collector design](https://github.com/tedkulp/agent-history/issues/11); 
   - whether it's detected, its root, and whether it's enabled
   - **Layouts detected**, e.g. opencode `legacy-json` + `sqlite`
   - Raw record count, and how many are excluded
-  - **Known-ignored** paths with their last-modified time, e.g. Codex `thread_history_1.sqlite`
+  - **Known-ignored** paths with their last-modified time, e.g. Codex `thread_history_1.sqlite`: a count plus the 5 most recently modified
   - **Unclaimed paths**: a count plus the first 5 paths
   - the last error for this Source, if any
 

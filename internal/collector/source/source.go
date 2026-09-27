@@ -14,6 +14,12 @@ type Adapter interface {
 	Version(root string) string
 	// Layouts is the ranked list of ways the Source stores history.
 	Layouts() []Layout
+	// KnownIgnored are path globs, relative to the root, that are recognized
+	// but deliberately not read. `**` matches any number of segments.
+	KnownIgnored() []string
+	// ScanPaths are the directories, or root-level file globs, checked for
+	// paths no Layout claims (collector.md §4.7).
+	ScanPaths(root string) []string
 }
 
 // Layout is one way a Source stores its history on disk.

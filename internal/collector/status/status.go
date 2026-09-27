@@ -62,9 +62,27 @@ type Source struct {
 	Detected bool     `json:"detected"`
 	Layouts  []string `json:"layouts"`
 	// Records counts every discovered Raw record, excluded ones included.
-	Records   int      `json:"records"`
-	Excluded  *int     `json:"excluded"`
-	LastError *Failure `json:"last_error"`
+	Records  int  `json:"records"`
+	Excluded *int `json:"excluded"`
+	// Unclaimed counts files under the Source's scan paths that no Layout
+	// claims and no known-ignored glob matches (collector.md §4.7);
+	// UnclaimedPaths holds the first MaxPaths of them, relative to the root.
+	Unclaimed      int      `json:"unclaimed"`
+	UnclaimedPaths []string `json:"unclaimed_paths"`
+	// Ignored counts known-ignored files; IgnoredPaths holds the MaxPaths
+	// most recently modified.
+	Ignored      int           `json:"ignored"`
+	IgnoredPaths []IgnoredPath `json:"ignored_paths"`
+	LastError    *Failure      `json:"last_error"`
+}
+
+// MaxPaths is how many unclaimed and known-ignored paths a Source lists.
+const MaxPaths = 5
+
+// IgnoredPath is a known-ignored file and when it was last modified.
+type IgnoredPath struct {
+	Path     string    `json:"path"`
+	Modified time.Time `json:"modified"`
 }
 
 // Failure is an error and when it happened.
@@ -134,6 +152,19 @@ func Format(w io.Writer, r Report, now time.Time) {
 				records += fmt.Sprintf(" (%s excluded)", commas(*s.Excluded))
 			}
 			fmt.Fprintf(w, "%-12s layouts: %s   records: %s\n", "", strings.Join(s.Layouts, " + "), records)
+		}
+		for _, p := range s.IgnoredPaths {
+			fmt.Fprintf(w, "%-12s ignored: %s (modified %s)\n", "", p.Path, p.Modified.Local().Format("2006-01-02 15:04"))
+		}
+		if more := s.Ignored - len(s.IgnoredPaths); more > 0 {
+			fmt.Fprintf(w, "%-12s ignored: %s more\n", "", commas(more))
+		}
+		if s.Unclaimed > 0 {
+			fmt.Fprintf(w, "%-12s unclaimed: %s, not shipped: %s", "", commas(s.Unclaimed), strings.Join(s.UnclaimedPaths, ", "))
+			if s.Unclaimed > len(s.UnclaimedPaths) {
+				fmt.Fprint(w, ", …")
+			}
+			fmt.Fprintln(w)
 		}
 		if e := s.LastError; e != nil {
 			fmt.Fprintf(w, "%-12s last error %s: %s\n", "", ago(e.At, now), e.Message)

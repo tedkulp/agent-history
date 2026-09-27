@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -44,6 +45,9 @@ type file struct {
 	Version int              `json:"version"`
 	HubURL  string           `json:"hub_url"`
 	Records map[string]Entry `json:"records"`
+	// UnclaimedSeen holds unclaimed paths already logged, keyed like
+	// records, so each is logged once (collector.md §4.7).
+	UnclaimedSeen []string `json:"unclaimed_seen,omitempty"`
 }
 
 // Cache is safe for concurrent use.
@@ -124,6 +128,44 @@ func (c *Cache) Prune(source string, present map[string]bool) {
 			c.dirty = true
 		}
 	}
+}
+
+// SeeUnclaimed records paths, relative to the root, as source's unclaimed
+// paths now and returns those not seen before. Paths of source no longer
+// unclaimed are forgotten, so one that comes back is logged again.
+func (c *Cache) SeeUnclaimed(source string, paths []string) (fresh []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	seen := map[string]bool{}
+	var kept []string
+	for _, k := range c.f.UnclaimedSeen {
+		if src, _ := Split(k); src == source {
+			seen[k] = true
+		} else {
+			kept = append(kept, k)
+		}
+	}
+	current := map[string]bool{}
+	for _, p := range paths {
+		k := Key(source, p)
+		current[k] = true
+		kept = append(kept, k)
+		if !seen[k] {
+			fresh = append(fresh, p)
+		}
+	}
+	gone := false
+	for k := range seen {
+		if !current[k] {
+			gone = true
+		}
+	}
+	if len(fresh) > 0 || gone {
+		slices.Sort(kept)
+		c.f.UnclaimedSeen = slices.Compact(kept)
+		c.dirty = true
+	}
+	return fresh
 }
 
 // Dirty reports whether the cache has changed since it was last saved.

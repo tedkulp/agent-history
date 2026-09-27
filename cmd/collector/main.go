@@ -22,6 +22,7 @@ import (
 	"github.com/tedkulp/agent-history/internal/collector/cache"
 	"github.com/tedkulp/agent-history/internal/collector/config"
 	"github.com/tedkulp/agent-history/internal/collector/control"
+	"github.com/tedkulp/agent-history/internal/collector/drift"
 	"github.com/tedkulp/agent-history/internal/collector/exclude"
 	"github.com/tedkulp/agent-history/internal/collector/hubclient"
 	"github.com/tedkulp/agent-history/internal/collector/reconcile"
@@ -303,6 +304,7 @@ func localReport(ctx context.Context, cfg *config.Config, home string) status.Re
 				s.Layouts = append(s.Layouts, l.Name())
 				s.Records += len(recs)
 			}
+			drift.Scan(a, s.Root).Report(&s)
 		}
 		rep.Sources = append(rep.Sources, s)
 	}

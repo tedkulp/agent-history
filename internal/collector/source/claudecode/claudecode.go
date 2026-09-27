@@ -40,6 +40,12 @@ func (Adapter) Version(string) string { return "" }
 
 func (Adapter) Layouts() []source.Layout { return []source.Layout{jsonlLayout{}} }
 
+// KnownIgnored is Claude's auto-memory notes, which aren't history.
+func (Adapter) KnownIgnored() []string { return []string{"*/memory/**"} }
+
+// ScanPaths is the whole root: nothing else lives under it.
+func (Adapter) ScanPaths(root string) []string { return []string{root} }
+
 // jsonlLayout is Claude Code's only Layout. Record keys are the path
 // relative to the root, with no Layout prefix.
 type jsonlLayout struct{}

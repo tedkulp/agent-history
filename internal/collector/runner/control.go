@@ -227,6 +227,7 @@ func (r *runner) report() status.Report {
 		if si.Detected {
 			excluded := r.Exclude.Count(id)
 			src.Records, src.Excluded = r.records[id], &excluded
+			r.drifts[id].Report(&src)
 		}
 		rep.Sources = append(rep.Sources, src)
 	}

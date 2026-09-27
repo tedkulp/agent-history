@@ -112,3 +112,31 @@ func TestFormatUpgradeRequired(t *testing.T) {
 		}
 	}
 }
+
+func TestFormatDrift(t *testing.T) {
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	mod := time.Date(2026, 9, 25, 18, 2, 0, 0, time.UTC)
+	r := Report{
+		ServiceInstalled: true,
+		Sources: []Source{
+			{ID: "claude-code", Root: "/r", Enabled: true, Detected: true, Layouts: []string{"jsonl"}, Records: 5,
+				Unclaimed: 7, UnclaimedPaths: []string{"a", "b", "c", "d", "e"},
+				Ignored: 8, IgnoredPaths: []IgnoredPath{{"-p/memory/MEMORY.md", mod}}},
+			{ID: "codex", Root: "/c", Enabled: true, Detected: true, Layouts: []string{"jsonl"}, Records: 1,
+				Unclaimed: 1, UnclaimedPaths: []string{"x.bin"}},
+		},
+	}
+	var b strings.Builder
+	Format(&b, r, now)
+	got := b.String()
+	for _, want := range []string{
+		"             ignored: -p/memory/MEMORY.md (modified " + mod.Local().Format("2006-01-02 15:04") + ")\n",
+		"             ignored: 7 more\n",
+		"             unclaimed: 7, not shipped: a, b, c, d, e, …\n",
+		"             unclaimed: 1, not shipped: x.bin\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+}
