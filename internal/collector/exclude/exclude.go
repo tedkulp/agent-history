@@ -80,13 +80,12 @@ func (f *Filter) Excluded(src string, l Layout, root string, rec source.Record) 
 	return f.decide(src, l, root, rec)
 }
 
-func (f *Filter) decide(src string, l Layout, root string, rec source.Record) (bool, bool) {
+func (f *Filter) decide(src string, l Layout, root string, rec source.Record) (excluded, known bool) {
 	if ex, ok := f.decided[src][rec.Key]; ok {
 		return ex, true
 	}
 	var ex bool
 	if p, ok := l.Parent(root, rec); ok {
-		var known bool
 		if ex, known = f.decide(src, l, root, p); !known {
 			return false, false
 		}

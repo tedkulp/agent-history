@@ -32,8 +32,8 @@ type Layout interface {
 	// StartCwd is the starting cwd of a Session's record, read cheaply from
 	// metadata, or empty while it can't be read yet. Used only for exclude.
 	StartCwd(rec Record) (string, error)
-	// Parent is the record rec belongs to: a Child Session's parent, or an
-	// attachment's main. Used only for exclude.
+	// Parent is the record rec belongs to: a Child Session's parent
+	// Session, or the Session an attachment belongs to. Used only for exclude.
 	Parent(root string, rec Record) (Record, bool)
 }
 

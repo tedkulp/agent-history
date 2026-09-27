@@ -138,8 +138,11 @@ func TestStartCwd(t *testing.T) {
 		{"empty", "", ""},
 		{"first line", `{"type":"user","cwd":"/Users/ted/src/app"}` + "\n", "/Users/ted/src/app"},
 		{"skips lines without cwd", `{"type":"summary"}` + "\n" + `not json` + "\n" + `{"cwd":""}` + "\n" + `{"cwd":"/a"}` + "\n" + `{"cwd":"/b"}` + "\n", "/a"},
-		{"partial line waits", `{"type":"user","cwd":"/Users/ted/src/app"`, ""},
 		{"past 64 KiB", `{"pad":"` + strings.Repeat("x", 64<<10) + `"}` + "\n" + `{"cwd":"/a"}` + "\n", ""},
+		{"first line longer than 64 KiB", `{"type":"user","cwd":"/a","message":"` + strings.Repeat("x", 64<<10) + `"}` + "\n", "/a"},
+		{"partial line with a complete cwd", `{"type":"user","cwd":"/a","message":"hel`, "/a"},
+		{"partial cwd value waits", `{"type":"user","cwd":"/Users/te`, ""},
+		{"nested cwd isn't the Session's", `{"toolUseResult":{"cwd":"/x"}}` + "\n" + `{"cwd":"/a"}` + "\n", "/a"},
 	} {
 		got, err := cwdOf(c.body)
 		if err != nil || got != c.want {

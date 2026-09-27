@@ -83,7 +83,7 @@ func run() error {
 	for _, k := range cfg.Unknown {
 		log.Warn("unknown config key ignored", "key", k)
 	}
-	excl, err := exclude.New(cfg.Exclude)
+	excludeFilter, err := exclude.New(cfg.Exclude)
 	if err != nil {
 		return err
 	}
@@ -115,7 +115,7 @@ func run() error {
 		Sources:        sources,
 		Cache:          cache.Load(filepath.Join(dir, "cache.json"), cfg.HubURL, log),
 		Log:            log,
-		Exclude:        excl,
+		Exclude:        excludeFilter,
 		RescanInterval: cfg.RescanInterval,
 	})
 }

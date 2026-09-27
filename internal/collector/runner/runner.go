@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"iter"
 	"log/slog"
 	"math/rand/v2"
 	"os"
@@ -426,6 +427,10 @@ func (r *runner) rescan() {
 	r.updateWatches()
 	for _, s := range sources {
 		present := make(map[string]bool, len(s.Records))
+		// A waiting record may yet ship: keep its cache entry.
+		for _, w := range r.waitingIn(s.ID) {
+			present[w.rec.Key] = true
+		}
 		for _, rec := range s.Records {
 			present[rec.Key] = true
 			fi, err := os.Stat(rec.Path)
@@ -502,8 +507,8 @@ func (r *runner) discover() ([]reconcile.Source, []protocol.SourceInfo) {
 			}
 			if ok {
 				r.Exclude.Forget(a.ID(), present)
-				for k, w := range r.waiting {
-					if w.src.Adapter.ID() == a.ID() && !present[w.rec.Key] {
+				for k, w := range r.waitingIn(a.ID()) {
+					if !present[w.rec.Key] {
 						delete(r.waiting, k)
 					}
 				}
@@ -618,6 +623,17 @@ func (r *runner) claim(s Source, path string) {
 	}
 }
 
+// waitingIn yields the waiting records of Source id, keyed as in r.waiting.
+func (r *runner) waitingIn(id string) iter.Seq2[string, waiter] {
+	return func(yield func(string, waiter) bool) {
+		for k, w := range r.waiting {
+			if w.src.Adapter.ID() == id && !yield(k, w) {
+				return
+			}
+		}
+	}
+}
+
 // shippable asks exclude about rec. A record whose Session's cwd can't be
 // read yet waits; once rec is decided, records waiting on it as their
 // Parent are asked again.
@@ -630,10 +646,7 @@ func (r *runner) shippable(s Source, l source.Layout, rec source.Record) bool {
 		return false
 	}
 	delete(r.waiting, k)
-	for wk, w := range r.waiting {
-		if w.src.Adapter.ID() != id {
-			continue
-		}
+	for wk, w := range r.waitingIn(id) {
 		if p, ok := w.layout.Parent(s.Root, w.rec); !ok || p.Key != rec.Key {
 			continue
 		}

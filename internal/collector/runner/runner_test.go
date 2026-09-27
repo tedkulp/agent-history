@@ -530,11 +530,11 @@ func cwdLine(cwd string) string { return `{"type":"user","cwd":"` + cwd + `"}` +
 
 func excludeFilter(t *testing.T) *exclude.Filter {
 	t.Helper()
-	x, err := exclude.New([]string{"/Users/ted/src/secret/**"})
+	filter, err := exclude.New([]string{"/Users/ted/src/secret/**"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return x
+	return filter
 }
 
 func TestExcludedSessionNeverLeavesMachine(t *testing.T) {
@@ -585,10 +585,10 @@ func TestExcludedSessionNeverLeavesMachine(t *testing.T) {
 
 func TestEmptySessionWaitsForCwd(t *testing.T) {
 	for _, c := range []struct {
-		name   string
-		cwd    string
-		ships  bool
-		noWait bool
+		name       string
+		cwd        string
+		ships      bool
+		rescanOnly bool
 	}{
 		{"not excluded, watched", "/Users/ted/src/app", true, false},
 		{"excluded, watched", "/Users/ted/src/secret/app", false, false},
@@ -601,7 +601,7 @@ func TestEmptySessionWaitsForCwd(t *testing.T) {
 			f.write(attach, "result\n")
 			cfg := f.config()
 			cfg.Exclude = excludeFilter(t)
-			if c.noWait {
+			if c.rescanOnly {
 				cfg.NoWatch = true
 				cfg.RescanInterval = 50 * time.Millisecond
 			}
