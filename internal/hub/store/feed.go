@@ -33,7 +33,7 @@ type FeedFilter struct {
 	Machine string
 	Source  string
 	Project *string // nil = any; "" = No project
-	Before  *Cursor // only rows after this one in feed order
+	Before  *Cursor // only rows older than this one (later in feed order)
 }
 
 // Cursor is the position of a feed row: its last_activity_at, with the id

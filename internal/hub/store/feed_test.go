@@ -9,14 +9,15 @@ import (
 	"github.com/tedkulp/agent-history/protocol"
 )
 
-// feedFixture holds two Machines with Sessions across Sources and Projects.
+// feedSession is one Session row seeded straight into the database.
 type feedSession struct {
 	machine, source, project string // project "" = No project
 	last                     int64
-	parent                   bool // a Child Session
+	child                    bool
 	unparsed                 bool
 }
 
+// seedFeed seeds Sessions on m1 ("laptop") and m2-0123456789 (no name).
 func seedFeed(t *testing.T, ss []feedSession) *Store {
 	t.Helper()
 	s, _ := openParsing(t)
@@ -26,7 +27,7 @@ func seedFeed(t *testing.T, ss []feedSession) *Store {
 	}
 	for i, f := range ss {
 		var parent any
-		if f.parent {
+		if f.child {
 			parent = 1
 		}
 		var parsed any = int64(1)
@@ -63,7 +64,7 @@ func TestFeedFilters(t *testing.T) {
 		{machine: "m1", source: "codex", project: "/Users/ted/src/app", last: 200},           // 2
 		{machine: "m1", source: "claude-code", last: 300},                                    // 3: No project
 		{machine: "m2-0123456789", source: "claude-code", project: "/home/x/app", last: 400}, // 4
-		{machine: "m1", source: "claude-code", last: 500, parent: true},                      // 5: child
+		{machine: "m1", source: "claude-code", last: 500, child: true},                       // 5: child
 		{machine: "m1", source: "opencode", last: 600, unparsed: true},                       // 6: never parsed
 	})
 	ctx := context.Background()
@@ -130,7 +131,7 @@ func TestFeedChips(t *testing.T) {
 		{machine: "m1", source: "codex", project: "/Users/ted/src/app", last: 200},
 		{machine: "m1", source: "claude-code", last: 300},
 		{machine: "m1", source: "claude-code", project: "/Users/ted/src/lib", last: 50},
-		{machine: "m1", source: "opencode", project: "/Users/ted/src/lib", last: 999, parent: true},
+		{machine: "m1", source: "opencode", project: "/Users/ted/src/lib", last: 999, child: true},
 		{machine: "m2-0123456789", source: "claude-code", project: "/home/x/app", last: 400},
 	})
 	ctx := context.Background()

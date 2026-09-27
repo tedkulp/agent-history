@@ -108,7 +108,7 @@ func (p feedParams) filter() store.FeedFilter {
 	return f
 }
 
-// url is the feed URL for p, with extra params appended in order.
+// url is the feed URL for p plus the extra key/value params.
 func (p feedParams) url(extra ...string) string {
 	v := url.Values{}
 	for k, val := range map[string]string{"machine": p.Machine, "project": p.Project, "source": p.Source} {
@@ -149,12 +149,12 @@ func (s *server) feed(w http.ResponseWriter, r *http.Request) {
 		p.Project = ""
 	}
 	f := p.filter()
-	after := ""
+	continuesDay := ""
 	if at, err := strconv.ParseInt(q.Get("before"), 10, 64); err == nil {
 		// before_id breaks ties; without it, before is strict.
 		id, _ := strconv.ParseInt(q.Get("before_id"), 10, 64)
 		f.Before = &store.Cursor{At: at, ID: id}
-		after = dayLabel(time.UnixMilli(at).In(s.now().Location()), s.now())
+		continuesDay = dayLabel(time.UnixMilli(at).In(s.now().Location()), s.now())
 	}
 	rows, err := s.store.Feed(r.Context(), f, feedPageSize+1)
 	if err != nil {
@@ -167,7 +167,7 @@ func (s *server) feed(w http.ResponseWriter, r *http.Request) {
 		last := rows[len(rows)-1]
 		v.More = p.url("before", strconv.FormatInt(last.LastActivityAt, 10), "before_id", strconv.FormatInt(last.ID, 10))
 	}
-	v.Days = groupByDay(rows, s.now(), after)
+	v.Days = groupByDay(rows, s.now(), continuesDay)
 	if r.Header.Get("HX-Request") == "true" {
 		s.render(w, r, http.StatusOK, feedRows(v))
 		return
@@ -192,28 +192,18 @@ func (s *server) chips(ctx context.Context, p feedParams) ([]chipRow, error) {
 	}
 	mrow := chipRow{Label: "Machine"}
 	for _, m := range machines {
-		c := chip{Label: m.Label, Title: m.ID, On: m.ID == p.Machine}
-		q := p
-		q.Project = ""
-		if c.On {
-			q.Machine = ""
-		} else {
-			q.Machine = m.ID
-		}
-		c.Href = q.url()
-		mrow.Chips = append(mrow.Chips, c)
+		mrow.Chips = append(mrow.Chips, toggle(chip{Label: m.Label, Title: m.ID}, p.Machine, m.ID, func(v string) feedParams {
+			// A Project belongs to one Machine, so switching Machine drops it.
+			return feedParams{Machine: v, Source: p.Source}
+		}))
 	}
 	srow := chipRow{Label: "Source"}
 	for _, src := range sources {
-		c := chip{Label: src, On: src == p.Source}
-		q := p
-		if c.On {
-			q.Source = ""
-		} else {
-			q.Source = src
-		}
-		c.Href = q.url()
-		srow.Chips = append(srow.Chips, c)
+		srow.Chips = append(srow.Chips, toggle(chip{Label: src}, p.Source, src, func(v string) feedParams {
+			q := p
+			q.Source = v
+			return q
+		}))
 	}
 	rows := []chipRow{mrow, srow}
 	if p.Machine == "" {
@@ -225,25 +215,33 @@ func (s *server) chips(ctx context.Context, p feedParams) ([]chipRow, error) {
 	}
 	prow := chipRow{Label: "Project"}
 	for _, pc := range projects {
-		key := projectParam(pc.Cwd)
-		c := chip{Count: pc.Sessions, On: key == p.Project}
+		c := chip{Count: pc.Sessions}
 		c.Label, c.Title = projectName(pc.Cwd)
-		q := p
-		if c.On {
-			q.Project = ""
-		} else {
-			q.Project = key
-		}
-		c.Href = q.url()
-		prow.Chips = append(prow.Chips, c)
+		prow.Chips = append(prow.Chips, toggle(c, p.Project, projectParam(pc.Cwd), func(v string) feedParams {
+			q := p
+			q.Project = v
+			return q
+		}))
 	}
 	return append(rows, prow), nil
 }
 
+// toggle completes chip c for the value val of a param now set to cur. The
+// chip is on when cur is val, and links to with("") to turn it off; otherwise
+// it links to with(val).
+func toggle(c chip, cur, val string, with func(string) feedParams) chip {
+	c.On = cur == val
+	if c.On {
+		val = ""
+	}
+	c.Href = with(val).url()
+	return c
+}
+
 // groupByDay groups feed rows (newest first) under "Today", "Yesterday" or
-// their date. A first group on the day named by after gets no label, since it
-// continues the previous page.
-func groupByDay(rows []store.FeedRow, now time.Time, after string) []feedDay {
+// their date. A first group on the day labelled continuesDay gets no label,
+// since it continues the previous page.
+func groupByDay(rows []store.FeedRow, now time.Time, continuesDay string) []feedDay {
 	var (
 		days []feedDay
 		cur  string
@@ -253,7 +251,7 @@ func groupByDay(rows []store.FeedRow, now time.Time, after string) []feedDay {
 		label := dayLabel(t, now)
 		if len(days) == 0 || label != cur {
 			d := feedDay{Label: label}
-			if len(days) == 0 && label == after {
+			if len(days) == 0 && label == continuesDay {
 				d.Label = ""
 			}
 			days = append(days, d)

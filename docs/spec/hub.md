@@ -89,7 +89,7 @@ All on one listener, plain HTTP.
 
 | Route | Serves |
 |---|---|
-| `GET /` | Home: the feed, or search results when `q` is set. Query params: `q`, `machine`, `project`, `source`, `warnings=1`, `before` (feed/search cursor). |
+| `GET /` | Home: the feed, or search results when `q` is set. Query params: `q`, `machine`, `project` (`-` = "No project"), `source`, `warnings=1`, `before` and `before_id` (feed/search cursor). |
 | `GET /sessions/{id}` | A Transcript page. Optional `hl=<terms>` highlights search terms. Messages carry anchors `#m-<message id>`. |
 | `GET /sessions/{id}/parts/{part id}/output` | htmx fragment: the full output of one Tool call |
 | `GET /blobs/{sha256}` | An image blob with its stored MIME type and `Cache-Control: public, max-age=31536000, immutable` |
@@ -286,7 +286,7 @@ CREATE TABLE sessions (
   parse_attempted_version INTEGER,  -- version of the last attempt, successful or not
   UNIQUE (machine_id, source, native_id)
 );
-CREATE INDEX sessions_feed    ON sessions(last_activity_at DESC) WHERE parent_session_id IS NULL;
+CREATE INDEX sessions_feed    ON sessions(coalesce(last_activity_at, 0) DESC, id DESC) WHERE parent_session_id IS NULL;
 CREATE INDEX sessions_project ON sessions(machine_id, project_cwd);
 CREATE INDEX sessions_parent  ON sessions(parent_session_id);
 ```
@@ -582,7 +582,7 @@ The UI is **search-first**: a search box over a feed of recent Sessions from eve
 - **Feed**: top-level Sessions (`parent_session_id IS NULL`) that have been parsed (`parsed_at IS NOT NULL`) **or** have failed (`parse_status = 'failed'`), matching the chips, newest `last_activity_at` first, grouped by day: "Today", "Yesterday", then the date.
   - A Session whose parse failed and that never parsed successfully has no title or first prompt. Its row shows the native id and a **"parse failed"** badge, and links to its Transcript page, which shows only the failure note. So a parser bug can't hide a Session.
 - Each row: last-activity time, title, `first_prompt` (one line, truncated), a Source badge, and Machine › Project. The row links to `/sessions/{id}`.
-- 50 rows per page. A "Load more" button fetches the next page with htmx (`before=<last_activity_at of the last row>`).
+- 50 rows per page. A "Load more" button fetches the next page with htmx (`before=<last_activity_at of the last row>&before_id=<its id>`; the id breaks ties so paging neither skips nor repeats rows).
 - **Banners** above the feed:
   - **Re-parse**: "Re-parsing N Sessions…" while priority 1 rows remain in `parse_queue`. N is the current count.
   - **Drift**: one banner per `(source, source_version)` with warnings, e.g. "Codex 0.52: 14 Sessions have unrecognised data". It shows only when at least one Session active in the last **7 days** has warnings for that pair, so old noise fades. It links to `/?warnings=1&source=<source>`.
