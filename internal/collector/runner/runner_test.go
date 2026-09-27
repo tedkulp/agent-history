@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/tedkulp/agent-history/internal/collector/cache"
+	"github.com/tedkulp/agent-history/internal/collector/exclude"
 	"github.com/tedkulp/agent-history/internal/collector/hubclient"
 	"github.com/tedkulp/agent-history/internal/collector/source/claudecode"
 	"github.com/tedkulp/agent-history/internal/hub/api"
@@ -508,5 +509,120 @@ func TestBackoff(t *testing.T) {
 	}
 	if d := backoff(40, lo, hi); d < hi/2 || d > hi {
 		t.Fatalf("backoff(40) = %v, want capped at %v", d, hi)
+	}
+}
+
+// onHub reports whether the Hub holds any version of rel.
+func (f *fixture) onHub(rel string) bool {
+	m, err := f.store.Manifest(context.Background(), machine, "")
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	for _, r := range m {
+		if r.RecordKey == rel {
+			return true
+		}
+	}
+	return false
+}
+
+func cwdLine(cwd string) string { return `{"type":"user","cwd":"` + cwd + `"}` + "\n" }
+
+func excludeFilter(t *testing.T) *exclude.Filter {
+	t.Helper()
+	x, err := exclude.New([]string{"/Users/ted/src/secret/**"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return x
+}
+
+func TestExcludedSessionNeverLeavesMachine(t *testing.T) {
+	f := newFixture(t)
+	secretProj := "-Users-ted-src-secret-app"
+	secret := secretProj + "/" + sess + ".jsonl"
+	secretFiles := []string{
+		secret,
+		secretProj + "/" + sess + "/subagents/agent-a1.jsonl",
+		secretProj + "/" + sess + "/subagents/agent-a1.meta.json",
+		secretProj + "/" + sess + "/tool-results/toolu_01.txt",
+		secretProj + "/" + sess + "/custom-title.json",
+	}
+	open := proj + "/" + sess2 + ".jsonl"
+	openChild := proj + "/" + sess2 + "/subagents/agent-b1.jsonl"
+	f.write(secret, cwdLine("/Users/ted/src/secret/app"))
+	for _, k := range secretFiles[1:] {
+		// A Child Session's own cwd doesn't save it.
+		f.write(k, cwdLine("/Users/ted/src/app"))
+	}
+	f.write(open, cwdLine("/Users/ted/src/app"))
+	f.write(openChild, cwdLine("/Users/ted/src/secret/app"))
+
+	cfg := f.config()
+	cfg.Exclude = excludeFilter(t)
+	cfg.RescanInterval = 50 * time.Millisecond
+	f.start(cfg)
+	waitFor(t, 5*time.Second, "the open Session to ship", func() bool { return f.hubHas(open) && f.hubHas(openChild) })
+
+	// Live changes to the excluded Session, and a new excluded Session.
+	f.appendLine(secret, `{"n":2}`)
+	f.appendLine(secretFiles[1], `{"n":2}`)
+	newSecret := "-Users-ted-src-secret-other/" + sess2 + ".jsonl"
+	f.write(newSecret, cwdLine("/Users/ted/src/secret/other"))
+	f.appendLine(open, `{"n":2}`)
+	waitFor(t, 5*time.Second, "the open Session's change to ship", func() bool { return f.hubHas(open) })
+	time.Sleep(200 * time.Millisecond) // a few rescans and debounces
+
+	for _, k := range append(secretFiles, newSecret) {
+		if f.onHub(k) {
+			t.Errorf("excluded record %s reached the Hub", k)
+		}
+	}
+	if n := cfg.Exclude.Count(protocol.SourceClaudeCode); n != len(secretFiles)+1 {
+		t.Errorf("excluded count = %d, want %d", n, len(secretFiles)+1)
+	}
+}
+
+func TestEmptySessionWaitsForCwd(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		cwd    string
+		ships  bool
+		noWait bool
+	}{
+		{"not excluded, watched", "/Users/ted/src/app", true, false},
+		{"excluded, watched", "/Users/ted/src/secret/app", false, false},
+		{"not excluded, rescan only", "/Users/ted/src/app", true, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t)
+			attach := proj + "/" + sess + "/tool-results/toolu_01.txt"
+			f.write(key, "")
+			f.write(attach, "result\n")
+			cfg := f.config()
+			cfg.Exclude = excludeFilter(t)
+			if c.noWait {
+				cfg.NoWatch = true
+				cfg.RescanInterval = 50 * time.Millisecond
+			}
+			f.start(cfg)
+			marker := proj + "/" + sess2 + ".jsonl"
+			f.write(marker, cwdLine("/Users/ted/src/app"))
+			waitFor(t, 5*time.Second, "another Session to ship", func() bool { return f.hubHas(marker) })
+			time.Sleep(100 * time.Millisecond)
+			if f.onHub(key) || f.onHub(attach) {
+				t.Fatal("a Session was shipped before its cwd was readable")
+			}
+
+			f.appendLine(key, strings.TrimSuffix(cwdLine(c.cwd), "\n"))
+			if c.ships {
+				waitFor(t, 5*time.Second, "the Session and its attachment to ship", func() bool { return f.hubHas(key) && f.hubHas(attach) })
+				return
+			}
+			time.Sleep(300 * time.Millisecond)
+			if f.onHub(key) || f.onHub(attach) {
+				t.Fatal("an excluded Session was shipped once its cwd was readable")
+			}
+		})
 	}
 }

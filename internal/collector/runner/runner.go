@@ -17,6 +17,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/tedkulp/agent-history/internal/collector/cache"
+	"github.com/tedkulp/agent-history/internal/collector/exclude"
 	"github.com/tedkulp/agent-history/internal/collector/hubclient"
 	"github.com/tedkulp/agent-history/internal/collector/reconcile"
 	"github.com/tedkulp/agent-history/internal/collector/source"
@@ -37,6 +38,9 @@ type Config struct {
 	Sources []Source
 	Cache   *cache.Cache
 	Log     *slog.Logger
+	// Exclude holds back Sessions by starting cwd (collector.md §4.6).
+	// Nil excludes nothing.
+	Exclude *exclude.Filter
 
 	RescanInterval time.Duration // 10m
 	// NoWatch turns off fsnotify, leaving the rescan to find changes.
@@ -77,6 +81,14 @@ type pending struct {
 	src         string
 	rec         source.Record
 	first, last time.Time
+}
+
+// waiter is a record whose exclude decision waits for its Session's cwd
+// to become readable.
+type waiter struct {
+	src    Source
+	layout source.Layout
+	rec    source.Record
 }
 
 // fileStat is the change signal of a record's file.
@@ -121,6 +133,7 @@ type runner struct {
 	inFlight   map[string]bool
 	failed     map[string]fileStat
 	unreadable map[string]bool
+	waiting    map[string]waiter
 
 	online        bool
 	needReconcile bool
@@ -148,6 +161,7 @@ func Run(ctx context.Context, cfg Config) error {
 		inFlight:      map[string]bool{},
 		failed:        map[string]fileStat{},
 		unreadable:    map[string]bool{},
+		waiting:       map[string]waiter{},
 		needReconcile: true,
 		watched:       map[string]bool{},
 		watchWarned:   map[string]bool{},
@@ -351,14 +365,14 @@ func (r *runner) handleResult(res result) {
 }
 
 func (r *runner) startReconcile(ctx, uploadCtx context.Context) {
+	// The reconcile covers every record on disk; events from now on mark
+	// records dirty again, as does discover for records it stops waiting on.
+	clear(r.dirty)
 	sources, infos := r.discover()
 	r.updateWatches()
 	info := r.Info
 	info.Sources = infos
 	r.reconciling = true
-	// The reconcile covers every record on disk; events from now on
-	// mark records dirty again.
-	clear(r.dirty)
 	opts := reconcile.Options{Cache: r.Cache, Log: r.Log, Stop: ctx.Done()}
 	go func() {
 		start := time.Now()
@@ -470,6 +484,7 @@ func (r *runner) discover() ([]reconcile.Source, []protocol.SourceInfo) {
 			r.detected = append(r.detected, s)
 			src := reconcile.Source{ID: a.ID()}
 			ok := true
+			present := map[string]bool{}
 			for _, l := range a.Layouts() {
 				recs, err := l.Discover(s.Root)
 				if err != nil {
@@ -478,9 +493,20 @@ func (r *runner) discover() ([]reconcile.Source, []protocol.SourceInfo) {
 					break
 				}
 				si.Layouts = append(si.Layouts, l.Name())
-				src.Records = append(src.Records, recs...)
+				for _, rec := range recs {
+					present[rec.Key] = true
+					if r.shippable(s, l, rec) {
+						src.Records = append(src.Records, rec)
+					}
+				}
 			}
 			if ok {
+				r.Exclude.Forget(a.ID(), present)
+				for k, w := range r.waiting {
+					if w.src.Adapter.ID() == a.ID() && !present[w.rec.Key] {
+						delete(r.waiting, k)
+					}
+				}
 				sources = append(sources, src)
 			}
 		}
@@ -579,14 +605,46 @@ func (r *runner) handleEvent(ev fsnotify.Event) {
 	r.claim(s, ev.Name)
 }
 
-// claim marks the record at path dirty when one of s's Layouts claims it.
+// claim marks the record at path dirty when one of s's Layouts claims it
+// and exclude lets it leave the Machine.
 func (r *runner) claim(s Source, path string) {
 	for _, l := range s.Adapter.Layouts() {
 		if rec, ok := l.Claims(s.Root, path); ok {
-			r.markDirty(s.Adapter.ID(), rec)
+			if r.shippable(s, l, rec) {
+				r.markDirty(s.Adapter.ID(), rec)
+			}
 			return
 		}
 	}
+}
+
+// shippable asks exclude about rec. A record whose Session's cwd can't be
+// read yet waits; once rec is decided, records waiting on it as their
+// Parent are asked again.
+func (r *runner) shippable(s Source, l source.Layout, rec source.Record) bool {
+	id := s.Adapter.ID()
+	k := cache.Key(id, rec.Key)
+	excluded, known := r.Exclude.Excluded(id, l, s.Root, rec)
+	if !known {
+		r.waiting[k] = waiter{s, l, rec}
+		return false
+	}
+	delete(r.waiting, k)
+	for wk, w := range r.waiting {
+		if w.src.Adapter.ID() != id {
+			continue
+		}
+		if p, ok := w.layout.Parent(s.Root, w.rec); !ok || p.Key != rec.Key {
+			continue
+		}
+		if ex, ok := r.Exclude.Excluded(id, w.layout, s.Root, w.rec); ok {
+			delete(r.waiting, wk)
+			if !ex {
+				r.markDirty(id, w.rec)
+			}
+		}
+	}
+	return !excluded
 }
 
 func (r *runner) sourceFor(path string) (Source, bool) {

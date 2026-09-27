@@ -29,6 +29,12 @@ type Layout interface {
 	// Claims returns the Raw record held at path, an absolute path under
 	// root, when this Layout claims it.
 	Claims(root, path string) (Record, bool)
+	// StartCwd is the starting cwd of a Session's record, read cheaply from
+	// metadata, or empty while it can't be read yet. Used only for exclude.
+	StartCwd(rec Record) (string, error)
+	// Parent is the record rec belongs to: a Child Session's parent, or an
+	// attachment's main. Used only for exclude.
+	Parent(root string, rec Record) (Record, bool)
 }
 
 // Record is one discovered Raw record.

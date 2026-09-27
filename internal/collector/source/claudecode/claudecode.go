@@ -3,6 +3,10 @@
 package claudecode
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -88,4 +92,52 @@ func (jsonlLayout) Claims(root, path string) (source.Record, bool) {
 		return source.Record{}, false
 	}
 	return source.Record{Key: key, Path: path}, true
+}
+
+// sessionPrefix is <project>/<session> at the start of a Record key.
+var sessionPrefix = regexp.MustCompile(`^[^/]+/` + uuid)
+
+// Parent maps every record other than <project>/<session>.jsonl to that
+// Session's <project>/<session>.jsonl (adapter spec §2.4). Sub-agent files
+// are filed flat under the top-level Session, so they map there too.
+func (jsonlLayout) Parent(root string, rec source.Record) (source.Record, bool) {
+	prefix := sessionPrefix.FindString(rec.Key)
+	if prefix == "" || rec.Key == prefix+".jsonl" {
+		return source.Record{}, false
+	}
+	key := prefix + ".jsonl"
+	return source.Record{Key: key, Path: filepath.Join(root, filepath.FromSlash(key))}, true
+}
+
+// startCwdLimit is how far into a Session file StartCwd reads.
+const startCwdLimit = 64 << 10
+
+// StartCwd is the cwd field of the first complete line that has one,
+// within the first 64 KiB (adapter spec §2.4).
+func (jsonlLayout) StartCwd(rec source.Record) (string, error) {
+	f, err := os.Open(rec.Path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	r := bufio.NewReader(io.LimitReader(f, startCwdLimit))
+	for {
+		line, err := r.ReadBytes('\n')
+		if err == io.EOF {
+			// A line without its \n may still be being written.
+			return "", nil
+		}
+		if err != nil {
+			return "", err
+		}
+		if !bytes.Contains(line, []byte(`"cwd"`)) {
+			continue
+		}
+		var v struct {
+			Cwd string `json:"cwd"`
+		}
+		if json.Unmarshal(line, &v) == nil && v.Cwd != "" {
+			return v.Cwd, nil
+		}
+	}
 }

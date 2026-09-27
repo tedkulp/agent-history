@@ -4,7 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+
+	"github.com/tedkulp/agent-history/internal/collector/source"
 )
 
 const sess = "5f1c9a2e-8d1b-4f7a-9c2e-5b0d7e1a90e2"
@@ -95,5 +98,55 @@ func TestClaims(t *testing.T) {
 		if _, ok := (jsonlLayout{}).Claims(root, p); ok {
 			t.Errorf("Claims(%q) = true", p)
 		}
+	}
+}
+
+func TestParent(t *testing.T) {
+	root := "/r/a"
+	proj := "-Users-ted-src-app"
+	main := proj + "/" + sess + ".jsonl"
+	for _, k := range []string{
+		proj + "/" + sess + "/subagents/agent-a1b2c3.jsonl",
+		proj + "/" + sess + "/subagents/agent-a1b2c3.meta.json",
+		proj + "/" + sess + "/tool-results/toolu_01.txt",
+		proj + "/" + sess + "/tool-results/p1/page-1.jpg",
+		proj + "/" + sess + "/custom-title.json",
+		proj + "/" + sess + ".orphaned-1790000000-ab12.jsonl",
+		proj + "/" + sess + ".jsonl.superseded-1790000000",
+	} {
+		p, ok := jsonlLayout{}.Parent(root, source.Record{Key: k, Path: root + "/" + k})
+		if !ok || p.Key != main || p.Path != filepath.Join(root, main) {
+			t.Errorf("Parent(%q) = %+v, %v; want %q", k, p, ok, main)
+		}
+	}
+	if p, ok := (jsonlLayout{}).Parent(root, source.Record{Key: main, Path: root + "/" + main}); ok {
+		t.Errorf("Parent(main) = %+v, want none", p)
+	}
+}
+
+func TestStartCwd(t *testing.T) {
+	dir := t.TempDir()
+	cwdOf := func(body string) (string, error) {
+		t.Helper()
+		p := filepath.Join(dir, "s.jsonl")
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return jsonlLayout{}.StartCwd(source.Record{Key: "s.jsonl", Path: p})
+	}
+	for _, c := range []struct{ name, body, want string }{
+		{"empty", "", ""},
+		{"first line", `{"type":"user","cwd":"/Users/ted/src/app"}` + "\n", "/Users/ted/src/app"},
+		{"skips lines without cwd", `{"type":"summary"}` + "\n" + `not json` + "\n" + `{"cwd":""}` + "\n" + `{"cwd":"/a"}` + "\n" + `{"cwd":"/b"}` + "\n", "/a"},
+		{"partial line waits", `{"type":"user","cwd":"/Users/ted/src/app"`, ""},
+		{"past 64 KiB", `{"pad":"` + strings.Repeat("x", 64<<10) + `"}` + "\n" + `{"cwd":"/a"}` + "\n", ""},
+	} {
+		got, err := cwdOf(c.body)
+		if err != nil || got != c.want {
+			t.Errorf("%s: StartCwd = %q, %v; want %q", c.name, got, err, c.want)
+		}
+	}
+	if _, err := (jsonlLayout{}).StartCwd(source.Record{Key: "x", Path: filepath.Join(dir, "missing.jsonl")}); err == nil {
+		t.Error("missing file: no error")
 	}
 }

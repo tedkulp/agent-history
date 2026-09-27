@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -19,6 +18,7 @@ import (
 	"github.com/tedkulp/agent-history/internal/buildinfo"
 	"github.com/tedkulp/agent-history/internal/collector/cache"
 	"github.com/tedkulp/agent-history/internal/collector/config"
+	"github.com/tedkulp/agent-history/internal/collector/exclude"
 	"github.com/tedkulp/agent-history/internal/collector/hubclient"
 	"github.com/tedkulp/agent-history/internal/collector/runner"
 	"github.com/tedkulp/agent-history/internal/collector/source"
@@ -83,10 +83,9 @@ func run() error {
 	for _, k := range cfg.Unknown {
 		log.Warn("unknown config key ignored", "key", k)
 	}
-	// Shipping records that exclude should hold back would leak them, so
-	// refuse until exclude filtering exists.
-	if len(cfg.Exclude) > 0 {
-		return errors.New("exclude is not supported by this Collector yet; remove it from the config to run")
+	excl, err := exclude.New(cfg.Exclude)
+	if err != nil {
+		return err
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -116,6 +115,7 @@ func run() error {
 		Sources:        sources,
 		Cache:          cache.Load(filepath.Join(dir, "cache.json"), cfg.HubURL, log),
 		Log:            log,
+		Exclude:        excl,
 		RescanInterval: cfg.RescanInterval,
 	})
 }
