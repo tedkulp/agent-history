@@ -15,6 +15,7 @@ type feedSession struct {
 	last                     int64
 	child                    bool
 	unparsed                 bool
+	empty                    bool // parsed with no Messages
 }
 
 // seedFeed seeds Sessions on m1 ("laptop") and m2-0123456789 (no name).
@@ -44,6 +45,11 @@ func seedFeed(t *testing.T, ss []feedSession) *Store {
 			i+1, f.machine, f.source, fmt.Sprint("n", i+1), fmt.Sprint("t", i+1), f.last, project, parent, parsed); err != nil {
 			t.Fatal(err)
 		}
+		if !f.empty {
+			if _, err := s.write.Exec(`INSERT INTO messages (session_id, id, ordinal, role) VALUES (?, 'm0', 0, 'user')`, i+1); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 	return s
 }
@@ -66,6 +72,7 @@ func TestFeedFilters(t *testing.T) {
 		{machine: "m2-0123456789", source: "claude-code", project: "/home/x/app", last: 400}, // 4
 		{machine: "m1", source: "claude-code", last: 500, child: true},                       // 5: child
 		{machine: "m1", source: "opencode", last: 600, unparsed: true},                       // 6: never parsed
+		{machine: "m1", source: "codex-empty", last: 700, empty: true},                       // 7: no Messages
 	})
 	ctx := context.Background()
 	cases := []struct {
@@ -89,6 +96,10 @@ func TestFeedFilters(t *testing.T) {
 		if got := ids(rows); !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%s: ids = %v, want %v", c.name, got, c.want)
 		}
+	}
+
+	if sources, _ := s.FeedSources(ctx); !reflect.DeepEqual(sources, []string{"claude-code", "codex"}) {
+		t.Errorf("sources = %v; a Session with no Messages has no chip", sources)
 	}
 
 	rows, _ := s.Feed(ctx, FeedFilter{}, 50)

@@ -579,7 +579,8 @@ The UI is **search-first**: a search box over a feed of recent Sessions from eve
   - A **Source** row: one chip per Source that has Sessions.
   - Picking a Machine reveals that Machine's **Project** chips with Session counts (`GROUP BY project_cwd`), plus "No project". This is the Machine → Project → Session browse path.
   - A **"has warnings"** chip: Sessions with any `parse_warnings` row, or with `parse_status = 'failed'`.
-- **Feed**: top-level Sessions (`parent_session_id IS NULL`) that have been parsed (`parsed_at IS NOT NULL`) **or** have failed (`parse_status = 'failed'`), matching the chips, newest `last_activity_at` first, grouped by day: "Today", "Yesterday", then the date.
+- **Feed**: top-level Sessions (`parent_session_id IS NULL`) that have been parsed (`parsed_at IS NOT NULL`) with at least one Message, **or** have failed (`parse_status = 'failed'`), matching the chips, newest `last_activity_at` first, grouped by day: "Today", "Yesterday", then the date.
+  - A parsed Session with no Messages (a launch where nothing happened, such as only `/model`) is left out of the feed and its chip counts. Its page still opens by URL.
   - A Session whose parse failed and that never parsed successfully has no title or first prompt. Its row shows the native id and a **"parse failed"** badge, and links to its Transcript page, which shows only the failure note. So a parser bug can't hide a Session.
 - Each row: last-activity time, title, `first_prompt` (one line, truncated), a Source badge, and Machine › Project. The row links to `/sessions/{id}`.
 - 50 rows per page. A "Load more" button fetches the next page with htmx (`before=<last_activity_at of the last row>&before_id=<its id>`; the id breaks ties so paging neither skips nor repeats rows).

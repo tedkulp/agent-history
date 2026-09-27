@@ -28,8 +28,11 @@ type FeedRow struct {
 // the id (hub.md §3.2).
 const machineLabel = `coalesce(nullif(m.display_name, ''), nullif(m.hostname, ''), substr(m.id, 1, 8))`
 
-// feedVisible selects the Sessions the feed lists: parsed top-level ones.
-const feedVisible = `s.parent_session_id IS NULL AND s.parsed_at IS NOT NULL`
+// feedVisible selects the Sessions the feed lists: parsed top-level ones with
+// at least one Message. A launch where nothing happened (say, only /model)
+// parses to no Messages and would be a blank row (hub.md §4.7).
+const feedVisible = `s.parent_session_id IS NULL AND s.parsed_at IS NOT NULL
+	AND EXISTS (SELECT 1 FROM messages msg WHERE msg.session_id = s.id)`
 
 // FeedFilter narrows the feed to the active chips (hub.md §4.7). Empty fields
 // don't filter.
