@@ -19,7 +19,7 @@ import (
 
 // version is the parser_version. Bump it whenever output changes for
 // existing data (hub.md §4.5).
-const version = 4
+const version = 5
 
 const (
 	layout     = "jsonl"
@@ -333,7 +333,55 @@ func transcriptPath(lines []*line, isChild bool, warn *parser.Warnings) []*line 
 	for i, j := 0, len(path)-1; i < j; i, j = i+1, j-1 {
 		path[i], path[j] = path[j], path[i]
 	}
-	return path
+	return withSideResults(lines, path, isChild)
+}
+
+// withSideResults splices in the tool results the path leaves out. Claude
+// Code chains parallel calls one onto the next, so each call's result but the
+// last hangs off the path as a side branch. A side line holding only
+// tool_results, whose parent is on the path, goes right after that parent when
+// it answers a call no path line does (claude-code.md §3.2 step 6).
+func withSideResults(lines, path []*line, isChild bool) []*line {
+	onPath := map[*line]bool{}
+	answered := map[string]bool{}
+	for _, l := range path {
+		onPath[l] = true
+		for _, bl := range userBlocks(l) {
+			if isToolResult(bl) {
+				answered[bl.ToolUseID] = true
+			}
+		}
+	}
+	side := map[string][]*line{} // by parent uuid, in file order
+	for _, l := range lines {
+		if onPath[l] || l.Type != "user" || l.ParentUUID == nil || (!isChild && l.IsSidechain) {
+			continue
+		}
+		blocks := userBlocks(l)
+		if len(blocks) == 0 || !slices.ContainsFunc(blocks, isToolResult) ||
+			slices.ContainsFunc(blocks, func(bl block) bool { return !isToolResult(bl) }) {
+			continue
+		}
+		side[*l.ParentUUID] = append(side[*l.ParentUUID], l)
+	}
+	if len(side) == 0 {
+		return path
+	}
+	var out []*line
+	for _, l := range path {
+		out = append(out, l)
+		for _, r := range side[l.UUID] {
+			blocks := userBlocks(r)
+			if !slices.ContainsFunc(blocks, func(bl block) bool { return !answered[bl.ToolUseID] }) {
+				continue
+			}
+			for _, bl := range blocks {
+				answered[bl.ToolUseID] = true
+			}
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // builder turns path lines into Messages (claude-code.md §3.3, §3.4).

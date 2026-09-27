@@ -116,8 +116,9 @@ Lines form a tree through `uuid` → `parentUuid`. The Transcript is the path fr
 3. If that root line has a `logicalParentUuid` (a compaction boundary), continue the walk from that uuid. The `compact_boundary` line becomes a `compaction` marker at that point.
 4. If a `parentUuid` names a uuid that isn't in the file, stop there and record an `orphan` warning (`source_type` `parentUuid`).
 5. Reverse the collected lines. That is the Transcript order.
+6. Splice in **side results**. Claude Code chains parallel tool calls one onto the next, so the result of every call but the last hangs off the path as a side branch. A line not on the path that holds only `tool_result` blocks, and whose `parentUuid` is on the path, goes right after that parent. The exception is when every call it answers already has a result on the path.
 
-Lines not on the path (abandoned branches after `/rewind` or a retry, old inline sidechains) stay in the Raw record only.
+Other lines not on the path (abandoned branches after `/rewind` or a retry, old inline sidechains) stay in the Raw record only.
 
 Source: [Normalized Transcript model](https://github.com/tedkulp/agent-history/issues/9); the leaf rule and the compaction walk filled in while writing this spec
 
@@ -140,7 +141,7 @@ In a `user` Message: a string content is one `text` Part. In a block list, `text
 
 **`assistant` lines**
 
-Claude Code writes **one line per content block**, all sharing the same `message.id`. Consecutive path lines with the same `message.id` form **one** assistant Message. A user line holding only `tool_result` blocks doesn't break the run: with parallel tool calls, each `tool_use` line is followed by its result before the next block's line. Any other user line does.
+Claude Code writes **one line per content block**, all sharing the same `message.id`. Consecutive path lines with the same `message.id` form **one** assistant Message. A user line holding only `tool_result` blocks doesn't break the run: with parallel tool calls, the results sit between the `tool_use` lines (§3.2 step 6). Any other user line does.
 
 | Block | Part |
 |---|---|

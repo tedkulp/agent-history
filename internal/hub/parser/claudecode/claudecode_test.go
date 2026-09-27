@@ -760,3 +760,36 @@ func TestParseAgentCallsLinkChildSessions(t *testing.T) {
 		t.Errorf("nested child_sessions = %v", got)
 	}
 }
+
+func TestParseParallelCallResultsOffThePath(t *testing.T) {
+	call := func(uuid, parent, id string) map[string]any {
+		return asstLine(uuid, parent, "2026-09-01T10:00:01.000Z", "msg_1", map[string]any{"type": "tool_use", "id": id, "name": "Bash", "input": map[string]any{}}, nil)
+	}
+	result := func(uuid, parent, id, out string) map[string]any {
+		return userLine(uuid, parent, "2026-09-01T10:00:02.000Z", []any{map[string]any{"type": "tool_result", "tool_use_id": id, "content": out}})
+	}
+	// Claude Code chains the second parallel call onto the first, so the
+	// first call's result hangs off it as a side branch.
+	res := parse(t, jsonl(t,
+		userLine("u1", "", "2026-09-01T10:00:00.000Z", "go"),
+		call("a1", "u1", "t1"),
+		call("a2", "a1", "t2"),
+		result("r1", "a1", "t1", "one"),
+		result("r2", "a2", "t2", "two"),
+		// A side result for a call already answered on the path loses.
+		result("r2x", "a2", "t2", "stale"),
+		asstLine("a3", "r2", "2026-09-01T10:00:03.000Z", "msg_2", text("done"), nil),
+	), nil)
+	if len(res.Messages) != 3 || len(res.Messages[1].Parts) != 2 {
+		t.Fatalf("messages = %+v", res.Messages)
+	}
+	for i, want := range []string{"one", "two"} {
+		c := res.Messages[1].Parts[i].Payload.(parser.ToolCallPayload)
+		if c.Status != parser.StatusOK || c.Output == nil || *c.Output != want {
+			t.Errorf("call %s: status %q, output %v", c.CallID, c.Status, c.Output)
+		}
+	}
+	if len(res.Warnings) != 0 {
+		t.Errorf("warnings = %+v", res.Warnings)
+	}
+}
