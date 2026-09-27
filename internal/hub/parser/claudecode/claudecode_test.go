@@ -2,6 +2,8 @@ package claudecode
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -102,7 +104,16 @@ func flatten(ms []parser.Message) []flat {
 	for _, m := range ms {
 		f := flat{ID: m.ID, Role: m.Role}
 		for _, p := range m.Parts {
-			f.Texts = append(f.Texts, p.Payload.(parser.TextPayload).Text)
+			switch pl := p.Payload.(type) {
+			case parser.TextPayload:
+				f.Texts = append(f.Texts, pl.Text)
+			case parser.ToolCallPayload:
+				f.Texts = append(f.Texts, "[tool "+pl.Name+" "+pl.Status+"]")
+			case parser.ImagePayload:
+				f.Texts = append(f.Texts, "[image "+pl.MIME+"]")
+			default:
+				f.Texts = append(f.Texts, "["+p.Kind+"]")
+			}
 		}
 		out = append(out, f)
 	}
@@ -129,7 +140,7 @@ func TestParseSimpleConversation(t *testing.T) {
 
 	want := []flat{
 		{ID: "u1", Role: "user", Texts: []string{"hello <b>there</b>"}},
-		{ID: "a1", Role: "assistant", Texts: []string{"Hi!", "Done."}},
+		{ID: "a1", Role: "assistant", Texts: []string{"Hi!", "[tool Bash ok]", "Done."}},
 		{ID: "u3", Role: "user", Texts: []string{"second", "prompt"}},
 	}
 	if got := flatten(res.Messages); !reflect.DeepEqual(got, want) {
@@ -145,8 +156,8 @@ func TestParseSimpleConversation(t *testing.T) {
 	if a.Timestamp != 1788256802000 {
 		t.Errorf("assistant timestamp = %d", a.Timestamp)
 	}
-	if a.Parts[0].ID != "a1.0" || a.Parts[1].ID != "a1.1" {
-		t.Errorf("part ids = %q %q", a.Parts[0].ID, a.Parts[1].ID)
+	if a.Parts[0].ID != "a1.0" || a.Parts[2].ID != "a1.2" {
+		t.Errorf("part ids = %q %q", a.Parts[0].ID, a.Parts[2].ID)
 	}
 
 	s := res.Session
@@ -310,7 +321,7 @@ func TestParseGroupingBreaksOnRealUserLines(t *testing.T) {
 	res := parse(t, main, nil)
 	want := []flat{
 		{ID: "u1", Role: "user", Texts: []string{"go"}},
-		{ID: "a1", Role: "assistant", Texts: []string{"one"}},
+		{ID: "a1", Role: "assistant", Texts: []string{"[tool Bash ok]", "one"}},
 		{ID: "a3", Role: "assistant", Texts: []string{"two"}},
 	}
 	if got := flatten(res.Messages); !reflect.DeepEqual(got, want) {
@@ -330,5 +341,130 @@ func TestParseWarnsOnUndecodableMessage(t *testing.T) {
 	res := parse(t, jsonl(t, userLine("u1", "", "2026-09-01T10:00:00.000Z", "go"), bad), nil)
 	if len(res.Warnings) != 1 || res.Warnings[0].Kind != "missing_field" || res.Warnings[0].SourceType != "message" {
 		t.Errorf("warnings = %+v", res.Warnings)
+	}
+}
+
+// parseFixture parses testdata/<name>.jsonl with every file under
+// testdata/tool-results as a tool-results attachment.
+func parseFixture(t *testing.T, name string) parser.Result {
+	t.Helper()
+	main, err := os.ReadFile(filepath.Join("testdata", name+".jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	att := map[string][]byte{}
+	ents, _ := os.ReadDir(filepath.Join("testdata", "tool-results"))
+	for _, e := range ents {
+		b, err := os.ReadFile(filepath.Join("testdata", "tool-results", e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		att["-Users-ted-src-app/"+sess+"/tool-results/"+e.Name()] = b
+	}
+	return parse(t, main, att)
+}
+
+func TestParseToolCallsAndImages(t *testing.T) {
+	res := parseFixture(t, "tools")
+
+	want := []flat{
+		{ID: "u1", Role: "user", Texts: []string{"look at this", "[image image/png]"}},
+		{ID: "a1", Role: "assistant", Texts: []string{
+			"[tool Bash ok]", "[tool Bash error]", "[tool Edit ok]", "[tool Bash ok]", "[tool Grep ok]",
+			"[tool Read ok]", "[tool ToolSearch ok]", "[tool Screenshot ok]", "[image image/png]",
+			"Here is a chart:", "[image image/png]", "[tool Bash pending]",
+		}},
+	}
+	if got := flatten(res.Messages); !reflect.DeepEqual(got, want) {
+		t.Fatalf("messages:\n got %+v\nwant %+v", got, want)
+	}
+
+	calls := map[string]parser.ToolCallPayload{}
+	for _, p := range res.Messages[1].Parts {
+		if c, ok := p.Payload.(parser.ToolCallPayload); ok {
+			calls[c.CallID] = c
+		}
+	}
+	out := func(id string) string {
+		t.Helper()
+		if calls[id].Output == nil {
+			t.Fatalf("%s: output is nil", id)
+		}
+		return *calls[id].Output
+	}
+
+	var in struct{ Command string }
+	if c := calls["t_ok"]; c.Name != "Bash" || json.Unmarshal(c.Input, &in) != nil || in.Command != "echo <b>hi</b>" {
+		t.Errorf("t_ok = %+v", c)
+	}
+	if got := out("t_ok"); got != "<b>hi</b>" {
+		t.Errorf("t_ok output = %q", got)
+	}
+	if got := out("t_err"); got != "exit 1" {
+		t.Errorf("t_err output = %q", got)
+	}
+	if d := calls["t_edit"].Diff; d == nil || *d != (parser.Diff{Path: "/Users/ted/src/app/main.go", Old: "a\nb", New: "a\nc"}) {
+		t.Errorf("t_edit diff = %+v", d)
+	}
+	if calls["t_ok"].Diff != nil {
+		t.Error("a non-Edit call has a diff")
+	}
+	if got := out("t_spill"); got != "FULL OUTPUT of bdqdsmwk4 � end\n" {
+		t.Errorf("spilled output not stitched from the named file: %q", got)
+	}
+	if got := out("t_fallback"); got != "FULL OUTPUT of t_fallback\n" {
+		t.Errorf("spilled output not stitched from <tool_use_id>.txt: %q", got)
+	}
+	if got := out("t_missing"); !strings.HasPrefix(got, "<persisted-output>") || !strings.Contains(got, "head of output") {
+		t.Errorf("missing spill should keep the marker: %q", got)
+	}
+	if got := out("t_blocks"); got != "found\n[tool reference: Read]\ndone" {
+		t.Errorf("block-list output = %q", got)
+	}
+	if got := out("t_shot"); got != "captured" {
+		t.Errorf("t_shot output = %q", got)
+	}
+	if c := calls["t_pending"]; c.Output != nil || c.Status != "pending" {
+		t.Errorf("pending call = %+v", c)
+	}
+	for id, c := range calls {
+		if c.ChildSessions == nil || len(c.ChildSessions) != 0 {
+			t.Errorf("%s: child_sessions = %v, want []", id, c.ChildSessions)
+		}
+	}
+
+	// Three image Parts, one image: content-addressed bytes.
+	if len(res.Images) != 3 {
+		t.Fatalf("images = %d", len(res.Images))
+	}
+	img := res.Images[0]
+	if img.MIME != "image/png" || len(img.Bytes) == 0 || img.SHA256 != res.Images[2].SHA256 {
+		t.Errorf("image = %+v", img)
+	}
+	if p := res.Messages[0].Parts[1].Payload.(parser.ImagePayload); p.SHA256 != img.SHA256 {
+		t.Errorf("image Part sha = %q, want %q", p.SHA256, img.SHA256)
+	}
+
+	var orphans int
+	for _, w := range res.Warnings {
+		if w.Kind == "orphan" && w.SourceType == "tool_result" {
+			orphans = w.Count
+		}
+	}
+	if orphans != 1 {
+		t.Errorf("warnings = %+v, want one tool_result orphan", res.Warnings)
+	}
+}
+
+func TestParseResultBeforeCallDoesNotMerge(t *testing.T) {
+	// A result must come after its call on the path.
+	main := jsonl(t,
+		userLine("u1", "", "2026-09-01T10:00:00.000Z", []any{text("go"), map[string]any{"type": "tool_result", "tool_use_id": "t1", "content": "early"}}),
+		asstLine("a1", "u1", "2026-09-01T10:00:01.000Z", "msg_1", map[string]any{"type": "tool_use", "id": "t1", "name": "Bash", "input": map[string]any{}}, nil),
+	)
+	res := parse(t, main, nil)
+	c := res.Messages[1].Parts[0].Payload.(parser.ToolCallPayload)
+	if c.Status != "pending" {
+		t.Errorf("status = %q", c.Status)
 	}
 }

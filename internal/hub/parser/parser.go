@@ -6,6 +6,7 @@ package parser
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"regexp"
 	"unicode/utf8"
 )
@@ -24,7 +25,16 @@ const (
 
 // Part kinds (hub.md §3.5).
 const (
-	KindText = "text"
+	KindText     = "text"
+	KindToolCall = "tool_call"
+	KindImage    = "image"
+)
+
+// Tool call statuses.
+const (
+	StatusOK      = "ok"
+	StatusError   = "error"
+	StatusPending = "pending"
 )
 
 // Parse warning kinds (hub.md §3.6).
@@ -55,6 +65,7 @@ type Input struct {
 type Result struct {
 	Session  Session
 	Messages []Message
+	Images   []Image // the bytes of every image Part
 	Warnings []Warning
 }
 
@@ -95,6 +106,50 @@ type Part struct {
 // TextPayload is the payload of a text Part.
 type TextPayload struct {
 	Text string `json:"text"`
+}
+
+// ToolCallPayload is the payload of a tool_call Part. Parsers set Output to
+// the full output (nil while pending); the Hub sets OutputSize and
+// OutputPreview, and moves large output to tool_outputs (hub.md §3.5).
+type ToolCallPayload struct {
+	CallID        string          `json:"call_id"`
+	Name          string          `json:"name"`
+	Input         json.RawMessage `json:"input"`
+	Status        string          `json:"status"`
+	Output        *string         `json:"output"`
+	OutputSize    int             `json:"output_size"`
+	OutputPreview string          `json:"output_preview,omitempty"`
+	ChildSessions []string        `json:"child_sessions"`
+	Diff          *Diff           `json:"diff"`
+}
+
+// Diff is a file edit a tool call made.
+type Diff struct {
+	Path string `json:"path"`
+	Old  string `json:"old"`
+	New  string `json:"new"`
+}
+
+// ImagePayload is the payload of an image Part. Its bytes travel in
+// Result.Images.
+type ImagePayload struct {
+	SHA256 string `json:"sha256"`
+	MIME   string `json:"mime"`
+	Alt    string `json:"alt"`
+}
+
+// Image is the content of an image Part, stored content-addressed.
+type Image struct {
+	SHA256 string
+	MIME   string
+	Bytes  []byte
+}
+
+// NewImage hashes an image's bytes, returning its Part payload and content.
+func NewImage(mime string, b []byte) (ImagePayload, Image) {
+	sum := sha256.Sum256(b)
+	h := hex.EncodeToString(sum[:])
+	return ImagePayload{SHA256: h, MIME: mime}, Image{SHA256: h, MIME: mime, Bytes: b}
 }
 
 // Usage is an assistant Message's token usage.

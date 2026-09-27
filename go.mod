@@ -8,6 +8,7 @@ require (
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/klauspost/compress v1.20.1
+	github.com/sergi/go-diff v1.4.0
 	github.com/yuin/goldmark v1.8.6
 	github.com/yuin/goldmark-highlighting/v2 v2.0.0-20230729083705-37449abec8cc
 	golang.org/x/sys v0.47.0

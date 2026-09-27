@@ -7,7 +7,6 @@ package web
 import (
 	"context"
 	"embed"
-	"encoding/json"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -19,7 +18,6 @@ import (
 
 	"github.com/a-h/templ"
 
-	"github.com/tedkulp/agent-history/internal/hub/parser"
 	"github.com/tedkulp/agent-history/internal/hub/store"
 )
 
@@ -46,6 +44,8 @@ func New(s *store.Store, log *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", srv.feed)
 	mux.HandleFunc("GET /sessions/{id}", srv.transcript)
+	mux.HandleFunc("GET /sessions/{id}/parts/{part}/output", srv.toolOutput)
+	mux.HandleFunc("GET /blobs/{sha}", srv.blob)
 	mux.HandleFunc("GET /static/chroma.css", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 		w.Write(chromaCSS)
@@ -318,10 +318,10 @@ type headerView struct {
 }
 
 type messageView struct {
-	ID    string
-	Role  string
-	Time  string
-	Texts []string // rendered HTML of each text Part
+	ID     string
+	Role   string
+	Time   string
+	Chunks []chunkView
 }
 
 func (s *server) transcript(w http.ResponseWriter, r *http.Request) {
@@ -347,19 +347,9 @@ func (s *server) transcript(w http.ResponseWriter, r *http.Request) {
 	var views []messageView
 	for _, m := range msgs {
 		v := messageView{ID: m.ID, Role: m.Role, Time: s.localTime(m.Timestamp, "Jan 2 15:04")}
-		for _, p := range m.Parts {
-			if p.Kind != parser.KindText {
-				continue
-			}
-			var tp parser.TextPayload
-			if err := json.Unmarshal([]byte(p.Payload), &tp); err != nil {
-				s.log.Warn("bad text payload", "session", id, "part", p.ID, "err", err)
-				continue
-			}
-			v.Texts = append(v.Texts, renderMarkdown(tp.Text))
-		}
-		// Messages with nothing renderable yet (e.g. only tool calls) are skipped.
-		if len(v.Texts) > 0 {
+		v.Chunks = s.chunks(id, m.Parts)
+		// Messages with nothing renderable yet are skipped.
+		if len(v.Chunks) > 0 {
 			views = append(views, v)
 		}
 	}

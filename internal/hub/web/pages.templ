@@ -102,15 +102,81 @@ templ transcriptPage(h headerView, msgs []messageView) {
 		</div>
 		for _, m := range msgs {
 			<div class={ "msg", m.Role } id={ "m-" + m.ID }>
-				for _, p := range m.Texts {
-					<div class="bubble">
-						@templ.Raw(p)
-					</div>
+				for _, c := range m.Chunks {
+					if c.Tools != nil {
+						@toolCluster(c)
+					} else if c.Image != nil {
+						<a class="img" href={ templ.SafeURL(c.Image.Src) } target="_blank">
+							<img src={ c.Image.Src } alt={ c.Image.Alt } loading="lazy"/>
+						</a>
+					} else {
+						<div class="bubble">
+							@templ.Raw(c.HTML)
+						</div>
+					}
 				}
 				<span class="time">{ m.Time }</span>
 			</div>
 		}
 	}
+}
+
+// toolCluster is a run of consecutive tool calls, folded into one collapsed
+// row (hub.md §4.7).
+templ toolCluster(c chunkView) {
+	<details class="cluster">
+		<summary>{ c.Label }</summary>
+		for _, t := range c.Tools {
+			<details class="tool" id={ "p-" + t.ID }>
+				<summary>
+					<b>{ t.Name }</b>
+					if t.Summary != "" {
+						<span class="dim">{ t.Summary }</span>
+					}
+					<span class={ "st", t.Status }>
+						switch t.Status {
+							case "ok":
+								✓
+							case "error":
+								✗
+							default:
+								⋯
+						}
+					</span>
+				</summary>
+				<div class="body">
+					if t.Diff != nil {
+						<div class="diff">
+							<div class="diff-file">{ t.Diff.Path }</div>
+							<pre>
+								for _, l := range t.Diff.Lines {
+									<span class={ l.Class }>{ l.Text }</span>
+								}
+							</pre>
+						</div>
+					} else {
+						<pre class="in">{ t.Input }</pre>
+					}
+					if t.Stub != "" {
+						<div class="stub" hx-get={ t.OutputURL } hx-trigger="click" hx-swap="outerHTML">
+							<div>▸ { t.Stub }</div>
+							if t.Preview != "" {
+								<pre class="preview">{ t.Preview }</pre>
+							}
+						</div>
+					} else if t.HasOutput {
+						@toolOutputFragment(t.Output)
+					}
+				</div>
+			</details>
+		}
+	</details>
+}
+
+// toolOutputFragment is a tool call's output as preformatted text, never
+// Markdown or HTML (hub.md §4.6).
+templ toolOutputFragment(out string) {
+	<pre class="out">{ out }</pre>
 }
 
 templ notFoundPage() {

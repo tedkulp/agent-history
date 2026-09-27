@@ -4,8 +4,11 @@ package claudecode
 
 import (
 	"bytes"
+	"cmp"
+	"encoding/base64"
 	"encoding/json"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -16,7 +19,7 @@ import (
 
 // version is the parser_version. Bump it whenever output changes for
 // existing data (hub.md §4.5).
-const version = 1
+const version = 2
 
 const (
 	layout     = "jsonl"
@@ -117,9 +120,23 @@ type apiMessage struct {
 	} `json:"usage"`
 }
 
+// block is one content block of a message: the union of the fields the
+// parser reads from each block type.
 type block struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type      string          `json:"type"`
+	Text      string          `json:"text"`
+	ID        string          `json:"id"`          // tool_use
+	Name      string          `json:"name"`        // tool_use
+	Input     json.RawMessage `json:"input"`       // tool_use
+	ToolUseID string          `json:"tool_use_id"` // tool_result
+	Content   json.RawMessage `json:"content"`     // tool_result
+	IsError   bool            `json:"is_error"`    // tool_result
+	ToolName  string          `json:"tool_name"`   // tool_reference
+	Source    *struct {
+		Type      string `json:"type"`
+		MediaType string `json:"media_type"`
+		Data      string `json:"data"`
+	} `json:"source"` // image
 }
 
 // Parse implements parser.Parser.
@@ -182,7 +199,7 @@ func (*Parser) Parse(in parser.Input) (parser.Result, error) {
 		res.Session.Title = firstNonEmpty(customTitle, titleFromFile(in), aiTitle, summary)
 	}
 
-	res.Messages = buildMessages(transcriptPath(lines, isChild, &warn), &warn)
+	res.Messages, res.Images = buildMessages(in, transcriptPath(lines, isChild, &warn), &warn)
 	res.Warnings = warn.List()
 	return res, nil
 }
@@ -266,11 +283,41 @@ func transcriptPath(lines []*line, isChild bool, warn *parser.Warnings) []*line 
 	return path
 }
 
+// builder turns path lines into Messages (claude-code.md §3.3, §3.4).
+type builder struct {
+	in      parser.Input
+	warn    *parser.Warnings
+	results map[string]*result // tool_result blocks on the path, by tool_use_id
+	images  []parser.Image
+}
+
+// result is one tool_result block and where it sits on the path.
+type result struct {
+	block
+	pos  int
+	used bool
+	raw  []byte
+}
+
 // buildMessages turns path lines into Messages (claude-code.md §3.3).
 // Assistant lines sharing a message.id form one Message. A tool-result-only
 // user line doesn't break the group: parallel tool calls interleave each
 // tool_use line with its result. Any other user line does.
-func buildMessages(path []*line, warn *parser.Warnings) []parser.Message {
+func buildMessages(in parser.Input, path []*line, warn *parser.Warnings) ([]parser.Message, []parser.Image) {
+	b := &builder{in: in, warn: warn, results: map[string]*result{}}
+	for i, l := range path {
+		if l.Type != "user" {
+			continue
+		}
+		for _, bl := range userBlocks(l) {
+			if bl.Type == "tool_result" && bl.ToolUseID != "" {
+				if _, dup := b.results[bl.ToolUseID]; !dup {
+					b.results[bl.ToolUseID] = &result{block: bl, pos: i, raw: l.raw}
+				}
+			}
+		}
+	}
+
 	var (
 		msgs     []parser.Message
 		cur      *parser.Message
@@ -282,10 +329,10 @@ func buildMessages(path []*line, warn *parser.Warnings) []parser.Message {
 		}
 		cur, curAPIID = nil, ""
 	}
-	for _, l := range path {
+	for i, l := range path {
 		switch l.Type {
 		case "user":
-			kind, texts := classifyUser(l, warn)
+			kind, blocks := classifyUser(l, warn)
 			if kind == userToolResults {
 				continue
 			}
@@ -294,8 +341,13 @@ func buildMessages(path []*line, warn *parser.Warnings) []parser.Message {
 				continue
 			}
 			m := parser.Message{ID: parser.SafeID(l.UUID), Role: parser.MessageUser, Timestamp: l.ts}
-			for _, t := range texts {
-				addText(&m, t)
+			for _, bl := range blocks {
+				switch bl.Type {
+				case "text":
+					addText(&m, bl.Text)
+				case "image":
+					b.addImage(&m, bl, l.raw)
+				}
 			}
 			msgs = append(msgs, m)
 		case "assistant":
@@ -323,23 +375,157 @@ func buildMessages(path []*line, warn *parser.Warnings) []parser.Message {
 					Reasoning:  u.OutputTokensDetails.ThinkingTokens,
 				}
 			}
-			for _, b := range contentBlocks(am.Content) {
-				if b.Type == "text" {
-					addText(cur, b.Text)
+			for _, bl := range contentBlocks(am.Content) {
+				switch bl.Type {
+				case "text":
+					addText(cur, bl.Text)
+				case "tool_use":
+					b.addToolCall(cur, bl, i)
+				case "image":
+					b.addImage(cur, bl, l.raw)
 				}
 			}
 		}
 	}
 	flush()
-	return msgs
+
+	// Results whose call isn't on the path, in path order for a stable excerpt.
+	var orphans []*result
+	for _, r := range b.results {
+		if !r.used {
+			orphans = append(orphans, r)
+		}
+	}
+	slices.SortFunc(orphans, func(a, b *result) int { return cmp.Or(a.pos-b.pos, strings.Compare(a.ToolUseID, b.ToolUseID)) })
+	for _, r := range orphans {
+		warn.Add(parser.WarnOrphan, "tool_result", string(r.raw))
+	}
+	return msgs, b.images
+}
+
+func addPart(m *parser.Message, kind string, payload any) {
+	m.Parts = append(m.Parts, parser.Part{
+		ID:      m.ID + "." + strconv.Itoa(len(m.Parts)),
+		Kind:    kind,
+		Payload: payload,
+	})
 }
 
 func addText(m *parser.Message, text string) {
-	m.Parts = append(m.Parts, parser.Part{
-		ID:      m.ID + "." + strconv.Itoa(len(m.Parts)),
-		Kind:    parser.KindText,
-		Payload: parser.TextPayload{Text: text},
-	})
+	addPart(m, parser.KindText, parser.TextPayload{Text: text})
+}
+
+// addImage adds an image Part for a base64 image block. Other sources carry
+// no bytes and are skipped.
+func (b *builder) addImage(m *parser.Message, bl block, raw []byte) {
+	if bl.Source == nil || bl.Source.Type != "base64" {
+		return
+	}
+	data, err := base64.StdEncoding.DecodeString(bl.Source.Data)
+	if err != nil {
+		b.warn.Add(parser.WarnMissingField, "image.source.data", string(raw))
+		return
+	}
+	payload, img := parser.NewImage(bl.Source.MediaType, data)
+	b.images = append(b.images, img)
+	addPart(m, parser.KindImage, payload)
+}
+
+// addToolCall adds a tool_call Part merged with its result from a later path
+// line, then any images the result holds (claude-code.md §3.4).
+func (b *builder) addToolCall(m *parser.Message, bl block, pos int) {
+	input := bl.Input
+	if len(input) == 0 {
+		input = json.RawMessage("null")
+	}
+	p := parser.ToolCallPayload{
+		CallID:        bl.ID,
+		Name:          bl.Name,
+		Input:         input,
+		Status:        parser.StatusPending,
+		ChildSessions: []string{},
+	}
+	if bl.Name == "Edit" {
+		var e struct {
+			FilePath  string `json:"file_path"`
+			OldString string `json:"old_string"`
+			NewString string `json:"new_string"`
+		}
+		if json.Unmarshal(bl.Input, &e) == nil {
+			p.Diff = &parser.Diff{Path: e.FilePath, Old: e.OldString, New: e.NewString}
+		}
+	}
+	r := b.results[bl.ID]
+	if r == nil || r.used || r.pos <= pos {
+		addPart(m, parser.KindToolCall, p)
+		return
+	}
+	r.used = true
+	p.Status = parser.StatusOK
+	if r.IsError {
+		p.Status = parser.StatusError
+	}
+	out, images := resultContent(r.Content)
+	out = b.stitchSpill(out, bl.ID)
+	p.Output = &out
+	addPart(m, parser.KindToolCall, p)
+	for _, img := range images {
+		b.addImage(m, img, r.raw)
+	}
+}
+
+// resultContent is a tool_result's output text and its image blocks: a
+// string as-is, or the text blocks joined by newlines with each
+// tool_reference as a placeholder.
+func resultContent(raw json.RawMessage) (string, []block) {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s, nil
+	}
+	var (
+		texts  []string
+		images []block
+	)
+	for _, bl := range contentBlocks(raw) {
+		switch bl.Type {
+		case "text":
+			texts = append(texts, bl.Text)
+		case "tool_reference":
+			texts = append(texts, "[tool reference: "+bl.ToolName+"]")
+		case "image":
+			images = append(images, bl)
+		}
+	}
+	return strings.Join(texts, "\n"), images
+}
+
+var spillRe = regexp.MustCompile(`Full output saved to: (\S+)`)
+
+// stitchSpill replaces a <persisted-output> marker with the spilled file's
+// content, when the Session's attachments hold it. Otherwise the marker, with
+// its preview, stays.
+func (b *builder) stitchSpill(out, callID string) string {
+	if !strings.HasPrefix(strings.TrimSpace(out), "<persisted-output>") {
+		return out
+	}
+	project, _, _ := strings.Cut(b.in.MainKey, "/")
+	session, _, _ := strings.Cut(b.in.NativeID, "/")
+	var keys []string
+	if m := spillRe.FindStringSubmatch(out); m != nil {
+		if i := strings.Index(m[1], "/tool-results/"); i >= 0 {
+			// Keep the path from <session>/tool-results/ on.
+			if j := strings.LastIndex(m[1][:i], "/"); j >= 0 {
+				keys = append(keys, project+"/"+m[1][j+1:])
+			}
+		}
+	}
+	keys = append(keys, project+"/"+session+"/tool-results/"+callID+".txt")
+	for _, k := range keys {
+		if c, ok := b.in.Attachments[k]; ok {
+			return strings.ToValidUTF8(string(c), "�")
+		}
+	}
+	return out
 }
 
 // What a user line becomes (claude-code.md §3.3).
@@ -349,8 +535,20 @@ const (
 	userSkip               // injected context or a command line: Raw only
 )
 
-// classifyUser classifies a user line and returns its text Parts.
-func classifyUser(l *line, warn *parser.Warnings) (kind int, texts []string) {
+// userBlocks returns a user line's content blocks, or nil for string content.
+func userBlocks(l *line) []block {
+	var m struct {
+		Content json.RawMessage `json:"content"`
+	}
+	if json.Unmarshal(l.Message, &m) != nil {
+		return nil
+	}
+	return contentBlocks(m.Content)
+}
+
+// classifyUser classifies a user line and returns its content blocks; string
+// content comes back as one text block.
+func classifyUser(l *line, warn *parser.Warnings) (kind int, blocks []block) {
 	if l.IsMeta || l.IsCompactSummary {
 		return userSkip, nil
 	}
@@ -370,9 +568,8 @@ func classifyUser(l *line, warn *parser.Warnings) (kind int, texts []string) {
 				return userSkip, nil
 			}
 		}
-		return userMessage, []string{s}
+		return userMessage, []block{{Type: "text", Text: s}}
 	}
-	var blocks []block
 	if json.Unmarshal(m.Content, &blocks) != nil || len(blocks) == 0 {
 		warn.Add(parser.WarnMissingField, "message.content", string(l.raw))
 		return userSkip, nil
@@ -382,11 +579,8 @@ func classifyUser(l *line, warn *parser.Warnings) (kind int, texts []string) {
 		if b.Type != "tool_result" {
 			kind = userMessage
 		}
-		if b.Type == "text" {
-			texts = append(texts, b.Text)
-		}
 	}
-	return kind, texts
+	return kind, blocks
 }
 
 func contentBlocks(raw json.RawMessage) []block {

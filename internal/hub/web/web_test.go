@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -158,8 +159,8 @@ func TestFeedAndTranscriptPages(t *testing.T) {
 	if strings.Contains(body, "<script>alert") {
 		t.Error("HTML in a text Part was rendered")
 	}
-	if strings.Contains(body, `id="m-a2"`) {
-		t.Error("a Message with nothing to show got a bubble")
+	if !strings.Contains(body, `id="m-a2"`) || !strings.Contains(body, "⚙ 1 tool call · Bash") {
+		t.Error("a tool-call-only Message isn't shown as a cluster")
 	}
 	if strings.Index(body, `id="m-u1"`) > strings.Index(body, `id="m-a1"`) {
 		t.Error("Messages out of order")
@@ -322,5 +323,115 @@ func TestTranscriptHeaderLinksToFilteredFeed(t *testing.T) {
 	_, body = get(t, srv.URL+link[:strings.Index(link, `"`)])
 	if !strings.Contains(body, `href="/?machine=m1&amp;project=-"`) {
 		t.Error("No project header link lacks project=-")
+	}
+}
+
+func TestTranscriptToolCallsAndImages(t *testing.T) {
+	const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+	big := strings.Repeat("x", 17000) + "<script>alert(2)</script>"
+	mid := "<i>mid</i>" + strings.Repeat("y", 5000)
+	lines := []map[string]any{
+		{"type": "user", "uuid": "u1", "parentUuid": nil, "timestamp": "2026-09-01T10:00:00.000Z", "cwd": "/Users/ted/src/app",
+			"message": map[string]any{"role": "user", "content": []any{
+				map[string]any{"type": "text", "text": "see"},
+				map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": "image/png", "data": png}},
+			}}},
+	}
+	parent := "u1"
+	calls := []struct {
+		id, name string
+		input    map[string]any
+		out      string
+		err      bool
+	}{
+		{"t1", "Bash", map[string]any{"command": "echo"}, "<b>bold?</b>", false},
+		{"t2", "Edit", map[string]any{"file_path": "/src/app/main.go", "old_string": "keep\nold line", "new_string": "keep\nnew line"}, "updated", false},
+		{"t3", "Bash", map[string]any{"command": "false"}, "exit 1", true},
+		{"t4", "Read", map[string]any{"file_path": "/big"}, big, false},
+		{"t5", "Read", map[string]any{"file_path": "/mid"}, mid, false},
+	}
+	for i, c := range calls {
+		a, r := fmt.Sprintf("a%d", i), fmt.Sprintf("r%d", i)
+		lines = append(lines,
+			map[string]any{"type": "assistant", "uuid": a, "parentUuid": parent, "timestamp": "2026-09-01T10:00:01.000Z",
+				"message": map[string]any{"id": "msg_1", "model": "m", "content": []any{map[string]any{"type": "tool_use", "id": c.id, "name": c.name, "input": c.input}}}},
+			map[string]any{"type": "user", "uuid": r, "parentUuid": a, "timestamp": "2026-09-01T10:00:02.000Z",
+				"message": map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": c.id, "content": c.out, "is_error": c.err}}}},
+		)
+		parent = r
+	}
+	var main strings.Builder
+	for _, l := range lines {
+		b, _ := json.Marshal(l)
+		main.Write(b)
+		main.WriteByte('\n')
+	}
+	srv := newSite(t, map[string]string{"-Users-ted-src-app/" + sess + ".jsonl": main.String()})
+
+	_, feed := get(t, srv.URL+"/")
+	i := strings.Index(feed, `href="/sessions/`)
+	link := feed[i+len(`href="`):]
+	link = link[:strings.Index(link, `"`)]
+	code, page := get(t, srv.URL+link)
+	if code != 200 {
+		t.Fatalf("status %d", code)
+	}
+	for _, want := range []string{
+		"⚙ 5 tool calls · Bash ✗, Edit, Read",
+		"&lt;b&gt;bold?&lt;/b&gt;", // output is text, not HTML
+		`<div class="diff-file">/src/app/main.go</div>`,
+		`<span class="del">- old line</span>`, `<span class="add">+ new line</span>`, `<span class="">  keep</span>`,
+		"Output collapsed · 16.6 KB", "Output collapsed · 4.9 KB",
+		"&lt;i&gt;mid&lt;/i&gt;", // the preview, escaped
+		`class="st error"`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("transcript lacks %q", want)
+		}
+	}
+	if strings.Contains(page, "<b>bold?") || strings.Contains(page, "<i>mid") {
+		t.Error("HTML in tool output was rendered")
+	}
+	if strings.Contains(page, strings.Repeat("x", 300)) {
+		t.Error("output over 4 KB rendered inline")
+	}
+
+	// Each stub loads its full output, escaped.
+	for _, c := range []struct{ part, want string }{{"a0.3", "&lt;script&gt;alert(2)"}, {"a0.4", "&lt;i&gt;mid&lt;/i&gt;"}} {
+		url := link + "/parts/" + c.part + "/output"
+		if !strings.Contains(page, `hx-get="`+url+`"`) {
+			t.Errorf("no stub loading %s", url)
+		}
+		code, frag := get(t, srv.URL+url)
+		if code != 200 || !strings.Contains(frag, c.want) || strings.Contains(frag, "<script>") || strings.Contains(frag, "<i>") {
+			t.Errorf("%s: status %d, fragment %.200q", url, code, frag)
+		}
+	}
+	for _, p := range []string{link + "/parts/nope/output", "/sessions/abc/parts/a0.3/output"} {
+		if code, _ := get(t, srv.URL+p); code != 404 {
+			t.Errorf("%s: status %d", p, code)
+		}
+	}
+
+	// The pasted image shows inline and is served with an immutable cache header.
+	j := strings.Index(page, `<img src="/blobs/`)
+	if j < 0 {
+		t.Fatal("no inline image")
+	}
+	src := page[j+len(`<img src="`):]
+	src = src[:strings.Index(src, `"`)]
+	resp, err := http.Get(srv.URL + src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "image/png" ||
+		resp.Header.Get("Cache-Control") != "public, max-age=31536000, immutable" {
+		t.Errorf("blob: %d %v", resp.StatusCode, resp.Header)
+	}
+	for _, p := range []string{"/blobs/" + strings.Repeat("0", 64), "/blobs/xyz"} {
+		if code, _ := get(t, srv.URL+p); code != 404 {
+			t.Errorf("%s: status %d", p, code)
+		}
 	}
 }

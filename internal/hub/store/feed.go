@@ -3,8 +3,11 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
+
+	"github.com/tedkulp/agent-history/internal/hub/parser"
 )
 
 // FeedRow is one Session row of the home feed (hub.md §4.7).
@@ -235,4 +238,46 @@ func (s *Store) Transcript(ctx context.Context, id int64) (h SessionHeader, msgs
 		}
 	}
 	return h, msgs, true, rows.Err()
+}
+
+// ToolOutput returns the full output of one tool_call Part: from
+// tool_outputs when it was split out, else the payload's inline output
+// (hub.md §4.7). ok is false for an unknown Part or one that isn't a tool call.
+func (s *Store) ToolOutput(ctx context.Context, sessionID int64, partID string) (out string, ok bool, err error) {
+	var b []byte
+	err = s.read.QueryRowContext(ctx, `
+		SELECT bytes FROM tool_outputs WHERE session_id = ? AND part_id = ?`, sessionID, partID).Scan(&b)
+	if err == nil {
+		return string(b), true, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", false, err
+	}
+	var payload string
+	err = s.read.QueryRowContext(ctx, `
+		SELECT payload_json FROM parts WHERE session_id = ? AND id = ? AND kind = ?`,
+		sessionID, partID, parser.KindToolCall).Scan(&payload)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	var tc parser.ToolCallPayload
+	if err := json.Unmarshal([]byte(payload), &tc); err != nil {
+		return "", false, err
+	}
+	if tc.Output == nil {
+		return "", true, nil
+	}
+	return *tc.Output, true, nil
+}
+
+// Blob returns an image blob by its SHA-256. ok is false when there is none.
+func (s *Store) Blob(ctx context.Context, sha256 string) (mime string, b []byte, ok bool, err error) {
+	err = s.read.QueryRowContext(ctx, `SELECT mime, bytes FROM blobs WHERE sha256 = ?`, sha256).Scan(&mime, &b)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil, false, nil
+	}
+	return mime, b, err == nil, err
 }

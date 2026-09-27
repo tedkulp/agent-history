@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -445,5 +447,95 @@ func TestReplaceEnqueuesAndParsesNewVersion(t *testing.T) {
 	}
 	if _, ok := queueOf(t, s, id); ok {
 		t.Fatal("identical replace enqueued a parse")
+	}
+}
+
+func TestSaveParseSplitsToolOutputAndStoresBlobs(t *testing.T) {
+	s, _ := openParsing(t)
+	ctx := context.Background()
+	appendTo(t, s, protocol.SourceClaudeCode, mainKey, []byte(line1))
+	str := func(n int) *string { v := strings.Repeat("é", n/2); return &v } // n bytes
+	call := func(id string, out *string) parser.Part {
+		return parser.Part{ID: id, Kind: parser.KindToolCall, Payload: parser.ToolCallPayload{
+			CallID: id, Name: "Bash", Input: json.RawMessage(`{}`), Status: "ok", Output: out, ChildSessions: []string{},
+		}}
+	}
+	imgPayload, img := parser.NewImage("image/png", []byte("png bytes"))
+	res := parser.Result{
+		Messages: []parser.Message{{ID: "a1", Role: parser.MessageAssistant, Parts: []parser.Part{
+			call("a1.0", str(4096)),  // at 4 KB: inline, no preview
+			call("a1.1", str(4098)),  // over 4 KB: inline with preview
+			call("a1.2", str(16386)), // over 16 KB: split out
+			call("a1.3", nil),        // pending
+			{ID: "a1.4", Kind: parser.KindImage, Payload: imgPayload},
+		}}},
+		Images: []parser.Image{img, img},
+	}
+	save := func() int64 {
+		t.Helper()
+		job, ok, _, err := s.NextJob(ctx)
+		if err != nil || !ok {
+			t.Fatal(ok, err)
+		}
+		if err := s.SaveParse(ctx, job, 1, res); err != nil {
+			t.Fatal(err)
+		}
+		return job.SessionID
+	}
+	id := save()
+
+	payload := func(part string) parser.ToolCallPayload {
+		t.Helper()
+		var js string
+		if err := s.read.QueryRow(`SELECT payload_json FROM parts WHERE session_id = ? AND id = ?`, id, part).Scan(&js); err != nil {
+			t.Fatal(err)
+		}
+		var tc parser.ToolCallPayload
+		if err := json.Unmarshal([]byte(js), &tc); err != nil {
+			t.Fatal(err)
+		}
+		return tc
+	}
+	if p := payload("a1.0"); p.Output == nil || p.OutputSize != 4096 || p.OutputPreview != "" {
+		t.Errorf("4 KB output: size %d, preview %q, inline %v", p.OutputSize, p.OutputPreview, p.Output != nil)
+	}
+	if p := payload("a1.1"); p.Output == nil || p.OutputSize != 4098 || p.OutputPreview != strings.Repeat("é", 200) {
+		t.Errorf("over 4 KB: size %d, preview %q, inline %v", p.OutputSize, p.OutputPreview, p.Output != nil)
+	}
+	if p := payload("a1.2"); p.Output != nil || p.OutputSize != 16386 || p.OutputPreview == "" {
+		t.Errorf("over 16 KB: size %d, inline %v", p.OutputSize, p.Output != nil)
+	}
+	if p := payload("a1.3"); p.Output != nil || p.OutputSize != 0 || p.Status != "ok" {
+		t.Errorf("no output: %+v", p)
+	}
+
+	for part, want := range map[string]string{"a1.1": *str(4098), "a1.2": *str(16386), "a1.3": ""} {
+		got, ok, err := s.ToolOutput(ctx, id, part)
+		if err != nil || !ok || got != want {
+			t.Errorf("ToolOutput(%s) = %d bytes, %v, %v; want %d bytes", part, len(got), ok, err, len(want))
+		}
+	}
+	if _, ok, err := s.ToolOutput(ctx, id, "a1.4"); ok || err != nil {
+		t.Errorf("ToolOutput of an image Part = %v, %v", ok, err)
+	}
+
+	mime, b, ok, err := s.Blob(ctx, img.SHA256)
+	if err != nil || !ok || mime != "image/png" || string(b) != "png bytes" {
+		t.Errorf("Blob = %q %q %v %v", mime, b, ok, err)
+	}
+	if _, _, ok, _ := s.Blob(ctx, "00"); ok {
+		t.Error("unknown blob found")
+	}
+
+	// A re-parse replaces tool_outputs and keeps blobs deduplicated.
+	if _, err := s.write.Exec(`INSERT INTO parse_queue (session_id, priority, enqueued_at, not_before) VALUES (?, 1, 0, 0)`, id); err != nil {
+		t.Fatal(err)
+	}
+	save()
+	var outputs, blobs int
+	s.read.QueryRow(`SELECT count(*) FROM tool_outputs`).Scan(&outputs)
+	s.read.QueryRow(`SELECT count(*) FROM blobs`).Scan(&blobs)
+	if outputs != 1 || blobs != 1 {
+		t.Errorf("tool_outputs = %d, blobs = %d; want 1, 1", outputs, blobs)
 	}
 }

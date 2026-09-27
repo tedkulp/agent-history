@@ -100,6 +100,19 @@ CREATE TABLE parts (
 );
 CREATE INDEX parts_order ON parts(session_id, message_id, ordinal);
 
+CREATE TABLE tool_outputs (
+  session_id INTEGER NOT NULL,
+  part_id    TEXT NOT NULL,
+  bytes      BLOB NOT NULL,      -- UTF-8 output text, uncompressed
+  PRIMARY KEY (session_id, part_id)
+);
+
+CREATE TABLE blobs (
+  sha256 TEXT PRIMARY KEY,       -- lowercase hex of bytes
+  mime   TEXT NOT NULL,
+  bytes  BLOB NOT NULL
+);
+
 CREATE TABLE parse_queue (
   session_id  INTEGER PRIMARY KEY REFERENCES sessions(id),
   priority    INTEGER NOT NULL,   -- 0 = live ingest, 1 = re-parse

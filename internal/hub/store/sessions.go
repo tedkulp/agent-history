@@ -268,7 +268,7 @@ func (s *Store) SaveParse(ctx context.Context, job Job, parserVersion int, res p
 		return err
 	}
 
-	for _, q := range []string{`DELETE FROM parts WHERE session_id = ?`, `DELETE FROM messages WHERE session_id = ?`} {
+	for _, q := range []string{`DELETE FROM parts WHERE session_id = ?`, `DELETE FROM messages WHERE session_id = ?`, `DELETE FROM tool_outputs WHERE session_id = ?`} {
 		if _, err := tx.ExecContext(ctx, q, id); err != nil {
 			return err
 		}
@@ -299,6 +299,11 @@ func (s *Store) SaveParse(ctx context.Context, job Job, parserVersion int, res p
 		}
 		var texts []string
 		for j, p := range m.Parts {
+			if tc, ok := p.Payload.(parser.ToolCallPayload); ok {
+				if p.Payload, err = splitOutput(ctx, tx, id, p.ID, tc); err != nil {
+					return err
+				}
+			}
 			payload, err := json.Marshal(p.Payload)
 			if err != nil {
 				return err
@@ -314,6 +319,13 @@ func (s *Store) SaveParse(ctx context.Context, job Job, parserVersion int, res p
 		}
 		if firstPrompt == "" && m.Role == parser.MessageUser && len(texts) > 0 {
 			firstPrompt = truncate(strings.Join(texts, "\n"), 300)
+		}
+	}
+
+	for _, img := range res.Images {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT OR IGNORE INTO blobs (sha256, mime, bytes) VALUES (?, ?, ?)`, img.SHA256, img.MIME, img.Bytes); err != nil {
+			return err
 		}
 	}
 
@@ -352,6 +364,34 @@ func (s *Store) SaveParse(ctx context.Context, job Job, parserVersion int, res p
 		return err
 	}
 	return tx.Commit()
+}
+
+// Tool output thresholds (hub.md §3.5).
+const (
+	previewOver  = 4 << 10  // output over this gets output_preview
+	splitOver    = 16 << 10 // output over this goes to tool_outputs
+	previewChars = 200
+)
+
+// splitOutput sets a tool call's output_size and output_preview, and moves
+// output over 16 KB into tool_outputs (hub.md §3.5).
+func splitOutput(ctx context.Context, tx execer, sessionID int64, partID string, tc parser.ToolCallPayload) (parser.ToolCallPayload, error) {
+	if tc.Output == nil {
+		return tc, nil
+	}
+	out := *tc.Output
+	tc.OutputSize = len(out)
+	if tc.OutputSize > previewOver {
+		tc.OutputPreview = truncate(out, previewChars)
+	}
+	if tc.OutputSize > splitOver {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO tool_outputs (session_id, part_id, bytes) VALUES (?, ?, ?)`, sessionID, partID, []byte(out)); err != nil {
+			return tc, err
+		}
+		tc.Output = nil
+	}
+	return tc, nil
 }
 
 // SaveFailure records a parse failure, keeping the previous Transcript
