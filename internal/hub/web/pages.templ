@@ -125,9 +125,7 @@ templ transcriptPage(h headerView, outline []outlineEntry, msgs []messageView) {
 						for _, c := range m.Chunks {
 							@chunk(c)
 						}
-						if !m.Marker {
-							<span class="time">{ m.Time }</span>
-						}
+						<span class="time">{ m.Time }</span>
 					</div>
 				}
 			</div>

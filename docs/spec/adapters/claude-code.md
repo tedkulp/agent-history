@@ -94,11 +94,13 @@ Every line is a JSON object with a `type`. Conversation lines also carry `uuid`,
 |---|---|
 | `user`, `assistant` | Messages (§3.3) |
 | `system` | By `subtype`: `compact_boundary` → `marker` (`compaction`). `turn_duration`, `local_command`, `away_summary`, `stop_hook_summary`, `informational`, `api_error` → Raw only. Any other subtype → `unknown`. |
-| `attachment` | Raw only (context Claude Code injects: reminders, tool listings, environment), with one exception: subtype `queued_command` whose `attachment.isMeta` is not `true` becomes a user Message with `attachment.prompt` as its text |
+| `attachment` | Raw only (context Claude Code injects: reminders, tool listings, environment), with one exception: subtype `queued_command` whose `attachment.isMeta` is not `true` becomes a user Message with `attachment.prompt` as its text (a block list gives its `text` and `image` blocks) |
 | `summary` | Raw only; used for the title fallback (§3.6) |
 | `custom-title`, `ai-title` | Raw only; used for the title (§3.6) |
 | `file-history-snapshot`, `file-history-delta`, `last-prompt`, `mode`, `permission-mode`, `queue-operation`, `progress`, `atis-latch`, `bridge-session`, `cost-state`, `agent-name`, `pr-link`, `frame-link`, `artifact-autoreact-ledger`, `artifact-comment-monitor` | Raw only (bookkeeping) |
 | anything else | `unknown_type` Parse warning. If the line has a `uuid` and sits on the Transcript path, it also becomes an `unknown` Part in its own Message (role `assistant`). |
+
+- An unknown `system` subtype's `source_type` is `system:<subtype>`, so drift in subtypes is told apart from new line types.
 
 - Lines without a `uuid` are never on the path, so they never produce Parts.
 - A line that isn't valid JSON is a `bad_line` warning and is skipped.
@@ -143,7 +145,7 @@ Claude Code writes **one line per content block**, all sharing the same `message
 | Block | Part |
 |---|---|
 | `text` | `text` |
-| `thinking` | `thinking` with the `thinking` text. The `signature` is Raw only. |
+| `thinking` | `thinking` with the `thinking` text. The `signature` is Raw only. A block with empty `thinking` (Claude Code often keeps only the signature) gives no Part. |
 | `redacted_thinking` | Raw only |
 | `tool_use` | `tool_call` (§3.4) |
 | `image` | `image` |

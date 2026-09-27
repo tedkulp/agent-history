@@ -223,11 +223,12 @@ func (s *server) chips(ctx context.Context, p feedParams) ([]chipRow, error) {
 			return q
 		}))
 	}
-	cur := ""
+	// The chip's param is warnings=1; toggle works on its string value.
+	warnings := ""
 	if p.Warnings {
-		cur = "1"
+		warnings = "1"
 	}
-	wrow := chipRow{Label: "Show", Chips: []chip{toggle(chip{Label: "⚠ has warnings", Title: "Sessions with Parse warnings or a failed parse"}, cur, "1", func(v string) feedParams {
+	wrow := chipRow{Label: "Show", Chips: []chip{toggle(chip{Label: "⚠ has warnings", Title: "Sessions with Parse warnings or a failed parse"}, warnings, "1", func(v string) feedParams {
 		q := p
 		q.Warnings = v != ""
 		return q
@@ -266,12 +267,12 @@ func (s *server) driftBanners(ctx context.Context) ([]driftBanner, error) {
 		if d.SourceVersion != "" {
 			name += " " + d.SourceVersion
 		}
-		n := "1 Session has"
+		sessions := "1 Session has"
 		if d.Sessions != 1 {
-			n = strconv.Itoa(d.Sessions) + " Sessions have"
+			sessions = strconv.Itoa(d.Sessions) + " Sessions have"
 		}
 		out = append(out, driftBanner{
-			Text: name + ": " + n + " unrecognised data",
+			Text: name + ": " + sessions + " unrecognised data",
 			Href: feedParams{Source: d.Source, Warnings: true}.url(),
 		})
 	}
@@ -431,6 +432,12 @@ func (s *server) transcript(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, http.StatusOK, transcriptPage(hv, outline, views))
 }
 
+// outlineMax is the most characters of a prompt the outline shows.
+const outlineMax = 60
+
+// noteKinds is how many warning kinds the Notes summary names.
+const noteKinds = 3
+
 // promptLine is the first line of a user Message's first text Part, for the
 // outline.
 func promptLine(parts []store.TranscriptPart) string {
@@ -444,7 +451,7 @@ func promptLine(parts []store.TranscriptPart) string {
 		}
 		for _, l := range strings.Split(tp.Text, "\n") {
 			if l = strings.TrimSpace(l); l != "" {
-				return cut(l, 60)
+				return cut(l, outlineMax)
 			}
 		}
 	}
@@ -464,13 +471,13 @@ func warningNote(ws []store.ParseWarning) string {
 	for i, w := range ws {
 		total += w.Count
 		switch {
-		case i < 3:
+		case i < noteKinds:
 			k := w.Kind
 			if w.SourceType != "" {
 				k += ": " + w.SourceType
 			}
 			kinds = append(kinds, fmt.Sprintf("%s ×%d", k, w.Count))
-		case i == 3:
+		case i == noteKinds:
 			kinds = append(kinds, "…")
 		}
 	}

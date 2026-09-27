@@ -41,8 +41,8 @@ type markerView struct {
 	Body  string // rendered Markdown
 }
 
-// compactionLabel is the pill of a compaction marker; the summary opens below.
-const compactionLabel = "Conversation compacted"
+// markerLabelMax is the most characters a marker pill shows.
+const markerLabelMax = 120
 
 type imageView struct {
 	Src, Alt string
@@ -79,40 +79,25 @@ func (s *server) chunks(sessionID int64, parts []store.TranscriptPart) []chunkVi
 	for _, p := range parts {
 		switch p.Kind {
 		case parser.KindText:
-			var tp parser.TextPayload
-			if err := json.Unmarshal([]byte(p.Payload), &tp); err != nil {
-				s.log.Warn("bad text payload", "session", sessionID, "part", p.ID, "err", err)
-				continue
+			if tp, ok := decodePayload[parser.TextPayload](s, sessionID, p); ok {
+				out = append(out, chunkView{HTML: renderMarkdown(tp.Text)})
 			}
-			out = append(out, chunkView{HTML: renderMarkdown(tp.Text)})
 		case parser.KindThinking:
-			var tp parser.ThinkingPayload
-			if err := json.Unmarshal([]byte(p.Payload), &tp); err != nil {
-				s.log.Warn("bad thinking payload", "session", sessionID, "part", p.ID, "err", err)
-				continue
+			if tp, ok := decodePayload[parser.ThinkingPayload](s, sessionID, p); ok {
+				out = append(out, chunkView{Thinking: renderMarkdown(tp.Text)})
 			}
-			out = append(out, chunkView{Thinking: renderMarkdown(tp.Text)})
 		case parser.KindMarker:
-			var mp parser.MarkerPayload
-			if err := json.Unmarshal([]byte(p.Payload), &mp); err != nil {
-				s.log.Warn("bad marker payload", "session", sessionID, "part", p.ID, "err", err)
-				continue
+			if mp, ok := decodePayload[parser.MarkerPayload](s, sessionID, p); ok {
+				out = append(out, chunkView{Marker: newMarkerView(mp)})
 			}
-			out = append(out, chunkView{Marker: newMarkerView(mp)})
 		case parser.KindUnknown:
-			var up parser.UnknownPayload
-			if err := json.Unmarshal([]byte(p.Payload), &up); err != nil {
-				s.log.Warn("bad unknown payload", "session", sessionID, "part", p.ID, "err", err)
-				continue
+			if up, ok := decodePayload[parser.UnknownPayload](s, sessionID, p); ok {
+				out = append(out, chunkView{Unknown: &up})
 			}
-			out = append(out, chunkView{Unknown: &up})
 		case parser.KindAttachment:
-			var ap parser.AttachmentPayload
-			if err := json.Unmarshal([]byte(p.Payload), &ap); err != nil {
-				s.log.Warn("bad attachment payload", "session", sessionID, "part", p.ID, "err", err)
-				continue
+			if ap, ok := decodePayload[parser.AttachmentPayload](s, sessionID, p); ok {
+				out = append(out, chunkView{Attachment: ap.Label})
 			}
-			out = append(out, chunkView{Attachment: ap.Label})
 		case parser.KindImage:
 			var ip parser.ImagePayload
 			if err := json.Unmarshal([]byte(p.Payload), &ip); err != nil || !shaRe.MatchString(ip.SHA256) {
@@ -142,19 +127,30 @@ func (s *server) chunks(sessionID int64, parts []store.TranscriptPart) []chunkVi
 	return out
 }
 
-// newMarkerView labels a marker pill. A compaction's summary, and any marker
+// decodePayload decodes a Part's payload, logging and skipping a bad one.
+func decodePayload[T any](s *server, sessionID int64, p store.TranscriptPart) (T, bool) {
+	var v T
+	if err := json.Unmarshal([]byte(p.Payload), &v); err != nil {
+		s.log.Warn("bad "+p.Kind+" payload", "session", sessionID, "part", p.ID, "err", err)
+		return v, false
+	}
+	return v, true
+}
+
+// compactionSummaryLabel is the pill of a compaction marker holding the
+// summary; the summary opens below it.
+const compactionSummaryLabel = "Compaction summary"
+
+// newMarkerView labels a marker pill. A compaction summary, and any marker
 // text over one line, opens below the pill.
 func newMarkerView(mp parser.MarkerPayload) *markerView {
 	v := &markerView{Kind: mp.Marker, Label: mp.Text}
-	if mp.Marker == parser.MarkerCompaction {
-		v.Label = compactionLabel
-		if mp.Text != compactionLabel {
-			v.Body = renderMarkdown(mp.Text)
-		}
+	if mp.Marker == parser.MarkerCompaction && mp.Text != parser.CompactionText {
+		v.Label, v.Body = compactionSummaryLabel, renderMarkdown(mp.Text)
 		return v
 	}
 	if first, _, multi := strings.Cut(mp.Text, "\n"); multi {
-		v.Label, v.Body = cut(first, 120), renderMarkdown(mp.Text)
+		v.Label, v.Body = cut(first, markerLabelMax), renderMarkdown(mp.Text)
 	}
 	if v.Label == "" {
 		v.Label = mp.Marker

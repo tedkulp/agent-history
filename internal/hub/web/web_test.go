@@ -505,7 +505,8 @@ func TestTranscriptMarkersWarningsAndOutline(t *testing.T) {
 		"· claude-code 2.1.999", "{&#34;data&#34;:1,&#34;type&#34;:&#34;future_type&#34;}",
 		// Thinking collapsed, markers as pills, the unknown line, the attachment.
 		`<details class="think"><summary>💭 thinking</summary><p><em>pondering</em></p>`,
-		`<details class="marker compaction"><summary>Conversation compacted</summary>`, "Summary of &lt;b&gt;earlier&lt;/b&gt; work",
+		`<div class="marker compaction">Conversation compacted</div>`,
+		`<details class="marker compaction"><summary>Compaction summary</summary>`, "Summary of &lt;b&gt;earlier&lt;/b&gt; work",
 		`<div class="marker slash_command">/review 42</div>`,
 		`⚠ unknown <code>brand_new</code>`, "&lt;i&gt;x&lt;/i&gt;",
 		"📎 spec.pdf",
@@ -519,7 +520,7 @@ func TestTranscriptMarkersWarningsAndOutline(t *testing.T) {
 			t.Errorf("transcript shows %q", bad)
 		}
 	}
-	order := []string{`id="m-u1"`, `id="m-a1"`, `id="m-cb"`, `id="m-c1"`, `id="m-n1"`, `id="m-u2"`}
+	order := []string{`id="m-u1"`, `id="m-a1"`, `id="m-cb"`, `id="m-s1"`, `id="m-c1"`, `id="m-n1"`, `id="m-u2"`}
 	for k := 1; k < len(order); k++ {
 		if a, b := strings.Index(page, order[k-1]), strings.Index(page, order[k]); a < 0 || b < a {
 			t.Errorf("%s not before %s", order[k-1], order[k])

@@ -166,7 +166,7 @@ func TestParseSimpleConversation(t *testing.T) {
 		t.Errorf("assistant timestamp = %d", a.Timestamp)
 	}
 	if a.Parts[0].ID != "a1.0" || a.Parts[3].ID != "a1.3" {
-		t.Errorf("part ids = %q %q", a.Parts[0].ID, a.Parts[2].ID)
+		t.Errorf("part ids = %q %q", a.Parts[0].ID, a.Parts[3].ID)
 	}
 
 	s := res.Session
@@ -197,13 +197,15 @@ func TestParseCommandsAndInjectedLines(t *testing.T) {
 		att("at1", "u2b", map[string]any{"type": "total_tokens_reminder"}),
 		att("at2", "at1", map[string]any{"type": "queued_command", "prompt": "meta prompt", "isMeta": true}),
 		att("at3", "at2", map[string]any{"type": "queued_command", "prompt": "queued prompt"}),
-		userLine("u3", "at3", "2026-09-01T10:00:04.000Z", "real prompt"),
+		att("at4", "at3", map[string]any{"type": "queued_command", "prompt": []any{text("queued blocks")}}),
+		userLine("u3", "at4", "2026-09-01T10:00:04.000Z", "real prompt"),
 	)
 	res := parse(t, main, nil)
 	want := []flat{
 		{ID: "u1", Role: "user", Texts: []string{"[slash_command /clear]"}},
 		{ID: "u2b", Role: "user", Texts: []string{"[slash_command /review 42]"}},
 		{ID: "at3", Role: "user", Texts: []string{"queued prompt"}},
+		{ID: "at4", Role: "user", Texts: []string{"queued blocks"}},
 		{ID: "u3", Role: "user", Texts: []string{"real prompt"}},
 	}
 	if got := flatten(res.Messages); !reflect.DeepEqual(got, want) {
@@ -222,7 +224,7 @@ func TestParseCompaction(t *testing.T) {
 	summary := userLine("s1", "cb", "2026-09-01T10:01:00.100Z", "This session is being continued…")
 	summary["isCompactSummary"] = true
 	summary["isVisibleInTranscriptOnly"] = true
-	// A later summary with no boundary before it is a marker of its own.
+	// A summary with no boundary before it is a marker too.
 	lone := userLine("s2", "a2", "2026-09-01T10:03:00.000Z", []any{text("Second summary")})
 	lone["isCompactSummary"] = true
 	main := jsonl(t,
@@ -238,7 +240,8 @@ func TestParseCompaction(t *testing.T) {
 	want := []flat{
 		{ID: "u1", Role: "user", Texts: []string{"before"}},
 		{ID: "a1", Role: "assistant", Texts: []string{"old answer"}},
-		{ID: "cb", Role: "assistant", Texts: []string{"[compaction This session is being continued…]"}},
+		{ID: "cb", Role: "assistant", Texts: []string{"[compaction Conversation compacted]"}},
+		{ID: "s1", Role: "user", Texts: []string{"[compaction This session is being continued…]"}},
 		{ID: "u2", Role: "user", Texts: []string{"after"}},
 		{ID: "a2", Role: "assistant", Texts: []string{"new answer"}},
 		{ID: "s2", Role: "user", Texts: []string{"[compaction Second summary]"}},

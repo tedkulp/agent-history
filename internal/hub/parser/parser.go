@@ -42,6 +42,10 @@ const (
 	MarkerSlashCommand  = "slash_command"
 )
 
+// CompactionText is a compaction marker's text when the Source gives no
+// summary.
+const CompactionText = "Conversation compacted"
+
 // Tool call statuses.
 const (
 	StatusOK      = "ok"

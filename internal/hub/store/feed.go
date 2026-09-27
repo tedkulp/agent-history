@@ -43,7 +43,10 @@ type FeedFilter struct {
 
 // hasWarnings selects Sessions with any Parse warning or a failed parse: the
 // "has warnings" chip (hub.md §4.7).
-const hasWarnings = `(s.parse_status = 'failed' OR EXISTS (SELECT 1 FROM parse_warnings w WHERE w.session_id = s.id))`
+const hasWarnings = `(s.parse_status = 'failed' OR ` + hasParseWarnings + `)`
+
+// hasParseWarnings selects Sessions with at least one Parse warning.
+const hasParseWarnings = `EXISTS (SELECT 1 FROM parse_warnings w WHERE w.session_id = s.id)`
 
 // Cursor is the position of a feed row: its last_activity_at, with the id
 // breaking ties so paging neither skips nor repeats rows.
@@ -179,20 +182,21 @@ func (s *Store) MachineProjects(ctx context.Context, machineID string) ([]Projec
 // warnings to raise a drift banner (hub.md §4.7).
 const driftWindow = 7 * 24 * time.Hour
 
-// Drift is one drift banner: Sessions of a Source version with Parse warnings.
-type Drift struct {
+// DriftBanner is one drift banner: Sessions of a Source version with Parse warnings.
+type DriftBanner struct {
 	Source        string
 	SourceVersion string // "" when unknown
 	Sessions      int
 }
 
 // DriftBanners lists each (source, source_version) with Parse warnings where
-// at least one Session with warnings was active in the last 7 days.
-func (s *Store) DriftBanners(ctx context.Context) ([]Drift, error) {
+// at least one Session with warnings was active in the last 7 days. It counts
+// top-level Sessions, the ones its "has warnings" feed link can show.
+func (s *Store) DriftBanners(ctx context.Context) ([]DriftBanner, error) {
 	rows, err := s.read.QueryContext(ctx, `
 		SELECT s.source, coalesce(s.source_version, ''), count(*)
 		FROM sessions s
-		WHERE EXISTS (SELECT 1 FROM parse_warnings w WHERE w.session_id = s.id)
+		WHERE s.parent_session_id IS NULL AND `+hasParseWarnings+`
 		GROUP BY s.source, coalesce(s.source_version, '')
 		HAVING max(coalesce(s.last_activity_at, 0)) >= ?
 		ORDER BY s.source, coalesce(s.source_version, '')`, s.now()-driftWindow.Milliseconds())
@@ -200,9 +204,9 @@ func (s *Store) DriftBanners(ctx context.Context) ([]Drift, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Drift
+	var out []DriftBanner
 	for rows.Next() {
-		var d Drift
+		var d DriftBanner
 		if err := rows.Scan(&d.Source, &d.SourceVersion, &d.Sessions); err != nil {
 			return nil, err
 		}

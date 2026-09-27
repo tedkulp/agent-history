@@ -396,17 +396,9 @@ func buildMessages(in parser.Input, path []*line, warn *parser.Warnings) ([]pars
 				continue
 			}
 			flush()
-			// The summary line that follows a boundary is the same compaction:
-			// one marker, with the summary as its text.
-			text := "Conversation compacted"
+			var text string
 			if json.Unmarshal(l.Content, &text) != nil || text == "" {
-				text = "Conversation compacted"
-			}
-			if i+1 < len(path) && path[i+1].Type == "user" && path[i+1].IsCompactSummary {
-				i++
-				if s := userText(path[i]); s != "" {
-					text = s
-				}
+				text = parser.CompactionText
 			}
 			marker(l, parser.MessageAssistant, parser.MarkerCompaction, text)
 		case "attachment":
@@ -420,13 +412,27 @@ func buildMessages(in parser.Input, path []*line, warn *parser.Warnings) ([]pars
 				continue
 			}
 			flush()
+			m := parser.Message{ID: parser.SafeID(l.UUID), Role: parser.MessageUser, Timestamp: l.ts}
 			var prompt string
-			if json.Unmarshal(a.Prompt, &prompt) != nil {
+			if json.Unmarshal(a.Prompt, &prompt) == nil {
+				addText(&m, prompt)
+			} else {
+				// A queued prompt with images is a block list.
+				for _, bl := range contentBlocks(a.Prompt) {
+					switch bl.Type {
+					case "text":
+						addText(&m, bl.Text)
+					case "image":
+						b.addImage(&m, bl, l.raw)
+					default:
+						b.addUnknown(&m, bl)
+					}
+				}
+			}
+			if len(m.Parts) == 0 {
 				warn.Add(parser.WarnMissingField, "attachment.prompt", string(l.raw))
 				continue
 			}
-			m := parser.Message{ID: parser.SafeID(l.UUID), Role: parser.MessageUser, Timestamp: l.ts}
-			addText(&m, prompt)
 			msgs = append(msgs, m)
 		case "user":
 			kind, blocks, text := classifyUser(l, warn)
@@ -660,41 +666,45 @@ func (b *builder) stitchSpill(out, callID string) string {
 	return out
 }
 
-// What a user line becomes (claude-code.md §3.3).
+// userKind is what a user line becomes (claude-code.md §3.3).
+type userKind int
+
 const (
-	userMessage     = iota // a user Message
-	userToolResults        // only tool results: no Message
-	userSkip               // injected context or command output: Raw only
-	userCommand            // a slash_command marker
-	userCompaction         // a compaction marker with the summary
+	userMessage     userKind = iota // a user Message
+	userToolResults                 // only tool results: no Message
+	userSkip                        // injected context or command output: Raw only
+	userCommand                     // a slash_command marker
+	userCompaction                  // a compaction marker with the summary
 )
 
-// userBlocks returns a user line's content blocks, or nil for string content.
-func userBlocks(l *line) []block {
+// userContent is a user line's message.content, or ok=false when the
+// message doesn't decode.
+func userContent(l *line) (content json.RawMessage, ok bool) {
 	var m struct {
 		Content json.RawMessage `json:"content"`
 	}
 	if json.Unmarshal(l.Message, &m) != nil {
-		return nil
+		return nil, false
 	}
-	return contentBlocks(m.Content)
+	return m.Content, true
+}
+
+// userBlocks returns a user line's content blocks, or nil for string content.
+func userBlocks(l *line) []block {
+	c, _ := userContent(l)
+	return contentBlocks(c)
 }
 
 // userText is a user line's text: its string content, or its text blocks
 // joined by newlines.
 func userText(l *line) string {
-	var m struct {
-		Content json.RawMessage `json:"content"`
-	}
-	if json.Unmarshal(l.Message, &m) != nil {
-		return ""
-	}
+	c, _ := userContent(l)
 	var s string
-	if json.Unmarshal(m.Content, &s) == nil {
+	if json.Unmarshal(c, &s) == nil {
 		return s
 	}
 	var texts []string
-	for _, b := range contentBlocks(m.Content) {
+	for _, b := range contentBlocks(c) {
 		if b.Type == "text" {
 			texts = append(texts, b.Text)
 		}
@@ -725,22 +735,20 @@ func commandText(s string) string {
 
 // classifyUser classifies a user line and returns its content blocks (string
 // content comes back as one text block) or, for a marker, its text.
-func classifyUser(l *line, warn *parser.Warnings) (kind int, blocks []block, text string) {
+func classifyUser(l *line, warn *parser.Warnings) (kind userKind, blocks []block, text string) {
 	if l.IsMeta {
 		return userSkip, nil, ""
 	}
 	if l.IsCompactSummary {
 		return userCompaction, nil, userText(l)
 	}
-	var m struct {
-		Content json.RawMessage `json:"content"`
-	}
-	if json.Unmarshal(l.Message, &m) != nil {
+	content, ok := userContent(l)
+	if !ok {
 		warn.Add(parser.WarnMissingField, "message", string(l.raw))
 		return userSkip, nil, ""
 	}
 	var s string
-	if json.Unmarshal(m.Content, &s) == nil {
+	if json.Unmarshal(content, &s) == nil {
 		// A skill invocation writes <command-message> before <command-name>;
 		// both are the same slash-command line.
 		if strings.HasPrefix(s, "<command-name>") || strings.HasPrefix(s, "<command-message>") {
@@ -753,7 +761,7 @@ func classifyUser(l *line, warn *parser.Warnings) (kind int, blocks []block, tex
 		}
 		return userMessage, []block{{Type: "text", Text: s}}, ""
 	}
-	blocks = contentBlocks(m.Content)
+	blocks = contentBlocks(content)
 	if len(blocks) == 0 {
 		warn.Add(parser.WarnMissingField, "message.content", string(l.raw))
 		return userSkip, nil, ""

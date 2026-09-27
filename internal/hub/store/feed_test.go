@@ -203,7 +203,8 @@ func TestFeedWarningsAndDriftBanners(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Drift{{Source: "claude-code", SourceVersion: "2.1.1", Sessions: 2}, {Source: "codex", SourceVersion: "0.52", Sessions: 1}}
+	// The child's warnings raise no banner: its link couldn't list it.
+	want := []DriftBanner{{Source: "claude-code", SourceVersion: "2.1.1", Sessions: 2}}
 	if !reflect.DeepEqual(drift, want) {
 		t.Errorf("drift = %+v", drift)
 	}
