@@ -127,4 +127,6 @@ const (
 	ErrUnsupportedEncoding = "unsupported_encoding"
 	ErrInternal            = "internal"
 	ErrCollectorTooOld     = "collector_too_old"
+	ErrBusy                = "busy"
+	ErrInsufficientStorage = "insufficient_storage"
 )

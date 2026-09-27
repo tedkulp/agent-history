@@ -259,7 +259,7 @@ func (s *server) records(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	if err != nil {
-		s.internal(w, r, err)
+		s.storeFailure(w, r, err)
 		return
 	}
 	s.log.Debug("ingested chunk", "machine", id, "source", source, "key", key, "mode", mode, "offset", offset, "bytes", len(data), "version", st.Version)
@@ -287,6 +287,22 @@ func decompress(compressed []byte) ([]byte, error) {
 func (s *server) fail(w http.ResponseWriter, r *http.Request, status int, e protocol.Error) {
 	s.log.Warn("rejected request", "method", r.Method, "path", r.URL.Path, "status", status, "error", e.Error, "message", e.Message)
 	writeJSON(w, status, e)
+}
+
+// storeFailure answers a failed ingest write: 503 when the database stayed
+// locked, 507 when the disk is full, else 500 (hub.md §4.10). The Collector
+// backs off on each.
+func (s *server) storeFailure(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, store.ErrBusy):
+		s.log.Warn("database busy", "method", r.Method, "path", r.URL.Path, "err", err)
+		writeJSON(w, http.StatusServiceUnavailable, protocol.Error{Error: protocol.ErrBusy})
+	case errors.Is(err, store.ErrDiskFull):
+		s.log.Error("disk full", "method", r.Method, "path", r.URL.Path, "err", err)
+		writeJSON(w, http.StatusInsufficientStorage, protocol.Error{Error: protocol.ErrInsufficientStorage})
+	default:
+		s.internal(w, r, err)
+	}
 }
 
 func (s *server) internal(w http.ResponseWriter, r *http.Request, err error) {

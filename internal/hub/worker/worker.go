@@ -84,12 +84,30 @@ func (w *Worker) RunOnce(ctx context.Context) (worked bool, nextAt int64, err er
 	}
 
 	start := time.Now()
-	res, perr := safeParse(p, in.Input)
-	if perr != nil {
-		w.log.Warn("parse failed", "session", job.SessionID, "source", in.Source, "err", perr)
-		return true, 0, w.store.SaveFailure(ctx, job, p.Version(), perr.Error())
+	type parsed struct {
+		res parser.Result
+		err error
 	}
-	if err := w.store.SaveParse(ctx, job, p.Version(), res); err != nil {
+	done := make(chan parsed, 1)
+	go func() {
+		res, err := safeParse(p, in.Input)
+		done <- parsed{res, err}
+	}()
+	var out parsed
+	select {
+	case out = <-done:
+	case <-ctx.Done():
+		// Shutting down: drop the parse, keep the queue row (hub.md §4.1).
+		return false, 0, ctx.Err()
+	}
+	// A save that has started finishes even if shutdown begins meanwhile.
+	saveCtx := context.WithoutCancel(ctx)
+	if out.err != nil {
+		w.log.Warn("parse failed", "session", job.SessionID, "source", in.Source, "err", out.err)
+		return true, 0, w.store.SaveFailure(saveCtx, job, p.Version(), out.err.Error())
+	}
+	res := out.res
+	if err := w.store.SaveParse(saveCtx, job, p.Version(), res); err != nil {
 		return true, 0, err
 	}
 	w.log.Debug("parsed session", "session", job.SessionID, "source", in.Source, "messages", len(res.Messages), "duration", time.Since(start))

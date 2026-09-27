@@ -125,3 +125,49 @@ func TestParserPanicKeepsPreviousTranscriptAndIngest(t *testing.T) {
 		t.Errorf("Transcript: parsed=%v error=%q msgs=%d ok=%v; want the last good one", h.Parsed, h.ParseError, len(msgs), ok)
 	}
 }
+
+// blocking parses only once release is closed.
+type blocking struct {
+	*claudecode.Parser
+	started, release chan struct{}
+}
+
+func (b blocking) Parse(in parser.Input) (parser.Result, error) {
+	close(b.started)
+	<-b.release
+	return b.Parser.Parse(in)
+}
+
+func TestShutdownDropsRunningParseAndKeepsQueueRow(t *testing.T) {
+	b := blocking{claudecode.New(), make(chan struct{}), make(chan struct{})}
+	defer close(b.release)
+	reg := parser.NewRegistry(b)
+	s := setup(t, reg)
+	w := New(s, reg, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() {
+		_, _, err := w.RunOnce(ctx)
+		errc <- err
+	}()
+	<-b.started
+	cancel()
+	select {
+	case err := <-errc:
+		if err == nil {
+			t.Fatal("RunOnce saved a parse after shutdown began")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunOnce waited for a running parse on shutdown")
+	}
+
+	// The next start parses the Session: its queue row stayed.
+	reg[protocol.SourceClaudeCode] = claudecode.New()
+	if worked, _, err := w.RunOnce(context.Background()); !worked || err != nil {
+		t.Fatalf("after restart: worked=%v err=%v", worked, err)
+	}
+	if feed, _ := s.Feed(context.Background(), store.FeedFilter{}, 10); len(feed) != 1 || feed[0].Title != "hello" {
+		t.Fatalf("feed = %+v", feed)
+	}
+}

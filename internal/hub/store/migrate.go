@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -51,8 +52,11 @@ func loadMigrations() ([]migration, error) {
 }
 
 // migrate applies pending migrations on the writer, each in its own
-// transaction that also sets PRAGMA user_version.
-func (s *Store) migrate(ctx context.Context) error {
+// transaction that also sets PRAGMA user_version (hub.md §4.1 steps 3 to 5).
+// A database from a newer Hub is refused. A database that isn't new is first
+// copied to backupDir/pre-migrate-<user_version>.db; if that fails, nothing
+// is migrated.
+func (s *Store) migrate(ctx context.Context, backupDir string) error {
 	migs, err := loadMigrations()
 	if err != nil {
 		return err
@@ -63,6 +67,16 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 	if current > len(migs) {
 		return fmt.Errorf("database is from a newer Hub (schema %d, this Hub knows %d); restore a pre-migrate backup to roll back", current, len(migs))
+	}
+	if current > 0 && current < len(migs) {
+		if backupDir == "" {
+			return fmt.Errorf("schema %d needs migrating and no backup dir is set for the pre-migrate backup", current)
+		}
+		dst := filepath.Join(backupDir, fmt.Sprintf("pre-migrate-%d.db", current))
+		if err := vacuumInto(ctx, s.write, dst); err != nil {
+			return fmt.Errorf("pre-migrate backup, not migrating: %w", err)
+		}
+		s.log.Info("wrote pre-migrate backup", "path", dst)
 	}
 	for _, m := range migs[current:] {
 		if err := s.apply(ctx, m); err != nil {

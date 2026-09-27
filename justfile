@@ -52,7 +52,7 @@ check: lint test
 # Run the Hub locally with its database in .data/
 hub: generate
     mkdir -p .data
-    go run ./cmd/hub serve --listen :8080 --data .data --log-level debug
+    go run ./cmd/hub serve --listen :8080 --data .data --backup-dir .data/backups --log-level debug
 
 # Run the Collector in the foreground
 collector:

@@ -13,12 +13,15 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"slices"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/tedkulp/agent-history/internal/buildinfo"
 	"github.com/tedkulp/agent-history/internal/hub/api"
+	"github.com/tedkulp/agent-history/internal/hub/backup"
 	"github.com/tedkulp/agent-history/internal/hub/config"
 	"github.com/tedkulp/agent-history/internal/hub/parser"
 	"github.com/tedkulp/agent-history/internal/hub/parser/claudecode"
@@ -33,6 +36,7 @@ const usage = `usage: agent-history-hub <command>
 commands:
   serve       run the Hub (flags: agent-history-hub serve --help)
   healthcheck exit 0 if the Hub on AGENT_HISTORY_LISTEN answers /healthz
+  backup      write one backup now, next to the running Hub
   reparse     --all | --source <source> | --session <id>
               queue Sessions to be parsed again by the running Hub
   version     print the version
@@ -49,6 +53,8 @@ func main() {
 		err = serve(os.Args[2:])
 	case "healthcheck":
 		err = healthcheck(os.Args[2:])
+	case "backup":
+		err = backupNow(os.Args[2:])
 	case "reparse":
 		err = reparse(os.Args[2:])
 	case "version":
@@ -99,6 +105,7 @@ func startup(ctx context.Context, st *store.Store, log *slog.Logger) error {
 func reparse(args []string) error {
 	fs := flag.NewFlagSet("reparse", flag.ContinueOnError)
 	data := fs.String("data", envOr("AGENT_HISTORY_DATA", "/data"), "directory holding hub.db")
+	backupDir := fs.String("backup-dir", envOr("AGENT_HISTORY_BACKUP_DIR", "/backups"), "backup target directory")
 	all := fs.Bool("all", false, "every Session")
 	source := fs.String("source", "", "every Session of one Source")
 	session := fs.Int64("session", 0, "one Session, by the id in its Transcript URL")
@@ -120,7 +127,7 @@ func reparse(args []string) error {
 	// The live Hub owns the info log; this process prints only its count.
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
 	ctx := context.Background()
-	st, err := store.Open(ctx, *data, parsers)
+	st, err := store.OpenWith(ctx, *data, parsers, store.Options{BackupDir: *backupDir})
 	if err != nil {
 		return err
 	}
@@ -134,6 +141,33 @@ func reparse(args []string) error {
 		sessions = "Session"
 	}
 	fmt.Printf("queued %d %s for re-parse\n", n, sessions)
+	return nil
+}
+
+// backupNow writes hub-YYYYMMDD-HHMMSS.db from a second process next to the
+// live Hub (hub.md §2.2, §4.8).
+func backupNow(args []string) error {
+	fs := flag.NewFlagSet("backup", flag.ContinueOnError)
+	data := fs.String("data", envOr("AGENT_HISTORY_DATA", "/data"), "directory holding hub.db")
+	backupDir := fs.String("backup-dir", envOr("AGENT_HISTORY_BACKUP_DIR", "/backups"), "backup target directory")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return errors.New("usage: agent-history-hub backup [--data <dir>] [--backup-dir <dir>]")
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	ctx := context.Background()
+	st, err := store.OpenWith(ctx, *data, parsers, store.Options{BackupDir: *backupDir})
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	dst := filepath.Join(*backupDir, backup.ManualName(time.Now()))
+	if err := st.Backup(ctx, dst); err != nil {
+		return err
+	}
+	fmt.Println(dst)
 	return nil
 }
 
@@ -172,7 +206,7 @@ func serve(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	st, err := store.Open(ctx, cfg.Data, parsers)
+	st, err := store.OpenWith(ctx, cfg.Data, parsers, store.Options{BackupDir: cfg.BackupDir})
 	if err != nil {
 		return err
 	}
@@ -181,13 +215,22 @@ func serve(args []string) error {
 		return err
 	}
 
-	workerCtx, stopWorker := context.WithCancel(context.Background())
-	workerDone := make(chan struct{})
-	go func() {
-		worker.New(st, parsers, log).Run(workerCtx)
-		close(workerDone)
+	// Background loops stop when bgCtx is cancelled; the deferred shutdown
+	// waits for them, then checkpoints before st.Close (hub.md §4.1).
+	bgCtx, stopBackground := context.WithCancel(context.Background())
+	var bg sync.WaitGroup
+	defer func() {
+		stopBackground()
+		bg.Wait()
+		if err := st.Checkpoint(context.Background()); err != nil {
+			log.Warn("shutdown checkpoint", "err", err)
+		}
 	}()
-	defer func() { stopWorker(); <-workerDone }()
+	bg.Go(func() { worker.New(st, parsers, log).Run(bgCtx) })
+	if cfg.BackupAt != nil {
+		sched := &backup.Scheduler{Store: st, Dir: cfg.BackupDir, At: *cfg.BackupAt, Keep: cfg.BackupKeep, Log: log}
+		bg.Go(func() { sched.Run(bgCtx) })
+	}
 
 	mux := http.NewServeMux()
 	mux.Handle(protocol.APIPrefix+"/", api.New(st, log, api.Floor{HubVersion: buildinfo.Version, Min: cfg.MinCollectorVersion}))
@@ -213,10 +256,12 @@ func serve(args []string) error {
 	case <-ctx.Done():
 	}
 	log.Info("shutting down")
+	// In-flight requests get up to 10 s; after that they are cut off.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Warn("requests still running after 10 s, closing them", "err", err)
+		srv.Close()
 	}
 	return nil
 }

@@ -31,6 +31,7 @@ const readerPoolSize = 4
 
 // Store is the Hub database.
 type Store struct {
+	path    string  // hub.db
 	write   *sql.DB // exactly one connection: every write goes through it
 	read    *sql.DB
 	log     *slog.Logger
@@ -50,10 +51,24 @@ func (e *ConflictError) Error() string {
 	return fmt.Sprintf("offset mismatch: hub has length %d sha256 %s", e.Length, e.Sha256)
 }
 
-// Open opens (creating if needed) dataDir/hub.db and applies pending
+// Options are the optional settings of OpenWith.
+type Options struct {
+	// BackupDir receives pre-migrate-<user_version>.db before migrations run
+	// on a database that isn't new (hub.md §4.1). When empty, such a
+	// database is refused rather than migrated without a backup.
+	BackupDir string
+}
+
+// Open is OpenWith without Options, for a database that is new or already
+// migrated.
+func Open(ctx context.Context, dataDir string, parsers parser.Registry) (*Store, error) {
+	return OpenWith(ctx, dataDir, parsers, Options{})
+}
+
+// OpenWith opens (creating if needed) dataDir/hub.db and applies pending
 // migrations. parsers maps Record keys to Sessions on ingest; a Source with
 // no parser leaves its records unattached.
-func Open(ctx context.Context, dataDir string, parsers parser.Registry) (*Store, error) {
+func OpenWith(ctx context.Context, dataDir string, parsers parser.Registry, opts Options) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, err
 	}
@@ -80,8 +95,8 @@ func Open(ctx context.Context, dataDir string, parsers parser.Registry) (*Store,
 	}
 	read.SetMaxOpenConns(readerPoolSize)
 
-	s := &Store{write: write, read: read, log: slog.Default(), parsers: parsers, clock: time.Now, wake: make(chan struct{}, 1)}
-	if err := s.migrate(ctx); err != nil {
+	s := &Store{path: path, write: write, read: read, log: slog.Default(), parsers: parsers, clock: time.Now, wake: make(chan struct{}, 1)}
+	if err := s.migrate(ctx, opts.BackupDir); err != nil {
 		s.Close()
 		return nil, err
 	}
@@ -320,8 +335,10 @@ type applyFunc func(tx *sql.Tx, cur *current, t int64) (st protocol.RecordState,
 // (protocol.md §4.4): it registers the Machine, loads the record's current
 // version (creating and attaching the record row if needed), lets apply
 // write the chunk, and live-enqueues the Session when apply reports the
-// content changed.
-func (s *Store) ingest(ctx context.Context, machineID, source, recordKey string, apply applyFunc) (protocol.RecordState, error) {
+// content changed. A busy or full database comes back as ErrBusy or
+// ErrDiskFull.
+func (s *Store) ingest(ctx context.Context, machineID, source, recordKey string, apply applyFunc) (_ protocol.RecordState, err error) {
+	defer func() { err = classify(err) }()
 	tx, err := s.write.BeginTx(ctx, nil)
 	if err != nil {
 		return protocol.RecordState{}, err

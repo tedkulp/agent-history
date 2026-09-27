@@ -1,5 +1,7 @@
 # Sample compose file for the Hub. See docs/hub-deploy.md before running it:
 # ./data must be on a local disk, and owned by uid 1000 or by `user:`.
+# Backups, and rolling back an upgrade from ./backups/pre-migrate-*.db, are
+# in the same doc.
 services:
   hub:
     image: ghcr.io/tedkulp/agent-history-hub:latest

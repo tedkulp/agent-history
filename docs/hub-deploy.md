@@ -48,6 +48,42 @@ If you change `AGENT_HISTORY_LISTEN`, change the port mapping in `compose.yaml` 
 
 `GET /healthz` returns `200 ok` once the Hub has migrated its database and the database answers, and `503` otherwise. The image's `HEALTHCHECK` runs `agent-history-hub healthcheck`, which calls it, so the image needs no curl.
 
+## Backups
+
+Every file the Hub writes to `/backups` is a complete, consistent SQLite database that opens on its own in `sqlite3`. Your host's backup tool can copy the directory at any time.
+
+| File | Written | Pruned |
+|---|---|---|
+| `hub-YYYYMMDD.db` | Daily at `AGENT_HISTORY_BACKUP_AT` | Only the newest `AGENT_HISTORY_BACKUP_KEEP` are kept |
+| `hub-YYYYMMDD-HHMMSS.db` | On demand, by `agent-history-hub backup` | Never |
+| `pre-migrate-<n>.db` | Before an upgrade migrates the database from schema `n` | Never |
+
+Take a backup now:
+
+```sh
+docker compose exec hub agent-history-hub backup
+```
+
+Ingest keeps running while a backup is written. A failed daily backup is logged at `error` and tried again the next day. It never stops the Hub. The Hub won't migrate the database if it can't write the `pre-migrate` backup first; `serve` exits with the reason instead.
+
+Delete old manual and `pre-migrate` backups yourself once you no longer need them.
+
+## Rolling back an upgrade
+
+An upgrade that changes the schema writes `pre-migrate-<n>.db` before it migrates. An older image refuses to start on the migrated database, with `database is from a newer Hub; restore a pre-migrate backup to roll back`. To go back:
+
+1. Stop the Hub: `docker compose down`
+2. Copy the backup over the database: `cp backups/pre-migrate-<n>.db data/hub.db`, where `<n>` is the newest number
+3. Delete the WAL files: `rm -f data/hub.db-wal data/hub.db-shm`
+4. Set `image:` in `compose.yaml` to the old version's tag, e.g. `ghcr.io/tedkulp/agent-history-hub:v0.3.1`
+5. Start it: `docker compose up -d`
+
+The Hub loses whatever it ingested after the upgrade. Each Collector's next reconcile against the Hub's manifest re-sends what is still in its Sources on disk.
+
+## Stopping
+
+`docker compose stop` sends `SIGTERM`. The Hub stops accepting connections, gives in-flight requests up to 10 s, lets the parse worker finish its current write, folds the WAL back into `hub.db`, and exits `0`. Every chunk the Hub acked is kept. The default compose stop timeout of 10 s is usually enough; raise `stop_grace_period` if your Hub is busy.
+
 ## TLS
 
 The Hub speaks plain HTTP. For TLS, put a reverse proxy in front of it. With [Caddy](https://caddyserver.com/), which fetches a certificate on its own:
