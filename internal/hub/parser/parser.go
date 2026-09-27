@@ -42,6 +42,7 @@ const (
 	WarnBadLine      = "bad_line"
 	WarnMissingField = "missing_field"
 	WarnOrphan       = "orphan"
+	WarnUnknownType  = "unknown_type"
 )
 
 // Mapping is what MapKey returns for a Record key the parser owns.

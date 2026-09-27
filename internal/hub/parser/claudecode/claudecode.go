@@ -299,7 +299,7 @@ type result struct {
 	raw  []byte
 }
 
-// buildMessages turns path lines into Messages (claude-code.md §3.3).
+// buildMessages turns path lines into Messages (claude-code.md §3.3, §3.4).
 // Assistant lines sharing a message.id form one Message. A tool-result-only
 // user line doesn't break the group: parallel tool calls interleave each
 // tool_use line with its result. Any other user line does.
@@ -416,9 +416,10 @@ func addText(m *parser.Message, text string) {
 }
 
 // addImage adds an image Part for a base64 image block. Other sources carry
-// no bytes and are skipped.
+// no bytes: they are skipped with an unknown_type warning.
 func (b *builder) addImage(m *parser.Message, bl block, raw []byte) {
 	if bl.Source == nil || bl.Source.Type != "base64" {
+		b.warn.Add(parser.WarnUnknownType, "image", string(raw))
 		return
 	}
 	data, err := base64.StdEncoding.DecodeString(bl.Source.Data)

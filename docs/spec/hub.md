@@ -92,7 +92,7 @@ All on one listener, plain HTTP.
 | `GET /` | Home: the feed, or search results when `q` is set. Query params: `q`, `machine`, `project` (`-` = "No project"), `source`, `warnings=1`, `before` and `before_id` (feed/search cursor). |
 | `GET /sessions/{id}` | A Transcript page. Optional `hl=<terms>` highlights search terms. Messages carry anchors `#m-<message id>`. |
 | `GET /sessions/{id}/parts/{part id}/output` | htmx fragment: the full output of one Tool call |
-| `GET /blobs/{sha256}` | An image blob with its stored MIME type and `Cache-Control: public, max-age=31536000, immutable` |
+| `GET /blobs/{sha256}` | An image blob with its stored MIME type and `Cache-Control: public, max-age=31536000, immutable`. Only PNG, JPEG, GIF and WebP are served as themselves; any other type (SVG included) is served as `application/octet-stream` with `X-Content-Type-Options: nosniff`, so a blob can't run script. |
 | `GET /static/…` | Embedded CSS and JS |
 | `GET /healthz` | `200 ok` once migrations are done and the database answers `SELECT 1`; `503` otherwise |
 

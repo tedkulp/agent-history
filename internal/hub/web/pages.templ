@@ -1,6 +1,10 @@
 package web
 
-import "strconv"
+import (
+	"strconv"
+
+	"github.com/tedkulp/agent-history/internal/hub/parser"
+)
 
 templ layout(title string) {
 	<!DOCTYPE html>
@@ -135,9 +139,9 @@ templ toolCluster(c chunkView) {
 					}
 					<span class={ "st", t.Status }>
 						switch t.Status {
-							case "ok":
+							case parser.StatusOK:
 								✓
-							case "error":
+							case parser.StatusError:
 								✗
 							default:
 								⋯

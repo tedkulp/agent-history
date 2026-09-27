@@ -468,3 +468,14 @@ func TestParseResultBeforeCallDoesNotMerge(t *testing.T) {
 		t.Errorf("status = %q", c.Status)
 	}
 }
+
+func TestParseImageWithoutBytesWarns(t *testing.T) {
+	img := map[string]any{"type": "image", "source": map[string]any{"type": "url", "url": "https://example.com/a.png"}}
+	res := parse(t, jsonl(t, userLine("u1", "", "2026-09-01T10:00:00.000Z", []any{text("see"), img})), nil)
+	if got := flatten(res.Messages); len(got) != 1 || len(got[0].Texts) != 1 {
+		t.Errorf("messages = %+v", got)
+	}
+	if len(res.Warnings) != 1 || res.Warnings[0].Kind != "unknown_type" || res.Warnings[0].SourceType != "image" {
+		t.Errorf("warnings = %+v", res.Warnings)
+	}
+}

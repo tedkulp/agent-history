@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -125,7 +126,7 @@ func clusterLabel(tools []toolView) string {
 		failed = map[string]bool{}
 	)
 	for _, t := range tools {
-		if !failed[t.Name] && !contains(names, t.Name) {
+		if !slices.Contains(names, t.Name) {
 			names = append(names, t.Name)
 		}
 		if t.Status == parser.StatusError {
@@ -142,15 +143,6 @@ func clusterLabel(tools []toolView) string {
 		calls = "tool call"
 	}
 	return fmt.Sprintf("⚙ %d %s · %s", len(tools), calls, strings.Join(names, ", "))
-}
-
-func contains(ss []string, s string) bool {
-	for _, v := range ss {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }
 
 // summaryKeys are input fields that make a good one-line summary of a call.
