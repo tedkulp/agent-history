@@ -9,6 +9,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -49,12 +50,28 @@ func New(s *store.Store, log *slog.Logger) http.Handler {
 	mux.HandleFunc("GET /sessions/{id}", srv.transcript)
 	mux.HandleFunc("GET /sessions/{id}/parts/{part}/output", srv.toolOutput)
 	mux.HandleFunc("GET /blobs/{sha}", srv.blob)
+	mux.HandleFunc("GET /healthz", srv.healthz)
 	mux.HandleFunc("GET /static/chroma.css", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 		w.Write(chromaCSS)
 	})
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(static)))
 	return mux
+}
+
+// healthz answers 200 once the database answers SELECT 1. A Store exists
+// only after its migrations ran, and serve starts listening only after the
+// start-up passes (hub.md §4.1), so a 200 means the Hub is ready.
+func (s *server) healthz(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if err := s.store.Ping(ctx); err != nil {
+		s.log.Error("health check failed", "err", err)
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	io.WriteString(w, "ok\n")
 }
 
 type feedDay struct {

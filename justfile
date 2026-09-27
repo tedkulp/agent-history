@@ -16,6 +16,15 @@ build: generate
     CGO_ENABLED=0 go build -ldflags "{{ldflags}}" -o bin/agent-history ./cmd/collector
     CGO_ENABLED=0 go build -ldflags "{{ldflags}}" -o bin/agent-history-hub ./cmd/hub
 
+# Build the Hub image for this machine's arch as agent-history-hub:dev
+image: generate
+    #!/usr/bin/env sh
+    set -eu
+    arch=$(go env GOARCH)
+    rm -rf bin/image
+    CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -ldflags "{{ldflags}}" -o bin/image/linux/$arch/agent-history-hub ./cmd/hub
+    docker build --platform linux/$arch -f Dockerfile -t agent-history-hub:dev bin/image
+
 # Run all tests, or one package: just test ./internal/collector/service
 test pkg="./...":
     go test {{pkg}}

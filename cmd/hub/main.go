@@ -14,12 +14,12 @@ import (
 	"os"
 	"os/signal"
 	"slices"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/tedkulp/agent-history/internal/buildinfo"
 	"github.com/tedkulp/agent-history/internal/hub/api"
+	"github.com/tedkulp/agent-history/internal/hub/config"
 	"github.com/tedkulp/agent-history/internal/hub/parser"
 	"github.com/tedkulp/agent-history/internal/hub/parser/claudecode"
 	"github.com/tedkulp/agent-history/internal/hub/store"
@@ -31,10 +31,11 @@ import (
 const usage = `usage: agent-history-hub <command>
 
 commands:
-  serve     run the Hub
-  reparse   --all | --source <source> | --session <id>
-            queue Sessions to be parsed again by the running Hub
-  version   print the version
+  serve       run the Hub (flags: agent-history-hub serve --help)
+  healthcheck exit 0 if the Hub on AGENT_HISTORY_LISTEN answers /healthz
+  reparse     --all | --source <source> | --session <id>
+              queue Sessions to be parsed again by the running Hub
+  version     print the version
 `
 
 func main() {
@@ -46,6 +47,8 @@ func main() {
 	switch os.Args[1] {
 	case "serve":
 		err = serve(os.Args[2:])
+	case "healthcheck":
+		err = healthcheck(os.Args[2:])
 	case "reparse":
 		err = reparse(os.Args[2:])
 	case "version":
@@ -53,6 +56,9 @@ func main() {
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(1)
+	}
+	if errors.Is(err, flag.ErrHelp) {
+		return // the flag set already printed its usage
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "agent-history-hub:", err)
@@ -131,29 +137,39 @@ func reparse(args []string) error {
 	return nil
 }
 
-func serve(args []string) error {
-	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	listen := fs.String("listen", envOr("AGENT_HISTORY_LISTEN", ":8080"), "listen address")
-	data := fs.String("data", envOr("AGENT_HISTORY_DATA", "/data"), "directory holding hub.db")
-	logLevel := fs.String("log-level", envOr("AGENT_HISTORY_LOG_LEVEL", "info"), "debug | info | warn | error")
+// healthcheck exits 0 when the Hub on the configured port answers /healthz
+// with 200, for the image's HEALTHCHECK (hub.md §2.2).
+func healthcheck(args []string) error {
+	fs := flag.NewFlagSet("healthcheck", flag.ContinueOnError)
+	listen := fs.String("listen", envOr("AGENT_HISTORY_LISTEN", ":8080"), "the Hub's listen address")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	var level slog.Level
-	if err := level.UnmarshalText([]byte(strings.ToUpper(*logLevel))); err != nil {
-		return fmt.Errorf("invalid log level %q", *logLevel)
-	}
-	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
-	slog.SetDefault(log)
-	minVersion, err := protocol.EffectiveMinCollectorVersion(os.Getenv("AGENT_HISTORY_MIN_COLLECTOR_VERSION"))
+	url := config.HealthURL(*listen)
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(url)
 	if err != nil {
-		return fmt.Errorf("AGENT_HISTORY_MIN_COLLECTOR_VERSION: %w", err)
+		return err
 	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("%s: %s", url, resp.Status)
+	}
+	return nil
+}
+
+func serve(args []string) error {
+	cfg, err := config.Parse(args, os.LookupEnv)
+	if err != nil {
+		return err
+	}
+	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
+	slog.SetDefault(log)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	st, err := store.Open(ctx, *data, parsers)
+	st, err := store.Open(ctx, cfg.Data, parsers)
 	if err != nil {
 		return err
 	}
@@ -171,17 +187,22 @@ func serve(args []string) error {
 	defer func() { stopWorker(); <-workerDone }()
 
 	mux := http.NewServeMux()
-	mux.Handle(protocol.APIPrefix+"/", api.New(st, log, api.Floor{HubVersion: buildinfo.Version, Min: minVersion}))
+	mux.Handle(protocol.APIPrefix+"/", api.New(st, log, api.Floor{HubVersion: buildinfo.Version, Min: cfg.MinCollectorVersion}))
 	mux.Handle("/", web.New(st, log))
 	srv := &http.Server{
-		Addr:              *listen,
+		Addr:              cfg.Listen,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()
-	log.Info("hub listening", "addr", *listen, "data", *data, "version", buildinfo.Version, "min_collector_version", minVersion)
+	backupAt := "disabled"
+	if cfg.BackupAt != nil {
+		backupAt = cfg.BackupAt.String()
+	}
+	log.Info("hub listening", "addr", cfg.Listen, "data", cfg.Data, "version", buildinfo.Version,
+		"min_collector_version", cfg.MinCollectorVersion, "backup_dir", cfg.BackupDir, "backup_at", backupAt, "backup_keep", cfg.BackupKeep)
 
 	select {
 	case err := <-errc:

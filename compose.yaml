@@ -1,0 +1,15 @@
+# Sample compose file for the Hub. See docs/hub-deploy.md before running it:
+# ./data must be on a local disk, and owned by uid 1000 or by `user:`.
+services:
+  hub:
+    image: ghcr.io/tedkulp/agent-history-hub:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+      - ./backups:/backups
+    environment:
+      TZ: America/New_York
+      # AGENT_HISTORY_BACKUP_KEEP: "7"
+    # user: "1000:1000"   # match the owner of ./data and ./backups

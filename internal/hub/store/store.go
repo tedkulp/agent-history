@@ -93,6 +93,12 @@ func (s *Store) Close() error {
 	return errors.Join(s.read.Close(), s.write.Close())
 }
 
+// Ping checks that the database answers SELECT 1 on a reader connection.
+func (s *Store) Ping(ctx context.Context) error {
+	var one int
+	return s.read.QueryRowContext(ctx, `SELECT 1`).Scan(&one)
+}
+
 func (s *Store) now() int64 { return s.clock().UnixMilli() }
 
 // SetClock replaces the clock, for tests.
