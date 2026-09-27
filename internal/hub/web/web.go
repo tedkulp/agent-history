@@ -91,6 +91,7 @@ type driftBanner struct {
 }
 
 type feedView struct {
+	Params   feedParams
 	Reparse  string // the re-parse banner; "" when no re-parse is queued
 	Banners  []driftBanner
 	Chips    []chipRow
@@ -102,8 +103,9 @@ type feedView struct {
 // noProject is the project param value for "No project".
 const noProject = "-"
 
-// feedParams is the feed's state, all of it in the URL.
+// feedParams is the feed's or search's state, all of it in the URL.
 type feedParams struct {
+	Q                        string // the search box input
 	Machine, Project, Source string
 	Warnings                 bool
 }
@@ -123,7 +125,7 @@ func (p feedParams) filter() store.FeedFilter {
 // url is the feed URL for p plus the extra key/value params.
 func (p feedParams) url(extra ...string) string {
 	v := url.Values{}
-	for k, val := range map[string]string{"machine": p.Machine, "project": p.Project, "source": p.Source} {
+	for k, val := range map[string]string{"q": p.Q, "machine": p.Machine, "project": p.Project, "source": p.Source} {
 		if val != "" {
 			v.Set(k, val)
 		}
@@ -159,9 +161,14 @@ func projectParam(cwd string) string {
 
 func (s *server) feed(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	p := feedParams{Machine: q.Get("machine"), Project: q.Get("project"), Source: q.Get("source"), Warnings: q.Get("warnings") == "1"}
+	p := feedParams{Q: q.Get("q"), Machine: q.Get("machine"), Project: q.Get("project"), Source: q.Get("source"), Warnings: q.Get("warnings") == "1"}
 	if p.Machine == "" {
 		p.Project = ""
+	}
+	// Input that leaves no terms shows the feed (hub.md §3.7).
+	if terms := store.ParseQuery(p.Q); len(terms) > 0 {
+		s.search(w, r, p, terms)
+		return
 	}
 	f := p.filter()
 	continuesDay := ""
@@ -176,7 +183,7 @@ func (s *server) feed(w http.ResponseWriter, r *http.Request) {
 		s.internal(w, r, err)
 		return
 	}
-	v := feedView{Filtered: p != feedParams{}}
+	v := feedView{Params: p, Filtered: p != feedParams{Q: p.Q}}
 	if len(rows) > feedPageSize {
 		rows = rows[:feedPageSize]
 		last := rows[len(rows)-1]
@@ -217,7 +224,7 @@ func (s *server) chips(ctx context.Context, p feedParams) ([]chipRow, error) {
 	for _, m := range machines {
 		mrow.Chips = append(mrow.Chips, toggle(chip{Label: m.Label, Title: m.ID}, p.Machine, m.ID, func(v string) feedParams {
 			// A Project belongs to one Machine, so switching Machine drops it.
-			return feedParams{Machine: v, Source: p.Source, Warnings: p.Warnings}
+			return feedParams{Q: p.Q, Machine: v, Source: p.Source, Warnings: p.Warnings}
 		}))
 	}
 	srow := chipRow{Label: "Source"}

@@ -87,3 +87,22 @@ details.notes ul{margin:6px 0;padding-left:18px} details.notes pre{margin:4px 0 
 .outline a:hover{color:var(--acc);border-color:var(--acc);text-decoration:none}
 .outline .n{font-size:11px}
 @media (max-width:760px){.tr{grid-template-columns:minmax(0,1fr)}.outline{display:none}}
+
+/* Search: the box, ranked hits and a facet sidebar (hub.md §4.7). */
+mark{background:var(--mark);color:inherit;border-radius:2px;padding:0 1px}
+.msg.user .bubble mark{color:#000}
+.search{margin-bottom:10px}
+.search input{width:100%;font:17px var(--sans);padding:11px 16px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);box-shadow:0 1px 3px #0001}
+.results{display:grid;grid-template-columns:minmax(0,1fr) 220px;gap:24px}
+.hit{display:block;padding:10px 12px;border-radius:8px;color:var(--ink);border:1px solid transparent}
+.hit:hover{border-color:var(--line);background:var(--panel);text-decoration:none}
+.hit .t{font-weight:500} .hit .child{font-size:12px;color:var(--dim)}
+.hit .snip{font-size:13px;overflow-wrap:anywhere} .hit .m{font-size:12px;color:var(--dim);margin-top:2px}
+.facets h4{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim);margin:14px 0 4px} .facets h4:first-child{margin-top:0}
+.facets a{display:flex;justify-content:space-between;gap:8px;font-size:13px;padding:2px 0;color:var(--ink)}
+.facets a span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap} .facets a .n{color:var(--dim)}
+.facets a.on{color:var(--acc);font-weight:600}
+@media (max-width:760px){.results{grid-template-columns:minmax(0,1fr)}.facets{order:-1}}
+
+/* Arriving from search: the target Message flashes. */
+.msg:target{animation:flash 2s ease-out} @keyframes flash{from{background:var(--mark)}}

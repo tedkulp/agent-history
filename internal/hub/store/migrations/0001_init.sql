@@ -128,3 +128,13 @@ CREATE TABLE parse_queue (
   enqueued_at INTEGER NOT NULL,
   not_before  INTEGER NOT NULL
 );
+
+-- One row per Message (its text Parts plus each Tool call's name and input)
+-- and one title row per Session (hub.md §3.7). Rebuilt with each parse.
+CREATE VIRTUAL TABLE search USING fts5(
+  body,
+  kind       UNINDEXED,   -- 'message' | 'title'
+  session_id UNINDEXED,
+  message_id UNINDEXED,   -- NULL for title rows
+  tokenize = 'unicode61 remove_diacritics 2'
+);

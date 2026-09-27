@@ -16,6 +16,7 @@ templ layout(title string) {
 			<link rel="stylesheet" href="/static/app.css"/>
 			<link rel="stylesheet" href="/static/chroma.css"/>
 			<script src="/static/htmx.min.js" defer></script>
+			<script src="/static/app.js" defer></script>
 		</head>
 		<body>
 			<div class="wrap">
@@ -30,29 +31,54 @@ templ sourceBadge(source string) {
 	<span class={ "badge", source }>{ source }</span>
 }
 
+// searchForm is the search box. Hidden fields carry the active chips, which
+// apply to the search too (hub.md §4.7).
+templ searchForm(p feedParams) {
+	<form class="search" action="/">
+		<input type="search" name="q" value={ p.Q } placeholder="Search every Transcript on every Machine…" aria-label="Search" autofocus/>
+		if p.Machine != "" {
+			<input type="hidden" name="machine" value={ p.Machine }/>
+		}
+		if p.Project != "" {
+			<input type="hidden" name="project" value={ p.Project }/>
+		}
+		if p.Source != "" {
+			<input type="hidden" name="source" value={ p.Source }/>
+		}
+		if p.Warnings {
+			<input type="hidden" name="warnings" value="1"/>
+		}
+	</form>
+}
+
+templ chipRows(rows []chipRow) {
+	<div class="chips">
+		for _, row := range rows {
+			if len(row.Chips) > 0 {
+				<span class="lab">{ row.Label }</span>
+				for _, c := range row.Chips {
+					<a class={ "chip", templ.KV("on", c.On) } href={ templ.SafeURL(c.Href) } title={ c.Title }>
+						{ c.Label }
+						if c.Count > 0 {
+							<span class="n">{ strconv.Itoa(c.Count) }</span>
+						}
+					</a>
+				}
+			}
+		}
+	</div>
+}
+
 templ feedPage(v feedView) {
 	@layout("Agent History") {
+		@searchForm(v.Params)
 		if v.Reparse != "" {
 			<div class="banner reparse">⟳ { v.Reparse }</div>
 		}
 		for _, b := range v.Banners {
 			<a class="banner" href={ templ.SafeURL(b.Href) }>⚠ { b.Text }</a>
 		}
-		<div class="chips">
-			for _, row := range v.Chips {
-				if len(row.Chips) > 0 {
-					<span class="lab">{ row.Label }</span>
-					for _, c := range row.Chips {
-						<a class={ "chip", templ.KV("on", c.On) } href={ templ.SafeURL(c.Href) } title={ c.Title }>
-							{ c.Label }
-							if c.Count > 0 {
-								<span class="n">{ strconv.Itoa(c.Count) }</span>
-							}
-						</a>
-					}
-				}
-			}
-		</div>
+		@chipRows(v.Chips)
 		if len(v.Days) == 0 {
 			if v.Filtered {
 				<p class="dim">No Sessions match.</p>
@@ -88,6 +114,63 @@ templ feedRows(v feedView) {
 				</span>
 			</a>
 		}
+	}
+	if v.More != "" {
+		<a class="more" href={ templ.SafeURL(v.More) } hx-get={ v.More } hx-swap="outerHTML">Load more</a>
+	}
+}
+
+// searchPage is the search results: ranked hits beside a facet sidebar
+// (hub.md §4.7).
+templ searchPage(v searchView) {
+	@layout(v.Params.Q + " · Agent History") {
+		@searchForm(v.Params)
+		@chipRows(v.Chips)
+		<div class="results">
+			<div class="hits">
+				if len(v.Hits) == 0 {
+					<p class="dim">No matches.</p>
+				}
+				@searchHits(v)
+			</div>
+			<aside class="facets">
+				for _, g := range v.Facets {
+					if len(g.Items) > 0 {
+						<h4>{ g.Label }</h4>
+						for _, f := range g.Items {
+							<a class={ templ.KV("on", f.On) } href={ templ.SafeURL(f.Href) } title={ f.Title }>
+								<span>{ f.Label }</span>
+								<span class="n">{ strconv.Itoa(f.Hits) }</span>
+							</a>
+						}
+					}
+				}
+			</aside>
+		</div>
+	}
+}
+
+// searchHits is one page of hits, followed by its "Load more" link. htmx
+// swaps the link for the next page.
+templ searchHits(v searchView) {
+	for _, h := range v.Hits {
+		<a class="hit" href={ templ.SafeURL(h.Href) }>
+			<div class="t">
+				@h.Title
+			</div>
+			if h.ChildOf != "" {
+				<div class="child">{ h.ChildOf }</div>
+			}
+			if h.Snippet != nil {
+				<div class="snip">
+					@h.Snippet
+				</div>
+			}
+			<div class="m">
+				@sourceBadge(h.Source)
+				· { h.Machine } › <span title={ h.ProjectFull }>{ h.Project }</span> · { h.Role }
+			</div>
+		</a>
 	}
 	if v.More != "" {
 		<a class="more" href={ templ.SafeURL(v.More) } hx-get={ v.More } hx-swap="outerHTML">Load more</a>

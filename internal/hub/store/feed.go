@@ -64,27 +64,8 @@ type Cursor struct {
 // Feed lists parsed top-level Sessions matching f, newest activity first, at
 // most limit rows.
 func (s *Store) Feed(ctx context.Context, f FeedFilter, limit int) ([]FeedRow, error) {
-	where := []string{feedVisible}
-	var args []any
-	if f.Machine != "" {
-		where = append(where, `s.machine_id = ?`)
-		args = append(args, f.Machine)
-	}
-	if f.Source != "" {
-		where = append(where, `s.source = ?`)
-		args = append(args, f.Source)
-	}
-	if f.Project != nil {
-		if *f.Project == "" {
-			where = append(where, `s.project_cwd IS NULL`)
-		} else {
-			where = append(where, `s.project_cwd = ?`)
-			args = append(args, *f.Project)
-		}
-	}
-	if f.Warnings {
-		where = append(where, hasWarnings)
-	}
+	where, args := chipWhere(f)
+	where = append([]string{feedVisible}, where...)
 	if f.Before != nil {
 		where = append(where, `(coalesce(s.last_activity_at, 0), s.id) < (?, ?)`)
 		args = append(args, f.Before.At, f.Before.ID)
@@ -110,6 +91,34 @@ func (s *Store) Feed(ctx context.Context, f FeedFilter, limit int) ([]FeedRow, e
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// chipWhere is the WHERE conditions and args for f's chips, on sessions s.
+func chipWhere(f FeedFilter) ([]string, []any) {
+	var (
+		where []string
+		args  []any
+	)
+	if f.Machine != "" {
+		where = append(where, `s.machine_id = ?`)
+		args = append(args, f.Machine)
+	}
+	if f.Source != "" {
+		where = append(where, `s.source = ?`)
+		args = append(args, f.Source)
+	}
+	if f.Project != nil {
+		if *f.Project == "" {
+			where = append(where, `s.project_cwd IS NULL`)
+		} else {
+			where = append(where, `s.project_cwd = ?`)
+			args = append(args, *f.Project)
+		}
+	}
+	if f.Warnings {
+		where = append(where, hasWarnings)
+	}
+	return where, args
 }
 
 // MachineChip is one Machine chip of the feed.

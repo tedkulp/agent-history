@@ -355,6 +355,9 @@ func (s *Store) SaveParse(ctx context.Context, job Job, parserVersion int, res p
 			return err
 		}
 	}
+	if err := deleteSearchRows(ctx, tx, id); err != nil {
+		return err
+	}
 
 	var (
 		firstPrompt string
@@ -399,6 +402,9 @@ func (s *Store) SaveParse(ctx context.Context, job Job, parserVersion int, res p
 				texts = append(texts, tp.Text)
 			}
 		}
+		if err := insertSearchMessage(ctx, tx, id, i, m); err != nil {
+			return err
+		}
 		if firstPrompt == "" && m.Role == parser.MessageUser && len(texts) > 0 {
 			firstPrompt = truncate(strings.Join(texts, "\n"), 300)
 		}
@@ -423,6 +429,9 @@ func (s *Store) SaveParse(ctx context.Context, job Job, parserVersion int, res p
 	title := res.Session.Title
 	if title == "" {
 		title = truncate(firstPrompt, 80)
+	}
+	if err := insertSearchTitle(ctx, tx, id, title); err != nil {
+		return err
 	}
 	var usageJSON sql.NullString
 	if hasUsage {
