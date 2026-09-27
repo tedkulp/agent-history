@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tedkulp/agent-history/protocol"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -17,7 +19,7 @@ func TestFormatRunningService(t *testing.T) {
 		HubURL:           "http://hub.vpn:8080",
 		ServiceRunning:   true,
 		ServiceInstalled: true,
-		Hub:              Hub{Reachable: ptr(true), LastSync: ptr(now.Add(-12 * time.Second))},
+		Hub:              Hub{Reachable: ptr(true), LastSync: ptr(now.Add(-12 * time.Second)), Parsing: &protocol.Health{SessionsWithWarnings: 3}},
 		Pending:          ptr(0),
 		Sources: []Source{
 			{ID: "claude-code", Root: "/Users/ted/.claude/projects", Enabled: true, Detected: true, Layouts: []string{"jsonl"}, Records: 1284, Excluded: ptr(12)},
@@ -29,6 +31,7 @@ func TestFormatRunningService(t *testing.T) {
 	Format(&b, r, now)
 	want := `agent-history 0.3.1   machine 3f6c2a4e…  "work-laptop"   service: running
 Hub      http://hub.vpn:8080  reachable, last sync 12s ago
+         Hub: 3 Sessions with parse warnings, 0 failed to parse
 Uploads  0 pending
 
 claude-code  detected       /Users/ted/.claude/projects
@@ -138,5 +141,13 @@ func TestFormatDrift(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
+	}
+}
+
+func TestFormatParseHealthSingular(t *testing.T) {
+	var b strings.Builder
+	Format(&b, Report{Hub: Hub{Parsing: &protocol.Health{SessionsWithWarnings: 1, SessionsFailed: 1}}}, time.Now())
+	if want := "Hub: 1 Session with parse warnings, 1 failed to parse\n"; !strings.Contains(b.String(), want) {
+		t.Errorf("missing %q in:\n%s", want, b.String())
 	}
 }

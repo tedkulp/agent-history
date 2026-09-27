@@ -94,3 +94,21 @@ func TestTooOld(t *testing.T) {
 		}
 	}
 }
+
+func TestHealth(t *testing.T) {
+	st, err := store.Open(context.Background(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	srv := httptest.NewServer(api.New(st, slog.New(slog.DiscardHandler), api.Floor{}))
+	defer srv.Close()
+	c, err := New(srv.URL, "3f6c2a4e-8d1b-4f7a-9c2e-5b0d7e1a9f33", "0.0.0-dev", srv.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := c.Health(context.Background())
+	if err != nil || h != (protocol.Health{}) {
+		t.Errorf("Health = %+v, %v", h, err)
+	}
+}

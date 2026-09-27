@@ -85,6 +85,14 @@ type ManifestRecord struct {
 	Sha256    string `json:"sha256"`
 }
 
+// Health is the body of GET /machines/{id}/health: the Machine's Sessions
+// whose latest parse recorded any Parse warning, and those whose latest
+// parse failed. Fields may be added later.
+type Health struct {
+	SessionsWithWarnings int `json:"sessions_with_warnings"`
+	SessionsFailed       int `json:"sessions_failed"`
+}
+
 // RecordState is the body of a 200 from POST /machines/{id}/records.
 type RecordState struct {
 	Length  int64  `json:"length"`

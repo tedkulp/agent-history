@@ -36,17 +36,95 @@ func sessionFor(ctx context.Context, tx queryer, machineID, source, nativeID str
 	return id, err
 }
 
-// attachRecord links a new Raw record to its Session through its MapKey
-// result (hub.md §4.2 step 2) and returns the Session id.
-func attachRecord(ctx context.Context, tx queryer, recordID int64, machineID, source string, m parser.Mapping) (int64, error) {
-	sessionID, err := sessionFor(ctx, tx, machineID, source, m.NativeID)
-	if err != nil {
-		return 0, err
+// roleShadow is the role of a Raw record that is kept but never parsed: one
+// outside the Session's winning Layout, or an extra main in it (hub.md §4.3).
+const roleShadow = "shadow"
+
+// attachRecord links a Raw record to its Session through its MapKey result
+// (hub.md §4.2 step 2), recomputes the Session's roles, and returns the
+// Session id and the record's resulting role.
+func (s *Store) attachRecord(ctx context.Context, tx *sql.Tx, recordID int64, machineID, source string, m parser.Mapping) (sessionID int64, role string, err error) {
+	if sessionID, err = sessionFor(ctx, tx, machineID, source, m.NativeID); err != nil {
+		return 0, "", err
 	}
-	_, err = tx.ExecContext(ctx, `
+	if _, err = tx.ExecContext(ctx, `
 		UPDATE raw_records SET session_id = ?, role = ?, layout = ?, layout_rank = ? WHERE id = ?`,
-		sessionID, m.Role, m.Layout, m.LayoutRank, recordID)
-	return sessionID, err
+		sessionID, m.Role, m.Layout, m.LayoutRank, recordID); err != nil {
+		return 0, "", err
+	}
+	roles, err := s.recomputeRoles(ctx, tx, sessionID)
+	return sessionID, roles[recordID], err
+}
+
+// recomputeRoles sets the role of every Raw record of a Session (hub.md
+// §4.3). The winning Layout is the highest-ranked one holding a main, and
+// its main with the highest id is the one parsed. That Layout's attachments
+// keep their role; every other record becomes shadow. Until the Session has
+// a main, records keep the role MapKey gave them. It returns each record's
+// role by id.
+func (s *Store) recomputeRoles(ctx context.Context, tx *sql.Tx, sessionID int64) (map[int64]string, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, source, record_key, layout, layout_rank, role FROM raw_records WHERE session_id = ? ORDER BY id`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	type rec struct {
+		id         int64
+		layout     string
+		rank       int64
+		role       string
+		mappedRole string
+	}
+	var recs []rec
+	for rows.Next() {
+		var (
+			r      rec
+			source string
+			key    string
+		)
+		if err := rows.Scan(&r.id, &source, &key, &r.layout, &r.rank, &r.role); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		// MapKey is pure, so it gives back the role a shadow record had.
+		r.mappedRole = r.role
+		if m, ok := s.parsers.MapKey(source, key); ok {
+			r.mappedRole = m.Role
+		}
+		recs = append(recs, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	winner := -1
+	for i, r := range recs {
+		if r.mappedRole != parser.RoleMain {
+			continue
+		}
+		// Records come in id order, so a tie on rank goes to the later one.
+		if winner < 0 || r.rank >= recs[winner].rank {
+			winner = i
+		}
+	}
+	out := make(map[int64]string, len(recs))
+	for i, r := range recs {
+		role := r.mappedRole
+		switch {
+		case winner < 0:
+		case i == winner:
+		case r.layout != recs[winner].layout || role == parser.RoleMain:
+			role = roleShadow
+		}
+		out[r.id] = role
+		if role != r.role {
+			if _, err := tx.ExecContext(ctx, `UPDATE raw_records SET role = ? WHERE id = ?`, role, r.id); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return out, nil
 }
 
 // liveEnqueue queues a Session at live priority, no sooner than 10 s after its

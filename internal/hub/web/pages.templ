@@ -32,6 +32,9 @@ templ sourceBadge(source string) {
 
 templ feedPage(v feedView) {
 	@layout("Agent History") {
+		if v.Reparse != "" {
+			<div class="banner reparse">⟳ { v.Reparse }</div>
+		}
 		for _, b := range v.Banners {
 			<a class="banner" href={ templ.SafeURL(b.Href) }>⚠ { b.Text }</a>
 		}
@@ -76,6 +79,9 @@ templ feedRows(v feedView) {
 					<span class="p">{ r.Prompt }</span>
 				</span>
 				<span class="r">
+					if r.Failed {
+						<span class="badge failed">parse failed</span>
+					}
 					@sourceBadge(r.Source)
 					<br/>
 					{ r.Machine } › <span title={ r.ProjectFull }>{ r.Project }</span>
@@ -127,6 +133,9 @@ templ transcriptPage(h headerView, outline []outlineEntry, children []childEntry
 							<span class="parent">{ h.ParentLabel }</span>
 						}
 					</div>
+					if h.ParseError != "" {
+						@failureNote(h)
+					}
 					if h.WarningNote != "" {
 						@notes(h)
 					}
@@ -142,6 +151,20 @@ templ transcriptPage(h headerView, outline []outlineEntry, children []childEntry
 			</div>
 		</div>
 	}
+}
+
+// failureNote shows why the latest parse failed, above the last good
+// Transcript, or alone when there never was one (hub.md §4.7).
+templ failureNote(h headerView) {
+	<details class="notes failed">
+		<summary>✗ parse failed</summary>
+		<pre>{ h.ParseError }</pre>
+		if h.Parsed {
+			<p class="dim">Showing the last Transcript that parsed.</p>
+		} else {
+			<p class="dim">This Session has never parsed, so there is no Transcript to show.</p>
+		}
+	</details>
 }
 
 // notes lists the Session's Parse warnings, collapsed (hub.md §4.7).

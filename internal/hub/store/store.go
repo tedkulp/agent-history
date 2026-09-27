@@ -368,7 +368,8 @@ func (s *Store) ingest(ctx context.Context, machineID, source, recordKey string,
 }
 
 // createRecord inserts the raw_records row and attaches it to its Session
-// when the Source's parser maps the key (hub.md §4.2).
+// when the Source's parser maps the key (hub.md §4.2). A record that takes
+// over as the Session's main is live-enqueued by ingest like any main.
 func (s *Store) createRecord(ctx context.Context, tx *sql.Tx, cur *current, machineID, source, recordKey string) error {
 	res, err := tx.ExecContext(ctx, `
 		INSERT INTO raw_records (machine_id, source, record_key) VALUES (?, ?, ?)`,
@@ -380,12 +381,12 @@ func (s *Store) createRecord(ctx context.Context, tx *sql.Tx, cur *current, mach
 		return err
 	}
 	if m, ok := s.parsers.MapKey(source, recordKey); ok {
-		id, err := attachRecord(ctx, tx, cur.recordID, machineID, source, m)
+		id, role, err := s.attachRecord(ctx, tx, cur.recordID, machineID, source, m)
 		if err != nil {
 			return err
 		}
 		cur.sessionID = sql.NullInt64{Int64: id, Valid: true}
-		cur.role = sql.NullString{String: m.Role, Valid: true}
+		cur.role = sql.NullString{String: role, Valid: true}
 	}
 	return nil
 }

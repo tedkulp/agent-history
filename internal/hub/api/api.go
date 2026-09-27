@@ -64,6 +64,7 @@ func New(s *store.Store, log *slog.Logger, floor Floor) http.Handler {
 	mux.HandleFunc("PUT "+p, srv.machineOnly(srv.putMachine))
 	mux.HandleFunc("GET "+p+"/manifest", srv.machineOnly(srv.manifest))
 	mux.HandleFunc("POST "+p+"/records", srv.machineOnly(srv.records))
+	mux.HandleFunc("GET "+p+"/health", srv.machineOnly(srv.health))
 	return srv.checkFloor(mux)
 }
 
@@ -141,6 +142,20 @@ func (s *server) manifest(w http.ResponseWriter, r *http.Request, id string) {
 	if err := json.NewEncoder(out).Encode(protocol.Manifest{Records: records}); err != nil {
 		s.log.Warn("writing manifest", "machine", id, "err", err)
 	}
+}
+
+func (s *server) health(w http.ResponseWriter, r *http.Request, id string) {
+	if err := s.store.TouchMachine(r.Context(), id); err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	var h protocol.Health
+	var err error
+	if h.SessionsWithWarnings, h.SessionsFailed, err = s.store.Health(r.Context(), id); err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, h)
 }
 
 func acceptsEncoding(header, enc string) bool {

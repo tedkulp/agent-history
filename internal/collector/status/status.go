@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/tedkulp/agent-history/protocol"
 )
 
 // Report is the whole `status` report. Fields the reporting process can't
@@ -43,6 +45,9 @@ type Hub struct {
 	// minimum the Hub asked for, or "" when it didn't say.
 	UpgradeRequired     bool   `json:"upgrade_required"`
 	MinCollectorVersion string `json:"min_collector_version,omitempty"`
+	// Parsing is the Hub's parse health for this Machine, from GET
+	// /machines/{id}/health; nil when the Hub didn't answer it.
+	Parsing *protocol.Health `json:"parsing,omitempty"`
 }
 
 // SetUpgradeRequired records a 426 from the Hub, which answered and so is
@@ -123,6 +128,13 @@ func Format(w io.Writer, r Report, now time.Time) {
 	fmt.Fprintf(w, "Hub      %s  %s\n", r.HubURL, hub)
 	if e := r.Hub.LastError; e != nil {
 		fmt.Fprintf(w, "         last error %s: %s\n", ago(e.At, now), e.Message)
+	}
+	if p := r.Hub.Parsing; p != nil {
+		sessions := "Sessions"
+		if p.SessionsWithWarnings == 1 {
+			sessions = "Session"
+		}
+		fmt.Fprintf(w, "         Hub: %s %s with parse warnings, %s failed to parse\n", commas(p.SessionsWithWarnings), sessions, commas(p.SessionsFailed))
 	}
 
 	if r.Pending != nil {

@@ -91,6 +91,7 @@ type driftBanner struct {
 }
 
 type feedView struct {
+	Reparse  string // the re-parse banner; "" when no re-parse is queued
 	Banners  []driftBanner
 	Chips    []chipRow
 	Filtered bool
@@ -194,6 +195,10 @@ func (s *server) feed(w http.ResponseWriter, r *http.Request) {
 		s.internal(w, r, err)
 		return
 	}
+	if v.Reparse, err = s.reparseBanner(r.Context()); err != nil {
+		s.internal(w, r, err)
+		return
+	}
 	s.render(w, r, http.StatusOK, feedPage(v))
 }
 
@@ -277,6 +282,19 @@ func (s *server) driftBanners(ctx context.Context) ([]driftBanner, error) {
 		})
 	}
 	return out, nil
+}
+
+// reparseBanner is "Re-parsing N Sessions…" while re-parse jobs remain
+// queued, else "" (hub.md §4.7).
+func (s *server) reparseBanner(ctx context.Context) (string, error) {
+	n, err := s.store.Reparsing(ctx)
+	if err != nil || n == 0 {
+		return "", err
+	}
+	if n == 1 {
+		return "Re-parsing 1 Session…", nil
+	}
+	return "Re-parsing " + strconv.Itoa(n) + " Sessions…", nil
 }
 
 // toggle completes chip c for the value val of a param now set to cur. The

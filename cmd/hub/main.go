@@ -9,9 +9,11 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -30,6 +32,8 @@ const usage = `usage: agent-history-hub <command>
 
 commands:
   serve     run the Hub
+  reparse   --all | --source <source> | --session <id>
+            queue Sessions to be parsed again by the running Hub
   version   print the version
 `
 
@@ -42,6 +46,8 @@ func main() {
 	switch os.Args[1] {
 	case "serve":
 		err = serve(os.Args[2:])
+	case "reparse":
+		err = reparse(os.Args[2:])
 	case "version":
 		fmt.Println(buildinfo.Version)
 	default:
@@ -59,6 +65,70 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// parsers holds the Hub's Source parsers.
+var parsers = parser.NewRegistry(claudecode.New())
+
+// startup attaches records that now map and queues stale Sessions for a
+// re-parse (hub.md §4.1 steps 6 and 7).
+func startup(ctx context.Context, st *store.Store, log *slog.Logger) error {
+	attached, err := st.MapUnattached(ctx)
+	if err != nil {
+		return fmt.Errorf("mapping unattached records: %w", err)
+	}
+	log.Info("mapped unattached records", "attached", attached)
+	stale, err := st.EnqueueStale(ctx)
+	if err != nil {
+		return fmt.Errorf("re-parse check: %w", err)
+	}
+	for _, src := range slices.Sorted(maps.Keys(stale)) {
+		log.Info("re-parse check", "source", src, "parser_version", parsers[src].Version(), "queued", stale[src])
+	}
+	return nil
+}
+
+// reparse queues Sessions at re-parse priority from a second process next to
+// the live Hub, whose worker picks them up on its next poll (hub.md §2.2).
+func reparse(args []string) error {
+	fs := flag.NewFlagSet("reparse", flag.ContinueOnError)
+	data := fs.String("data", envOr("AGENT_HISTORY_DATA", "/data"), "directory holding hub.db")
+	all := fs.Bool("all", false, "every Session")
+	source := fs.String("source", "", "every Session of one Source")
+	session := fs.Int64("session", 0, "one Session, by the id in its Transcript URL")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	picked := 0
+	for _, set := range []bool{*all, *source != "", *session != 0} {
+		if set {
+			picked++
+		}
+	}
+	if picked != 1 || fs.NArg() > 0 {
+		return errors.New("usage: agent-history-hub reparse --all | --source <source> | --session <id>")
+	}
+	if _, ok := parsers[*source]; *source != "" && !ok {
+		return fmt.Errorf("no parser for source %q", *source)
+	}
+	// The live Hub owns the info log; this process prints only its count.
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	ctx := context.Background()
+	st, err := store.Open(ctx, *data, parsers)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	n, err := st.Reparse(ctx, store.ReparseScope{Source: *source, SessionID: *session})
+	if err != nil {
+		return err
+	}
+	sessions := "Sessions"
+	if n == 1 {
+		sessions = "Session"
+	}
+	fmt.Printf("queued %d %s for re-parse\n", n, sessions)
+	return nil
 }
 
 func serve(args []string) error {
@@ -83,12 +153,14 @@ func serve(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	parsers := parser.NewRegistry(claudecode.New())
 	st, err := store.Open(ctx, *data, parsers)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
+	if err := startup(ctx, st, log); err != nil {
+		return err
+	}
 
 	workerCtx, stopWorker := context.WithCancel(context.Background())
 	workerDone := make(chan struct{})

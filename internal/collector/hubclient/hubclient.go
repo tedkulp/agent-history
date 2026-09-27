@@ -151,6 +151,17 @@ func (c *Client) Manifest(ctx context.Context) ([]protocol.ManifestRecord, error
 	return m.Records, nil
 }
 
+// Health returns the Hub's parse health for this Machine.
+func (c *Client) Health(ctx context.Context) (protocol.Health, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/health", nil)
+	if err != nil {
+		return protocol.Health{}, err
+	}
+	var h protocol.Health
+	err = c.do(req, http.StatusOK, &h)
+	return h, err
+}
+
 // Ping checks that the Hub answers for this Machine, for `status` when no
 // service is running. It asks for the manifest's headers only.
 func (c *Client) Ping(ctx context.Context) error {

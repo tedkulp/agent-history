@@ -22,17 +22,20 @@ type FeedRow struct {
 	ProjectCwd     string // "" = No project
 	MachineID      string
 	Machine        string // display label
+	Failed         bool   // the latest parse failed
 }
 
 // machineLabel is display_name, else hostname, else the first 8 characters of
 // the id (hub.md §3.2).
 const machineLabel = `coalesce(nullif(m.display_name, ''), nullif(m.hostname, ''), substr(m.id, 1, 8))`
 
-// feedVisible selects the Sessions the feed lists: parsed top-level ones with
-// at least one Message. A launch where nothing happened (say, only /model)
-// parses to no Messages and would be a blank row (hub.md §4.7).
-const feedVisible = `s.parent_session_id IS NULL AND s.parsed_at IS NOT NULL
-	AND EXISTS (SELECT 1 FROM messages msg WHERE msg.session_id = s.id)`
+// feedVisible selects the Sessions the feed lists: top-level ones that parsed
+// to at least one Message, or whose parse failed. A launch where nothing
+// happened (say, only /model) parses to no Messages and would be a blank row;
+// a failed one is listed even if it never parsed, so a parser bug can't hide
+// it (hub.md §4.7).
+const feedVisible = `s.parent_session_id IS NULL AND (s.parse_status = 'failed'
+	OR s.parsed_at IS NOT NULL AND EXISTS (SELECT 1 FROM messages msg WHERE msg.session_id = s.id))`
 
 // FeedFilter narrows the feed to the active chips (hub.md §4.7). Empty fields
 // don't filter.
@@ -88,7 +91,8 @@ func (s *Store) Feed(ctx context.Context, f FeedFilter, limit int) ([]FeedRow, e
 	}
 	rows, err := s.read.QueryContext(ctx, `
 		SELECT s.id, s.source, s.native_id, coalesce(s.title, ''), coalesce(s.first_prompt, ''),
-			coalesce(s.last_activity_at, 0), coalesce(s.project_cwd, ''), m.id, `+machineLabel+`
+			coalesce(s.last_activity_at, 0), coalesce(s.project_cwd, ''), m.id, `+machineLabel+`,
+			s.parse_status = 'failed'
 		FROM sessions s JOIN machines m ON m.id = s.machine_id
 		WHERE `+strings.Join(where, " AND ")+`
 		ORDER BY coalesce(s.last_activity_at, 0) DESC, s.id DESC
@@ -100,7 +104,7 @@ func (s *Store) Feed(ctx context.Context, f FeedFilter, limit int) ([]FeedRow, e
 	var out []FeedRow
 	for rows.Next() {
 		var r FeedRow
-		if err := rows.Scan(&r.ID, &r.Source, &r.NativeID, &r.Title, &r.FirstPrompt, &r.LastActivityAt, &r.ProjectCwd, &r.MachineID, &r.Machine); err != nil {
+		if err := rows.Scan(&r.ID, &r.Source, &r.NativeID, &r.Title, &r.FirstPrompt, &r.LastActivityAt, &r.ProjectCwd, &r.MachineID, &r.Machine, &r.Failed); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -238,9 +242,13 @@ type SessionHeader struct {
 	GitBranch  string
 	Model      string
 	StartedAt  int64
-	// SourceVersion and Warnings are for the Notes (hub.md §4.7).
+	// SourceVersion, Warnings and ParseError are for the Notes (hub.md
+	// §4.7). ParseError is set when the latest parse failed; Parsed is
+	// false when no parse ever succeeded, so there is no Transcript.
 	SourceVersion string
 	Warnings      []ParseWarning
+	ParseError    string
+	Parsed        bool
 	// Parent is set for a Child Session; Children are the parsed Child
 	// Sessions filed under it, oldest first (hub.md §4.7).
 	Parent   *ParentLink
@@ -283,25 +291,34 @@ type TranscriptPart struct {
 }
 
 // Transcript returns a Session's header and Messages. ok is false for an
-// unknown id or a Session that was never parsed (hub.md §4.10).
+// unknown id or a Session that was never parsed and hasn't failed, such as
+// a stub (hub.md §4.10).
 func (s *Store) Transcript(ctx context.Context, id int64) (h SessionHeader, msgs []TranscriptMessage, ok bool, err error) {
 	var (
 		parentID       sql.NullInt64
 		spawningCallID string
+		parseErr       sql.NullString
 	)
 	err = s.read.QueryRowContext(ctx, `
 		SELECT s.id, s.source, s.native_id, coalesce(s.title, ''), m.id, `+machineLabel+`, coalesce(s.project_cwd, ''),
 			coalesce(s.git_branch, ''), coalesce(s.model, ''), coalesce(s.started_at, 0), coalesce(s.source_version, ''),
-			s.parent_session_id, coalesce(s.spawning_call_id, '')
+			s.parent_session_id, coalesce(s.spawning_call_id, ''),
+			CASE WHEN s.parse_status = 'failed' THEN coalesce(s.parse_error, '') END, s.parsed_at IS NOT NULL
 		FROM sessions s JOIN machines m ON m.id = s.machine_id
-		WHERE s.id = ? AND s.parsed_at IS NOT NULL`, id).Scan(
+		WHERE s.id = ? AND (s.parsed_at IS NOT NULL OR s.parse_status = 'failed')`, id).Scan(
 		&h.ID, &h.Source, &h.NativeID, &h.Title, &h.MachineID, &h.Machine, &h.ProjectCwd, &h.GitBranch, &h.Model, &h.StartedAt, &h.SourceVersion,
-		&parentID, &spawningCallID)
+		&parentID, &spawningCallID, &parseErr, &h.Parsed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return h, nil, false, nil
 	}
 	if err != nil {
 		return h, nil, false, err
+	}
+	if parseErr.Valid {
+		h.ParseError = parseErr.String
+		if h.ParseError == "" {
+			h.ParseError = "unknown error"
+		}
 	}
 	if h.Warnings, err = s.parseWarnings(ctx, id); err != nil {
 		return h, nil, false, err

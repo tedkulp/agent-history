@@ -297,6 +297,9 @@ func statusCmd(args []string) error {
 	} else if err != nil {
 		return fmt.Errorf("asking the service: %w", err)
 	}
+	if !rep.Hub.UpgradeRequired {
+		rep.Hub.Parsing = hubHealth(ctx, cfg)
+	}
 	if rep.ServiceInstalled, rep.ServiceOutdated, err = service.Outdated(newServiceManager(os.Getenv, home).Path()); err != nil {
 		// Still print the rest of the report.
 		fmt.Fprintf(os.Stderr, "agent-history: reading the service definition: %v\n", err)
@@ -304,6 +307,20 @@ func statusCmd(args []string) error {
 	}
 	status.Format(os.Stdout, rep, time.Now())
 	return nil
+}
+
+// hubHealth asks the Hub for this Machine's parse health, or returns nil
+// when it can't tell; the rest of the report says why.
+func hubHealth(ctx context.Context, cfg *config.Config) *protocol.Health {
+	hub, err := hubclient.New(cfg.HubURL, cfg.MachineID, buildinfo.Version, &http.Client{Timeout: 5 * time.Second})
+	if err != nil {
+		return nil
+	}
+	h, err := hub.Health(ctx)
+	if err != nil {
+		return nil
+	}
+	return &h
 }
 
 // localReport is what status can tell without a running service: config,
