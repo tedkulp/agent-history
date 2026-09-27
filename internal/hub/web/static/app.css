@@ -18,6 +18,13 @@ table{border-collapse:collapse} th,td{border:1px solid var(--line);padding:2px 8
 .wrap{max-width:1100px;margin:0 auto;padding:18px 20px 120px}
 .top{margin-bottom:10px} .brand{font-weight:700;color:var(--ink)}
 
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:18px;font-size:12.5px;align-items:center}
+.chips .lab{color:var(--dim);margin-left:8px} .chips .lab:first-child{margin-left:0}
+.chip{border:1px solid var(--line);border-radius:999px;padding:2px 10px;color:var(--ink);background:var(--panel)}
+.chip:hover{border-color:var(--acc);text-decoration:none}
+.chip.on{background:var(--acc);border-color:var(--acc);color:#fff} .chip .n{color:var(--dim)} .chip.on .n{color:#fffc}
+.more{display:block;text-align:center;margin:16px auto;padding:6px 16px;width:max-content;border:1px solid var(--line);border-radius:999px;background:var(--panel)}
+
 .day{font-size:12px;font-weight:600;color:var(--dim);margin:18px 0 4px;text-transform:uppercase;letter-spacing:.04em}
 .row{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:12px;padding:8px 10px;border-radius:8px;color:var(--ink);align-items:baseline}
 .row:hover{background:var(--panel);text-decoration:none;box-shadow:0 0 0 1px var(--line)}

@@ -26,28 +26,58 @@ templ sourceBadge(source string) {
 	<span class={ "badge", source }>{ source }</span>
 }
 
-templ feedPage(days []feedDay) {
+templ feedPage(v feedView) {
 	@layout("Agent History") {
-		if len(days) == 0 {
-			<p class="dim">No Sessions yet.</p>
-		}
-		for _, d := range days {
-			<div class="day">{ d.Label }</div>
-			for _, r := range d.Rows {
-				<a class="row" href={ templ.SafeURL("/sessions/" + strconv.FormatInt(r.ID, 10)) }>
-					<span class="tm">{ r.Time }</span>
-					<span>
-						<span class="t">{ r.Title }</span>
-						<span class="p">{ r.Prompt }</span>
-					</span>
-					<span class="r">
-						@sourceBadge(r.Source)
-						<br/>
-						{ r.Machine } › <span title={ r.ProjectFull }>{ r.Project }</span>
-					</span>
-				</a>
+		<div class="chips">
+			for _, row := range v.Chips {
+				if len(row.Chips) > 0 {
+					<span class="lab">{ row.Label }</span>
+					for _, c := range row.Chips {
+						<a class={ "chip", templ.KV("on", c.On) } href={ templ.SafeURL(c.Href) } title={ c.Title }>
+							{ c.Label }
+							if c.Count > 0 {
+								<span class="n">{ strconv.Itoa(c.Count) }</span>
+							}
+						</a>
+					}
+				}
+			}
+		</div>
+		if len(v.Days) == 0 {
+			if v.Filtered {
+				<p class="dim">No Sessions match.</p>
+			} else {
+				<p class="dim">No Sessions yet.</p>
 			}
 		}
+		@feedRows(v)
+	}
+}
+
+// feedRows is one page of the feed, followed by its "Load more" link. htmx
+// swaps the link for the next page.
+templ feedRows(v feedView) {
+	for _, d := range v.Days {
+		if d.Label != "" {
+			<div class="day">{ d.Label }</div>
+		}
+		for _, r := range d.Rows {
+			<a class="row" href={ templ.SafeURL("/sessions/" + strconv.FormatInt(r.ID, 10)) }>
+				<span class="tm">{ r.Time }</span>
+				<span>
+					<span class="t">{ r.Title }</span>
+					<span class="p">{ r.Prompt }</span>
+				</span>
+				<span class="r">
+					@sourceBadge(r.Source)
+					<br/>
+					{ r.Machine } › <span title={ r.ProjectFull }>{ r.Project }</span>
+				</span>
+			</a>
+		}
+	}
+	if v.More != "" {
+		<a class="more" href={ templ.SafeURL(v.More) } hx-get={ v.More } hx-swap="outerHTML">Load more</a>
 	}
 }
 
@@ -57,8 +87,8 @@ templ transcriptPage(h headerView, msgs []messageView) {
 			<h1>{ h.Title }</h1>
 			<div class="m">
 				@sourceBadge(h.Source)
-				<span>{ h.Machine }</span>
-				<span title={ h.ProjectFull }>{ h.Project }</span>
+				<a href={ templ.SafeURL(h.MachineHref) }>{ h.Machine }</a>
+				<a href={ templ.SafeURL(h.ProjectHref) } title={ h.ProjectFull }>{ h.Project }</a>
 				if h.GitBranch != "" {
 					<span>⎇ { h.GitBranch }</span>
 				}

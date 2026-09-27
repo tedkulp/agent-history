@@ -229,7 +229,7 @@ func TestSaveParseBuildsFeedAndTranscript(t *testing.T) {
 	for parseNext(t, s) {
 	}
 
-	feed, err := s.Feed(ctx, 50)
+	feed, err := s.Feed(ctx, FeedFilter{}, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +276,7 @@ func TestParentStubIsHiddenUntilParsed(t *testing.T) {
 	for parseNext(t, s) {
 	}
 	stub := sessionIDOf(t, s, sessUUID)
-	if feed, _ := s.Feed(ctx, 50); len(feed) != 0 {
+	if feed, _ := s.Feed(ctx, FeedFilter{}, 50); len(feed) != 0 {
 		t.Errorf("feed = %+v", feed)
 	}
 	if _, _, ok, _ := s.Transcript(ctx, stub); ok {

@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -31,7 +33,7 @@ func TestGroupByDay(t *testing.T) {
 		{ID: 4, LastActivityAt: at(1, 12)},
 		{ID: 5, LastActivityAt: time.Date(2025, 12, 31, 12, 0, 0, 0, loc).UnixMilli()},
 	}
-	days := groupByDay(rows, now)
+	days := groupByDay(rows, now, "")
 	var got []string
 	for _, d := range days {
 		got = append(got, d.Label)
@@ -51,7 +53,20 @@ func TestGroupByDay(t *testing.T) {
 
 const sess = "3d34bfcc-90e7-4fd0-900f-86c047b22433"
 
+type record struct{ machine, key, body string }
+
 func newSite(t *testing.T, files map[string]string) *httptest.Server {
+	t.Helper()
+	var recs []record
+	for key, body := range files {
+		recs = append(recs, record{"m1", key, body})
+	}
+	return newSiteRecords(t, recs)
+}
+
+// newSiteRecords serves a Hub holding the given Claude Code records, parsed.
+// Machine m1 is "laptop" with home /Users/ted; m2 is "desk" with home /home/ted.
+func newSiteRecords(t *testing.T, recs []record) *httptest.Server {
 	t.Helper()
 	ctx := context.Background()
 	reg := parser.NewRegistry(claudecode.New())
@@ -63,12 +78,15 @@ func newSite(t *testing.T, files map[string]string) *httptest.Server {
 	if err := s.UpsertMachine(ctx, "m1", protocol.MachineInfo{Hostname: "laptop", HomeDir: "/Users/ted"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.UpsertMachine(ctx, "m2", protocol.MachineInfo{Hostname: "desk", HomeDir: "/home/ted"}); err != nil {
+		t.Fatal(err)
+	}
 	enc, _ := zstd.NewWriter(nil)
 	empty := sha256.Sum256(nil)
-	for key, body := range files {
+	for _, r := range recs {
 		if _, err := s.Append(ctx, store.AppendRequest{
-			MachineID: "m1", Source: protocol.SourceClaudeCode, RecordKey: key,
-			PrefixSha256: hex.EncodeToString(empty[:]), Data: []byte(body), Compressed: enc.EncodeAll([]byte(body), nil),
+			MachineID: r.machine, Source: protocol.SourceClaudeCode, RecordKey: r.key,
+			PrefixSha256: hex.EncodeToString(empty[:]), Data: []byte(r.body), Compressed: enc.EncodeAll([]byte(r.body), nil),
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -156,5 +174,153 @@ func TestFeedAndTranscriptPages(t *testing.T) {
 		if code, _ := get(t, srv.URL+p); code != 200 {
 			t.Errorf("%s: status %d", p, code)
 		}
+	}
+}
+
+// sessionLine is a one-Message Claude Code Session started in cwd at minute i
+// of the day.
+func sessionLine(cwd, prompt string, i int) string {
+	ts := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC).Add(time.Duration(i) * time.Minute).Format("2006-01-02T15:04:05.000Z")
+	return `{"type":"user","uuid":"u1","parentUuid":null,"timestamp":"` + ts + `","cwd":"` + cwd + `","message":{"role":"user","content":"` + prompt + `"}}` + "\n"
+}
+
+func uuid(i int) string { return fmt.Sprintf("00000000-0000-0000-0000-%012d", i) }
+
+func TestFeedChipsFilterAndLiveInTheURL(t *testing.T) {
+	srv := newSiteRecords(t, []record{
+		{"m1", "-Users-ted-src-app/" + uuid(1) + ".jsonl", sessionLine("/Users/ted/src/app", "app one", 1)},
+		{"m1", "-Users-ted-src-app/" + uuid(2) + ".jsonl", sessionLine("/Users/ted/src/app", "app two", 2)},
+		{"m1", "-Users-ted/" + uuid(3) + ".jsonl", sessionLine("/Users/ted", "home one", 3)},
+		{"m2", "-home-ted-src-app/" + uuid(4) + ".jsonl", sessionLine("/home/ted/src/app", "desk one", 4)},
+	})
+
+	_, body := get(t, srv.URL+"/")
+	for _, want := range []string{`>laptop`, `>desk`, `href="/?machine=m1"`, `href="/?source=claude-code"`, "app one", "desk one"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("home lacks %q", want)
+		}
+	}
+	if strings.Contains(body, ">Project<") {
+		t.Error("Project chips shown with no Machine picked")
+	}
+
+	_, body = get(t, srv.URL+"/?machine=m1")
+	for _, want := range []string{
+		`class="chip on" href="/" title="m1"`, // toggles off
+		">Project<", `href="/?machine=m1&amp;project=%2FUsers%2Fted%2Fsrc%2Fapp"`, `title="/Users/ted/src/app"`,
+		`href="/?machine=m1&amp;project=-"`, "No project",
+		"app one", "home one",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("machine=m1 lacks %q", want)
+		}
+	}
+	if strings.Contains(body, "desk one") {
+		t.Error("machine=m1 lists a Session of m2")
+	}
+	if !strings.Contains(body, `<span class="n">2</span>`) || !strings.Contains(body, `<span class="n">1</span>`) {
+		t.Error("Project chips lack Session counts")
+	}
+
+	_, body = get(t, srv.URL+"/?machine=m1&project=-")
+	if !strings.Contains(body, "home one") || strings.Contains(body, "app one") {
+		t.Error("No project chip does not filter")
+	}
+	_, body = get(t, srv.URL+"/?machine=m1&project=%2FUsers%2Fted%2Fsrc%2Fapp&source=claude-code")
+	if !strings.Contains(body, "app two") || strings.Contains(body, "home one") {
+		t.Error("combined chips do not filter")
+	}
+	// Toggling the Machine off drops its Project too; the Source stays.
+	if !strings.Contains(body, `class="chip on" href="/?source=claude-code"`) {
+		t.Error("Machine chip does not toggle off to the remaining chips")
+	}
+	_, body = get(t, srv.URL+"/?source=codex")
+	if !strings.Contains(body, "No Sessions match.") {
+		t.Error("an empty filtered feed lacks its note")
+	}
+}
+
+func TestFeedLoadMore(t *testing.T) {
+	var recs []record
+	const n = 2*feedPageSize + 7
+	for i := 1; i <= n; i++ {
+		recs = append(recs, record{"m1", "-Users-ted-src-app/" + uuid(i) + ".jsonl", sessionLine("/Users/ted/src/app", fmt.Sprintf("prompt-%03d", i), i/4)})
+	}
+	srv := newSiteRecords(t, recs)
+
+	seen := map[string]bool{}
+	var order []string
+	collect := func(body string) {
+		for _, part := range strings.Split(body, `class="p">prompt-`)[1:] {
+			p := part[:3]
+			if seen[p] {
+				t.Errorf("prompt-%s listed twice", p)
+			}
+			seen[p] = true
+			order = append(order, p)
+		}
+	}
+	nextURL := func(body string) string {
+		i := strings.Index(body, `hx-get="`)
+		if i < 0 {
+			return ""
+		}
+		u := body[i+len(`hx-get="`):]
+		return strings.ReplaceAll(u[:strings.Index(u, `"`)], "&amp;", "&")
+	}
+
+	_, body := get(t, srv.URL+"/?machine=m1")
+	collect(body)
+	pages := 1
+	for u := nextURL(body); u != ""; u = nextURL(body) {
+		if !strings.Contains(u, "machine=m1") {
+			t.Errorf("Load more drops the chips: %s", u)
+		}
+		req, _ := http.NewRequest("GET", srv.URL+u, nil)
+		req.Header.Set("HX-Request", "true")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		body = string(b)
+		if strings.Contains(body, "<html") || strings.Contains(body, `class="chips"`) {
+			t.Fatal("htmx request got a full page")
+		}
+		if strings.Contains(body, `class="day"`) {
+			t.Error("a page continuing the same day repeats its day header")
+		}
+		collect(body)
+		pages++
+	}
+	if len(seen) != n || pages != 3 {
+		t.Fatalf("saw %d Sessions over %d pages, want %d over 3", len(seen), pages, n)
+	}
+	if !sort.SliceIsSorted(order, func(i, j int) bool { return order[i] > order[j] }) {
+		t.Errorf("feed out of order: %v", order)
+	}
+}
+
+func TestTranscriptHeaderLinksToFilteredFeed(t *testing.T) {
+	srv := newSiteRecords(t, []record{
+		{"m1", "-Users-ted-src-app/" + uuid(1) + ".jsonl", sessionLine("/Users/ted/src/app", "app one", 1)},
+		{"m1", "-Users-ted/" + uuid(2) + ".jsonl", sessionLine("/Users/ted", "home one", 2)},
+	})
+	_, body := get(t, srv.URL+"/?machine=m1&project=%2FUsers%2Fted%2Fsrc%2Fapp")
+	i := strings.Index(body, `href="/sessions/`)
+	link := body[i+len(`href="`):]
+	_, body = get(t, srv.URL+link[:strings.Index(link, `"`)])
+	for _, want := range []string{`href="/?machine=m1">laptop</a>`, `href="/?machine=m1&amp;project=%2FUsers%2Fted%2Fsrc%2Fapp" title="/Users/ted/src/app">app</a>`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("header lacks %q", want)
+		}
+	}
+	_, body = get(t, srv.URL+"/?machine=m1&project=-")
+	i = strings.Index(body, `href="/sessions/`)
+	link = body[i+len(`href="`):]
+	_, body = get(t, srv.URL+link[:strings.Index(link, `"`)])
+	if !strings.Contains(body, `href="/?machine=m1&amp;project=-"`) {
+		t.Error("No project header link lacks project=-")
 	}
 }

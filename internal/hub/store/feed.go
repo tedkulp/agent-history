@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 )
 
 // FeedRow is one Session row of the home feed (hub.md §4.7).
@@ -15,6 +16,7 @@ type FeedRow struct {
 	FirstPrompt    string
 	LastActivityAt int64
 	ProjectCwd     string // "" = No project
+	MachineID      string
 	Machine        string // display label
 }
 
@@ -22,15 +24,57 @@ type FeedRow struct {
 // the id (hub.md §3.2).
 const machineLabel = `coalesce(nullif(m.display_name, ''), nullif(m.hostname, ''), substr(m.id, 1, 8))`
 
-// Feed lists parsed top-level Sessions, newest activity first.
-func (s *Store) Feed(ctx context.Context, limit int) ([]FeedRow, error) {
+// feedVisible selects the Sessions the feed lists: parsed top-level ones.
+const feedVisible = `s.parent_session_id IS NULL AND s.parsed_at IS NOT NULL`
+
+// FeedFilter narrows the feed to the active chips (hub.md §4.7). Empty fields
+// don't filter.
+type FeedFilter struct {
+	Machine string
+	Source  string
+	Project *string // nil = any; "" = No project
+	Before  *Cursor // only rows after this one in feed order
+}
+
+// Cursor is the position of a feed row: its last_activity_at, with the id
+// breaking ties so paging neither skips nor repeats rows.
+type Cursor struct {
+	At int64
+	ID int64
+}
+
+// Feed lists parsed top-level Sessions matching f, newest activity first, at
+// most limit rows.
+func (s *Store) Feed(ctx context.Context, f FeedFilter, limit int) ([]FeedRow, error) {
+	where := []string{feedVisible}
+	var args []any
+	if f.Machine != "" {
+		where = append(where, `s.machine_id = ?`)
+		args = append(args, f.Machine)
+	}
+	if f.Source != "" {
+		where = append(where, `s.source = ?`)
+		args = append(args, f.Source)
+	}
+	if f.Project != nil {
+		if *f.Project == "" {
+			where = append(where, `s.project_cwd IS NULL`)
+		} else {
+			where = append(where, `s.project_cwd = ?`)
+			args = append(args, *f.Project)
+		}
+	}
+	if f.Before != nil {
+		where = append(where, `(coalesce(s.last_activity_at, 0), s.id) < (?, ?)`)
+		args = append(args, f.Before.At, f.Before.ID)
+	}
 	rows, err := s.read.QueryContext(ctx, `
 		SELECT s.id, s.source, s.native_id, coalesce(s.title, ''), coalesce(s.first_prompt, ''),
-			coalesce(s.last_activity_at, 0), coalesce(s.project_cwd, ''), `+machineLabel+`
+			coalesce(s.last_activity_at, 0), coalesce(s.project_cwd, ''), m.id, `+machineLabel+`
 		FROM sessions s JOIN machines m ON m.id = s.machine_id
-		WHERE s.parent_session_id IS NULL AND s.parsed_at IS NOT NULL
-		ORDER BY s.last_activity_at DESC, s.id DESC
-		LIMIT ?`, limit)
+		WHERE `+strings.Join(where, " AND ")+`
+		ORDER BY coalesce(s.last_activity_at, 0) DESC, s.id DESC
+		LIMIT ?`, append(args, limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -38,10 +82,83 @@ func (s *Store) Feed(ctx context.Context, limit int) ([]FeedRow, error) {
 	var out []FeedRow
 	for rows.Next() {
 		var r FeedRow
-		if err := rows.Scan(&r.ID, &r.Source, &r.NativeID, &r.Title, &r.FirstPrompt, &r.LastActivityAt, &r.ProjectCwd, &r.Machine); err != nil {
+		if err := rows.Scan(&r.ID, &r.Source, &r.NativeID, &r.Title, &r.FirstPrompt, &r.LastActivityAt, &r.ProjectCwd, &r.MachineID, &r.Machine); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// MachineChip is one Machine chip of the feed.
+type MachineChip struct {
+	ID    string
+	Label string
+}
+
+// FeedMachines lists the Machines that have Sessions in the feed, by label.
+func (s *Store) FeedMachines(ctx context.Context) ([]MachineChip, error) {
+	rows, err := s.read.QueryContext(ctx, `
+		SELECT m.id, `+machineLabel+` AS label FROM machines m
+		WHERE EXISTS (SELECT 1 FROM sessions s WHERE s.machine_id = m.id AND `+feedVisible+`)
+		ORDER BY label, m.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MachineChip
+	for rows.Next() {
+		var c MachineChip
+		if err := rows.Scan(&c.ID, &c.Label); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// FeedSources lists the Sources that have Sessions in the feed.
+func (s *Store) FeedSources(ctx context.Context) ([]string, error) {
+	rows, err := s.read.QueryContext(ctx, `SELECT DISTINCT s.source FROM sessions s WHERE `+feedVisible+` ORDER BY s.source`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var src string
+		if err := rows.Scan(&src); err != nil {
+			return nil, err
+		}
+		out = append(out, src)
+	}
+	return out, rows.Err()
+}
+
+// ProjectCount is one Project of a Machine with its feed Session count.
+type ProjectCount struct {
+	Cwd      string // "" = No project
+	Sessions int
+}
+
+// MachineProjects lists a Machine's Projects by path, with "No project" last.
+func (s *Store) MachineProjects(ctx context.Context, machineID string) ([]ProjectCount, error) {
+	rows, err := s.read.QueryContext(ctx, `
+		SELECT coalesce(s.project_cwd, ''), count(*) FROM sessions s
+		WHERE s.machine_id = ? AND `+feedVisible+`
+		GROUP BY s.project_cwd
+		ORDER BY s.project_cwd IS NULL, s.project_cwd`, machineID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ProjectCount
+	for rows.Next() {
+		var p ProjectCount
+		if err := rows.Scan(&p.Cwd, &p.Sessions); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
 	}
 	return out, rows.Err()
 }
@@ -52,6 +169,7 @@ type SessionHeader struct {
 	Source     string
 	NativeID   string
 	Title      string
+	MachineID  string
 	Machine    string
 	ProjectCwd string
 	GitBranch  string
@@ -78,11 +196,11 @@ type TranscriptPart struct {
 // unknown id or a Session that was never parsed (hub.md §4.10).
 func (s *Store) Transcript(ctx context.Context, id int64) (h SessionHeader, msgs []TranscriptMessage, ok bool, err error) {
 	err = s.read.QueryRowContext(ctx, `
-		SELECT s.id, s.source, s.native_id, coalesce(s.title, ''), `+machineLabel+`, coalesce(s.project_cwd, ''),
+		SELECT s.id, s.source, s.native_id, coalesce(s.title, ''), m.id, `+machineLabel+`, coalesce(s.project_cwd, ''),
 			coalesce(s.git_branch, ''), coalesce(s.model, ''), coalesce(s.started_at, 0)
 		FROM sessions s JOIN machines m ON m.id = s.machine_id
 		WHERE s.id = ? AND s.parsed_at IS NOT NULL`, id).Scan(
-		&h.ID, &h.Source, &h.NativeID, &h.Title, &h.Machine, &h.ProjectCwd, &h.GitBranch, &h.Model, &h.StartedAt)
+		&h.ID, &h.Source, &h.NativeID, &h.Title, &h.MachineID, &h.Machine, &h.ProjectCwd, &h.GitBranch, &h.Model, &h.StartedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return h, nil, false, nil
 	}

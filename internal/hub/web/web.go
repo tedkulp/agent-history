@@ -5,11 +5,13 @@ package web
 //go:generate go tool templ generate
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -53,7 +55,7 @@ func New(s *store.Store, log *slog.Logger) http.Handler {
 }
 
 type feedDay struct {
-	Label string
+	Label string // "" continues the previous page's last day
 	Rows  []feedRow
 }
 
@@ -65,24 +67,197 @@ type feedRow struct {
 	ProjectFull string
 }
 
+// chip is one filter chip; Href toggles it (hub.md §4.7).
+type chip struct {
+	Label string
+	Title string // hover text
+	Count int    // shown when > 0
+	On    bool
+	Href  string
+}
+
+type chipRow struct {
+	Label string
+	Chips []chip
+}
+
+type feedView struct {
+	Chips    []chipRow
+	Filtered bool
+	Days     []feedDay
+	More     string // "Load more" URL, "" on the last page
+}
+
+// noProject is the project param value for "No project".
+const noProject = "-"
+
+// feedParams is the feed's state, all of it in the URL.
+type feedParams struct {
+	Machine, Project, Source string
+}
+
+func (p feedParams) filter() store.FeedFilter {
+	f := store.FeedFilter{Machine: p.Machine, Source: p.Source}
+	if p.Project != "" {
+		cwd := p.Project
+		if cwd == noProject {
+			cwd = ""
+		}
+		f.Project = &cwd
+	}
+	return f
+}
+
+// url is the feed URL for p, with extra params appended in order.
+func (p feedParams) url(extra ...string) string {
+	v := url.Values{}
+	for k, val := range map[string]string{"machine": p.Machine, "project": p.Project, "source": p.Source} {
+		if val != "" {
+			v.Set(k, val)
+		}
+	}
+	for i := 0; i+1 < len(extra); i += 2 {
+		v.Set(extra[i], extra[i+1])
+	}
+	if len(v) == 0 {
+		return "/"
+	}
+	return "/?" + v.Encode()
+}
+
+// feedURL links to the feed filtered to a Machine and, when project is
+// non-nil, one of its Projects ("" = No project).
+func feedURL(machineID string, project *string) string {
+	p := feedParams{Machine: machineID}
+	if project != nil {
+		p.Project = projectParam(*project)
+	}
+	return p.url()
+}
+
+func projectParam(cwd string) string {
+	if cwd == "" {
+		return noProject
+	}
+	return cwd
+}
+
 func (s *server) feed(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.store.Feed(r.Context(), feedPageSize)
+	q := r.URL.Query()
+	p := feedParams{Machine: q.Get("machine"), Project: q.Get("project"), Source: q.Get("source")}
+	if p.Machine == "" {
+		p.Project = ""
+	}
+	f := p.filter()
+	after := ""
+	if at, err := strconv.ParseInt(q.Get("before"), 10, 64); err == nil {
+		// before_id breaks ties; without it, before is strict.
+		id, _ := strconv.ParseInt(q.Get("before_id"), 10, 64)
+		f.Before = &store.Cursor{At: at, ID: id}
+		after = dayLabel(time.UnixMilli(at).In(s.now().Location()), s.now())
+	}
+	rows, err := s.store.Feed(r.Context(), f, feedPageSize+1)
 	if err != nil {
 		s.internal(w, r, err)
 		return
 	}
-	s.render(w, r, http.StatusOK, feedPage(groupByDay(rows, s.now())))
+	v := feedView{Filtered: p != feedParams{}}
+	if len(rows) > feedPageSize {
+		rows = rows[:feedPageSize]
+		last := rows[len(rows)-1]
+		v.More = p.url("before", strconv.FormatInt(last.LastActivityAt, 10), "before_id", strconv.FormatInt(last.ID, 10))
+	}
+	v.Days = groupByDay(rows, s.now(), after)
+	if r.Header.Get("HX-Request") == "true" {
+		s.render(w, r, http.StatusOK, feedRows(v))
+		return
+	}
+	if v.Chips, err = s.chips(r.Context(), p); err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	s.render(w, r, http.StatusOK, feedPage(v))
+}
+
+// chips builds the Machine and Source rows and, with a Machine picked, its
+// Project row.
+func (s *server) chips(ctx context.Context, p feedParams) ([]chipRow, error) {
+	machines, err := s.store.FeedMachines(ctx)
+	if err != nil {
+		return nil, err
+	}
+	sources, err := s.store.FeedSources(ctx)
+	if err != nil {
+		return nil, err
+	}
+	mrow := chipRow{Label: "Machine"}
+	for _, m := range machines {
+		c := chip{Label: m.Label, Title: m.ID, On: m.ID == p.Machine}
+		q := p
+		q.Project = ""
+		if c.On {
+			q.Machine = ""
+		} else {
+			q.Machine = m.ID
+		}
+		c.Href = q.url()
+		mrow.Chips = append(mrow.Chips, c)
+	}
+	srow := chipRow{Label: "Source"}
+	for _, src := range sources {
+		c := chip{Label: src, On: src == p.Source}
+		q := p
+		if c.On {
+			q.Source = ""
+		} else {
+			q.Source = src
+		}
+		c.Href = q.url()
+		srow.Chips = append(srow.Chips, c)
+	}
+	rows := []chipRow{mrow, srow}
+	if p.Machine == "" {
+		return rows, nil
+	}
+	projects, err := s.store.MachineProjects(ctx, p.Machine)
+	if err != nil {
+		return nil, err
+	}
+	prow := chipRow{Label: "Project"}
+	for _, pc := range projects {
+		key := projectParam(pc.Cwd)
+		c := chip{Count: pc.Sessions, On: key == p.Project}
+		c.Label, c.Title = projectName(pc.Cwd)
+		q := p
+		if c.On {
+			q.Project = ""
+		} else {
+			q.Project = key
+		}
+		c.Href = q.url()
+		prow.Chips = append(prow.Chips, c)
+	}
+	return append(rows, prow), nil
 }
 
 // groupByDay groups feed rows (newest first) under "Today", "Yesterday" or
-// their date.
-func groupByDay(rows []store.FeedRow, now time.Time) []feedDay {
-	var days []feedDay
+// their date. A first group on the day named by after gets no label, since it
+// continues the previous page.
+func groupByDay(rows []store.FeedRow, now time.Time, after string) []feedDay {
+	var (
+		days []feedDay
+		cur  string
+	)
 	for _, row := range rows {
 		t := time.UnixMilli(row.LastActivityAt).In(now.Location())
 		label := dayLabel(t, now)
-		if len(days) == 0 || days[len(days)-1].Label != label {
-			days = append(days, feedDay{Label: label})
+		if len(days) == 0 || label != cur {
+			d := feedDay{Label: label}
+			if len(days) == 0 && label == after {
+				d.Label = ""
+			}
+			days = append(days, d)
+			cur = label
 		}
 		v := feedRow{FeedRow: row, Time: t.Format("15:04"), Prompt: oneLine(row.FirstPrompt)}
 		v.Title = titleOr(row.Title, row.NativeID)
@@ -140,6 +315,8 @@ type headerView struct {
 	Project     string
 	ProjectFull string
 	Started     string
+	MachineHref string
+	ProjectHref string
 }
 
 type messageView struct {
@@ -167,6 +344,8 @@ func (s *server) transcript(w http.ResponseWriter, r *http.Request) {
 	hv := headerView{SessionHeader: h, Started: s.localTime(h.StartedAt, "Jan 2, 2006 15:04")}
 	hv.Title = titleOr(h.Title, h.NativeID)
 	hv.Project, hv.ProjectFull = projectName(h.ProjectCwd)
+	hv.MachineHref = feedURL(h.MachineID, nil)
+	hv.ProjectHref = feedURL(h.MachineID, &h.ProjectCwd)
 	var views []messageView
 	for _, m := range msgs {
 		v := messageView{ID: m.ID, Role: m.Role, Time: s.localTime(m.Timestamp, "Jan 2 15:04")}
