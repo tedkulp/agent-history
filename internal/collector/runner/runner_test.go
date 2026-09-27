@@ -44,6 +44,8 @@ type fixture struct {
 	state string
 
 	down     atomic.Bool  // every request fails with a dropped connection
+	tooOld   atomic.Bool  // the Hub's floor is above the Collector: every request gets a 426
+	refused  atomic.Int32 // requests answered with a 426
 	dropAcks atomic.Int32 // this many records requests commit, then drop the connection
 	posts    atomic.Int32 // records requests that reached the Hub
 	requests atomic.Int32 // every request, including refused ones
@@ -60,11 +62,18 @@ func newFixture(t *testing.T) *fixture {
 	}
 	t.Cleanup(func() { st.Close() })
 	f := &fixture{t: t, store: st, root: t.TempDir(), state: t.TempDir(), blocked: make(chan struct{}, 16)}
-	h := api.New(st, slog.New(slog.DiscardHandler))
+	h := api.New(st, slog.New(slog.DiscardHandler), api.Floor{})
+	// A release Hub refuses the fixture's dev Collector.
+	floored := api.New(st, slog.New(slog.DiscardHandler), api.Floor{HubVersion: "0.5.0", Min: "0.5.0"})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.requests.Add(1)
 		if f.down.Load() {
 			hangUp(w)
+			return
+		}
+		if f.tooOld.Load() {
+			f.refused.Add(1)
+			floored.ServeHTTP(w, r)
 			return
 		}
 		if r.Method != http.MethodPost {

@@ -116,7 +116,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	t.Cleanup(func() { st.Close() })
 	f := &fixture{t: t, store: st, root: t.TempDir()}
-	h := api.New(st, nil)
+	h := api.New(st, nil, api.Floor{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			f.appends.Add(1)

@@ -210,8 +210,13 @@ func (r *runner) report() status.Report {
 		Hub:            status.Hub{LastError: r.hubErr},
 	}
 	if r.contacted {
-		online := r.online
-		rep.Hub.Reachable = &online
+		// A 426 came from a Hub that answered.
+		reachable := r.online || r.tooOld != nil
+		rep.Hub.Reachable = &reachable
+	}
+	if r.tooOld != nil {
+		rep.Hub.UpgradeRequired = true
+		rep.Hub.MinCollectorVersion = r.tooOld.MinVersion
 	}
 	if !r.lastSync.IsZero() {
 		t := r.lastSync

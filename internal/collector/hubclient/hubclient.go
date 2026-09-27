@@ -59,6 +59,20 @@ func (e *StatusError) Error() string {
 	return fmt.Sprintf("hub returned %d %s", e.StatusCode, e.Body.Error)
 }
 
+// TooOldError is a 426: the Hub requires a newer Collector (protocol.md §4.6).
+type TooOldError struct {
+	// MinVersion is the Hub's minimum Collector version, or "" when the
+	// response didn't say.
+	MinVersion string
+}
+
+func (e *TooOldError) Error() string {
+	if e.MinVersion == "" {
+		return "Hub requires a newer Collector"
+	}
+	return "Hub requires Collector ≥ " + e.MinVersion
+}
+
 // ConflictError is a 409 from an append. It carries the Hub's state.
 type ConflictError struct {
 	Length int64
@@ -91,6 +105,11 @@ func (c *Client) do(req *http.Request, want int, out any) error {
 			return &StatusError{StatusCode: resp.StatusCode, Body: protocol.Error{Error: c.Error, Message: "409 without the Hub's record state"}}
 		}
 		return &ConflictError{Length: c.Length, Sha256: c.Sha256}
+	}
+	if resp.StatusCode == http.StatusUpgradeRequired {
+		var t protocol.TooOld
+		_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&t)
+		return &TooOldError{MinVersion: t.MinCollectorVersion}
 	}
 	if resp.StatusCode != want {
 		var e protocol.Error
@@ -139,7 +158,18 @@ func (c *Client) Ping(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.do(req, http.StatusOK, nil)
+	err = c.do(req, http.StatusOK, nil)
+	var tooOld *TooOldError
+	if errors.As(err, &tooOld) {
+		// A 426 to HEAD has no body. The Hub answers GET with the same
+		// 426, before any manifest is built, so ask again for the minimum.
+		if req, err2 := c.newRequest(ctx, http.MethodGet, "/manifest", nil); err2 == nil {
+			if err2 := c.do(req, http.StatusOK, nil); errors.As(err2, &tooOld) && tooOld.MinVersion != "" {
+				return tooOld
+			}
+		}
+	}
+	return err
 }
 
 // Append sends data as an append at offset. prefixSha256 is the hex sha256

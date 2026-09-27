@@ -93,3 +93,22 @@ func TestCommas(t *testing.T) {
 		}
 	}
 }
+
+func TestFormatUpgradeRequired(t *testing.T) {
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	for min, want := range map[string]string{
+		"0.4.0": "Hub      http://hub  upgrade Collector (Hub requires ≥ 0.4.0), last sync 3h ago\n",
+		"":      "Hub      http://hub  upgrade Collector (Hub requires a newer version), last sync 3h ago\n",
+	} {
+		r := Report{
+			HubURL:           "http://hub",
+			ServiceInstalled: true,
+			Hub:              Hub{Reachable: ptr(true), LastSync: ptr(now.Add(-3 * time.Hour)), UpgradeRequired: true, MinCollectorVersion: min},
+		}
+		var b strings.Builder
+		Format(&b, r, now)
+		if got := b.String(); !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+}

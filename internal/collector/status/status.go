@@ -38,6 +38,11 @@ type Hub struct {
 	Reachable *bool      `json:"reachable"`
 	LastSync  *time.Time `json:"last_sync"`
 	LastError *Failure   `json:"last_error"`
+	// UpgradeRequired is set once the Hub refuses this Collector as too
+	// old (a 426), until it accepts it again. MinCollectorVersion is the
+	// minimum the Hub asked for, or "" when it didn't say.
+	UpgradeRequired     bool   `json:"upgrade_required"`
+	MinCollectorVersion string `json:"min_collector_version,omitempty"`
 }
 
 // Source is one Source's line in the report.
@@ -77,6 +82,12 @@ func Format(w io.Writer, r Report, now time.Time) {
 		hub = "unreachable"
 		if *r.Hub.Reachable {
 			hub = "reachable"
+		}
+	}
+	if r.Hub.UpgradeRequired {
+		hub = "upgrade Collector (Hub requires a newer version)"
+		if v := r.Hub.MinCollectorVersion; v != "" {
+			hub = "upgrade Collector (Hub requires ≥ " + v + ")"
 		}
 	}
 	if r.Hub.LastSync != nil {

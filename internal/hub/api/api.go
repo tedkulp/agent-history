@@ -31,20 +31,52 @@ var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
 type server struct {
 	store *store.Store
 	log   *slog.Logger
+	floor Floor
+}
+
+// Floor is the minimum Collector version check (protocol.md §4.6). The zero
+// Floor skips the check, as a dev Hub does.
+type Floor struct {
+	// HubVersion is the Hub's own version. A dev Hub (protocol.DevVersion)
+	// accepts every Collector.
+	HubVersion string
+	// Min is the effective minimum (protocol.EffectiveMinCollectorVersion).
+	Min string
+}
+
+// allows reports whether a Collector sending userAgent may use the API.
+func (f Floor) allows(userAgent string) bool {
+	if f.HubVersion == "" || f.HubVersion == protocol.DevVersion {
+		return true
+	}
+	v := protocol.CollectorVersion(userAgent)
+	return v != protocol.DevVersion && protocol.ValidVersion(v) && !protocol.VersionLess(v, f.Min)
 }
 
 // New returns the /api/v1 handler. A nil logger means slog.Default().
-func New(s *store.Store, log *slog.Logger) http.Handler {
+func New(s *store.Store, log *slog.Logger, floor Floor) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
-	srv := &server{store: s, log: log}
+	srv := &server{store: s, log: log, floor: floor}
 	mux := http.NewServeMux()
 	p := protocol.APIPrefix + "/machines/{id}"
 	mux.HandleFunc("PUT "+p, srv.machineOnly(srv.putMachine))
 	mux.HandleFunc("GET "+p+"/manifest", srv.machineOnly(srv.manifest))
 	mux.HandleFunc("POST "+p+"/records", srv.machineOnly(srv.records))
-	return mux
+	return srv.checkFloor(mux)
+}
+
+// checkFloor answers 426 to a Collector below the floor, on every request.
+func (s *server) checkFloor(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ua := r.UserAgent(); !s.floor.allows(ua) {
+			s.log.Info("collector too old", "method", r.Method, "path", r.URL.Path, "user_agent", ua, "min_collector_version", s.floor.Min)
+			writeJSON(w, http.StatusUpgradeRequired, protocol.TooOld{Error: protocol.ErrCollectorTooOld, MinCollectorVersion: s.floor.Min})
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 // machineOnly rejects requests whose X-Machine-Id differs from the path id.

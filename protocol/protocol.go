@@ -105,6 +105,12 @@ type Conflict struct {
 	Sha256 string `json:"sha256"`
 }
 
+// TooOld is the body of a 426: the Collector is below the minimum version.
+type TooOld struct {
+	Error               string `json:"error"`
+	MinCollectorVersion string `json:"min_collector_version"`
+}
+
 // Error codes.
 const (
 	ErrBadRequest          = "bad_request"
@@ -112,4 +118,5 @@ const (
 	ErrBodyTooLarge        = "body_too_large"
 	ErrUnsupportedEncoding = "unsupported_encoding"
 	ErrInternal            = "internal"
+	ErrCollectorTooOld     = "collector_too_old"
 )

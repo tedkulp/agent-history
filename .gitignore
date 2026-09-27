@@ -1,3 +1,5 @@
 .claude/
 /bin/
 /.data/
+/collector
+/hub

@@ -277,9 +277,15 @@ func localReport(ctx context.Context, cfg *config.Config, home string) status.Re
 		err = hub.Ping(ctx)
 	}
 	var se *hubclient.StatusError
-	reachable := err == nil || errors.As(err, &se) && se.StatusCode < 500
+	var tooOld *hubclient.TooOldError
+	errors.As(err, &tooOld)
+	reachable := err == nil || tooOld != nil || errors.As(err, &se) && se.StatusCode < 500
 	rep.Hub.Reachable = &reachable
-	if err != nil {
+	switch {
+	case tooOld != nil:
+		rep.Hub.UpgradeRequired = true
+		rep.Hub.MinCollectorVersion = tooOld.MinVersion
+	case err != nil:
 		rep.Hub.LastError = status.NewFailure(err, now)
 	}
 	for _, a := range adapters {

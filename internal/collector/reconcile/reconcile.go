@@ -67,7 +67,7 @@ var ErrStopped = errors.New("reconcile stopped")
 // Per-record errors are logged and counted in Result. The returned error is
 // for failures that stop the whole reconcile, including a transient Hub
 // error on any record (hubclient.Transient), after which the caller backs
-// off and reconciles again.
+// off and reconciles again, and a 426 (hubclient.TooOldError).
 func Reconcile(ctx context.Context, hub Hub, info protocol.MachineInfo, sources []Source, opts Options) (Result, error) {
 	log := opts.Log
 	if log == nil {
@@ -109,8 +109,9 @@ func Reconcile(ctx context.Context, hub Hub, info protocol.MachineInfo, sources 
 			out, err := Ship(ctx, hub, src.ID, rec, h, rlog)
 			res.Bytes += out.Sent
 			var mismatch *MismatchError
+			var tooOld *hubclient.TooOldError
 			switch {
-			case hubclient.Transient(err) || errors.Is(err, context.Canceled):
+			case hubclient.Transient(err) || errors.Is(err, context.Canceled) || errors.As(err, &tooOld):
 				return res, fmt.Errorf("shipping %s %s: %w", src.ID, rec.Key, err)
 			case errors.As(err, &mismatch):
 				res.Mismatched++

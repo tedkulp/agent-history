@@ -58,6 +58,7 @@ type Config struct {
 	DrainTimeout time.Duration // 10s for in-flight uploads on shutdown
 	BackoffMin   time.Duration // 1s, doubling after each failed reconcile
 	BackoffMax   time.Duration // 5m
+	UpgradeRetry time.Duration // 1h between retries after a 426 (protocol.md §4.6)
 	MaxUploads   int           // 4 in flight across all records
 
 	// firstSync waits on the startup reconcile (see Once).
@@ -77,6 +78,7 @@ func (c *Config) setDefaults() {
 	def(&c.DrainTimeout, 10*time.Second)
 	def(&c.BackoffMin, time.Second)
 	def(&c.BackoffMax, 5*time.Minute)
+	def(&c.UpgradeRetry, time.Hour)
 	if c.MaxUploads == 0 {
 		c.MaxUploads = 4
 	}
@@ -125,6 +127,7 @@ type result struct {
 	failedAt   *fileStat // skip the record until its stat differs from this
 	unreadable bool      // the file couldn't be read; the next rescan retries it
 	transient  bool      // the Hub is unreachable
+	tooOld     *hubclient.TooOldError
 }
 
 type reconciled struct {
@@ -167,6 +170,9 @@ type runner struct {
 	contacted   bool // a reconcile has reached the Hub or failed to
 	lastSync    time.Time
 	hubErr      *status.Failure
+	// tooOld is the Hub's last 426, until a reconcile succeeds. Nothing
+	// ships meanwhile; a reconcile is retried every UpgradeRetry.
+	tooOld *hubclient.TooOldError
 
 	// Syncs waiting for the next reconcile, and those the running one will answer.
 	syncQueued  []*syncWaiter
@@ -356,6 +362,7 @@ func (r *runner) ship(ctx context.Context, j job) result {
 	out, err := reconcile.Ship(ctx, r.Hub, j.src, j.rec, h, log)
 	var mismatch *reconcile.MismatchError
 	var pathErr *fs.PathError
+	var tooOld *hubclient.TooOldError
 	switch {
 	case err == nil:
 		r.Cache.Set(j.key, out.Entry)
@@ -367,6 +374,10 @@ func (r *runner) ship(ctx context.Context, j job) result {
 		log.Warn("hub unreachable", "err", err)
 		res.transient = true
 		res.err = err
+	case errors.As(err, &tooOld):
+		// The record is untouched on the Hub; the reconcile after the
+		// retry ships it.
+		res.tooOld = tooOld
 	case errors.Is(err, context.Canceled):
 		// Shutdown gave up on the drain; the next start reconciles.
 	case errors.As(err, &mismatch):
@@ -397,6 +408,8 @@ func (r *runner) handleResult(res result) {
 		delete(r.uploadErr, src)
 	case res.transient:
 		r.hubErr = status.NewFailure(res.err, now)
+	case res.tooOld != nil:
+		r.upgradeRequired(res.tooOld)
 	case res.err != nil:
 		r.uploadErr[src] = status.NewFailure(res.err, now)
 	}
@@ -453,8 +466,13 @@ func (r *runner) handleReconciled(rc reconciled) {
 		w.done <- rc
 	}
 	r.syncRunning = nil
+	var tooOld *hubclient.TooOldError
 	switch {
 	case rc.err == nil:
+		if r.tooOld != nil {
+			r.Log.Info("hub accepts this Collector again", "min_collector_version", r.tooOld.MinVersion)
+			r.tooOld = nil
+		}
 		r.online = true
 		r.contacted = true
 		r.needReconcile = len(r.syncQueued) > 0
@@ -463,11 +481,31 @@ func (r *runner) handleReconciled(rc reconciled) {
 		r.hubErr = nil
 	case errors.Is(rc.err, reconcile.ErrStopped), errors.Is(rc.err, context.Canceled):
 		// Shutting down.
+	case errors.As(rc.err, &tooOld):
+		r.upgradeRequired(tooOld)
 	default:
 		r.contacted = true
 		r.hubErr = status.NewFailure(rc.err, time.Now())
 		d := r.scheduleReconcile()
 		r.Log.Warn("reconcile failed, backing off", "err", rc.err, "retry_in", d.Round(time.Millisecond))
+	}
+}
+
+// upgradeRequired stops shipping after a 426 and retries the reconcile,
+// which starts with PUT /machines/{id}, after UpgradeRetry (protocol.md §4.6).
+func (r *runner) upgradeRequired(e *hubclient.TooOldError) {
+	r.Log.Error("hub requires a newer Collector, stopped uploading until it is upgraded (mise upgrade)",
+		"min_collector_version", e.MinVersion, "retry_in", r.UpgradeRetry)
+	r.tooOld = e
+	r.contacted = true
+	r.hubErr = nil
+	r.online = false
+	r.needReconcile = true
+	r.attempt = 0
+	r.nextReconcile = time.Now().Add(r.UpgradeRetry)
+	if len(r.syncQueued) > 0 {
+		// A sync asked while this reconcile ran gets its own answer now.
+		r.nextReconcile = time.Time{}
 	}
 }
 

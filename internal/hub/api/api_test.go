@@ -28,7 +28,7 @@ func newServer(t *testing.T) *httptest.Server {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	srv := httptest.NewServer(New(s, nil))
+	srv := httptest.NewServer(New(s, nil, Floor{}))
 	t.Cleanup(srv.Close)
 	return srv
 }

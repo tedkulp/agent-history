@@ -75,6 +75,10 @@ func serve(args []string) error {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(log)
+	minVersion, err := protocol.EffectiveMinCollectorVersion(os.Getenv("AGENT_HISTORY_MIN_COLLECTOR_VERSION"))
+	if err != nil {
+		return fmt.Errorf("AGENT_HISTORY_MIN_COLLECTOR_VERSION: %w", err)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -95,7 +99,7 @@ func serve(args []string) error {
 	defer func() { stopWorker(); <-workerDone }()
 
 	mux := http.NewServeMux()
-	mux.Handle(protocol.APIPrefix+"/", api.New(st, log))
+	mux.Handle(protocol.APIPrefix+"/", api.New(st, log, api.Floor{HubVersion: buildinfo.Version, Min: minVersion}))
 	mux.Handle("/", web.New(st, log))
 	srv := &http.Server{
 		Addr:              *listen,
@@ -105,7 +109,7 @@ func serve(args []string) error {
 	}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()
-	log.Info("hub listening", "addr", *listen, "data", *data, "version", buildinfo.Version)
+	log.Info("hub listening", "addr", *listen, "data", *data, "version", buildinfo.Version, "min_collector_version", minVersion)
 
 	select {
 	case err := <-errc:
