@@ -89,7 +89,7 @@ All on one listener, plain HTTP.
 
 | Route | Serves |
 |---|---|
-| `GET /` | Home: the feed, or search results when `q` is set. Query params: `q`, `machine`, `project` (`-` = "No project"), `source`, `warnings=1`, `before` and `before_id` (feed/search cursor). |
+| `GET /` | Home: the feed, or search results when `q` is set. Query params: `q`, `machine`, `project` (`-` = "No project"), `source`, `warnings=1`, `before` and `before_id` (feed cursor), `offset` (search paging: hits are ranked, not dated). |
 | `GET /sessions/{id}` | A Transcript page. Optional `hl=<terms>` highlights search terms. Messages carry anchors `#m-<message id>`. |
 | `GET /sessions/{id}/parts/{part id}/output` | htmx fragment: the full output of one Tool call |
 | `GET /blobs/{sha256}` | An image blob with its stored MIME type and `Cache-Control: public, max-age=31536000, immutable`. Only PNG, JPEG, GIF and WebP are served as themselves; any other type (SVG included) is served as `application/octet-stream` with `X-Content-Type-Options: nosniff`, so a blob can't run script. |
@@ -410,7 +410,7 @@ CREATE VIRTUAL TABLE search USING fts5(
 - **One `title` row per Session**, with the title as body, so title hits rank higher.
 - Rows are deleted and rebuilt with the Session's parse, in the same transaction.
 
-**Query translation.** The search box is plain text, not FTS5 syntax. The Hub splits the input on whitespace, keeps `"quoted phrases"` together, drops FTS5 operator characters, wraps each term in double quotes, and ANDs them. The last term gets a `*` prefix match. Input that leaves no terms shows the feed.
+**Query translation.** The search box is plain text, not FTS5 syntax. The Hub splits the input on whitespace, keeps `"quoted phrases"` together, turns FTS5 operator characters into spaces (so `foo-bar` is the phrase `"foo bar"`, as the tokenizer splits it), drops terms with no letter or digit, wraps each term in double quotes, and ANDs them. The last term gets a `*` prefix match. Input that leaves no terms shows the feed.
 
 **Ranking:** `ORDER BY bm25(search) * CASE kind WHEN 'title' THEN 2.0 ELSE 1.0 END` (bm25 is negative; lower is better, so title hits count double).
 
@@ -590,7 +590,7 @@ The UI is **search-first**: a search box over a feed of recent Sessions from eve
 
 #### Search results (`/?q=…`)
 
-- A flat list of hits, 50 per page with "Load more". Each hit shows the Session title (terms marked), a snippet around the match (§3.7), and Source · Machine › Project · the Message's role.
+- A flat list of hits, 50 per page with "Load more" (`offset=`). Each hit shows the Session title (terms marked), a snippet around the match (§3.7), and Source · Machine › Project · the Message's role.
 - A hit links to `/sessions/{id}?hl=<q>#m-<message id>`. A title hit links to the top of the Transcript.
 - Hits in Child Sessions are included and labelled "↳ child of <parent title>".
 - A **facet sidebar** shows hit counts per Machine, Source and Project. Clicking a count adds that chip.

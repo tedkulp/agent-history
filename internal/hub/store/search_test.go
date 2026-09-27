@@ -33,7 +33,7 @@ func seedSearch(t *testing.T, sessions ...string) *Store {
 
 func search(t *testing.T, s *Store, q string, f FeedFilter) []Hit {
 	t.Helper()
-	hits, err := s.Search(context.Background(), ParseQuery(q), SearchFilter{FeedFilter: f}, 50)
+	hits, err := s.Search(context.Background(), ParseQuery(q), f, 0, 50)
 	if err != nil {
 		t.Fatalf("search %q: %v", q, err)
 	}
@@ -132,7 +132,7 @@ func TestSearchNeverErrorsOnFTSSyntax(t *testing.T) {
 		`NEAR(hello world)`, `hello OR world`, `NOT hello`, `-hello`, `+hello`, `^hello`, `title:hello`, `{body}: hello`,
 		`hello"world`, `'hello'`, `hello\`, `"hello" "`, `a:b:c`, `.`, `...hello`,
 	} {
-		if _, err := s.Search(context.Background(), ParseQuery(q), SearchFilter{}, 50); err != nil {
+		if _, err := s.Search(context.Background(), ParseQuery(q), FeedFilter{}, 0, 50); err != nil {
 			t.Errorf("search %q: %v", q, err)
 		}
 		if _, err := s.SearchFacets(context.Background(), ParseQuery(q), FeedFilter{}); err != nil {
@@ -141,8 +141,8 @@ func TestSearchNeverErrorsOnFTSSyntax(t *testing.T) {
 	}
 }
 
-func TestSnippetsEscapeTranscriptHTML(t *testing.T) {
-	s := seedSearch(t, searchSession(`look <img src=x onerror=alert(1)> kiwi & "fruit"`, "ok", "", "x", ""))
+func TestSnippetsMarkMatchesWithSentinels(t *testing.T) {
+	s := seedSearch(t, searchSession(`look <img src=x> kiwi & "fruit"`, "ok", "", "x", ""))
 	hits := search(t, s, "kiwi", FeedFilter{})
 	var msg *Hit
 	for i := range hits {
@@ -153,9 +153,9 @@ func TestSnippetsEscapeTranscriptHTML(t *testing.T) {
 	if msg == nil {
 		t.Fatalf("hits = %+v", hits)
 	}
-	want := `look &lt;img src=x onerror=alert(1)&gt; <mark>kiwi</mark> &amp; &#34;fruit&#34;`
-	if msg.Snippet != want {
-		t.Errorf("snippet = %s\nwant      %s", msg.Snippet, want)
+	// Raw text: the web layer escapes it before swapping in <mark>.
+	if want := `look <img src=x> ` + SnippetOpen + `kiwi` + SnippetClose + ` & "fruit"`; msg.Snippet != want {
+		t.Errorf("snippet = %q, want %q", msg.Snippet, want)
 	}
 }
 
@@ -253,7 +253,7 @@ func TestSearchPages(t *testing.T) {
 	terms := ParseQuery("heron")
 	seen := map[string]bool{}
 	for off := 0; off < 14; off += 5 {
-		hits, err := s.Search(context.Background(), terms, SearchFilter{Offset: off}, 5)
+		hits, err := s.Search(context.Background(), terms, FeedFilter{}, off, 5)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -122,6 +122,15 @@ func (p feedParams) filter() store.FeedFilter {
 	return f
 }
 
+// withMachine is p with the Machine set to id ("" = any). A Project belongs to
+// one Machine, so switching Machine drops it.
+func (p feedParams) withMachine(id string) feedParams {
+	if id != p.Machine {
+		p.Machine, p.Project = id, ""
+	}
+	return p
+}
+
 // url is the feed URL for p plus the extra key/value params.
 func (p feedParams) url(extra ...string) string {
 	v := url.Values{}
@@ -222,10 +231,7 @@ func (s *server) chips(ctx context.Context, p feedParams) ([]chipRow, error) {
 	}
 	mrow := chipRow{Label: "Machine"}
 	for _, m := range machines {
-		mrow.Chips = append(mrow.Chips, toggle(chip{Label: m.Label, Title: m.ID}, p.Machine, m.ID, func(v string) feedParams {
-			// A Project belongs to one Machine, so switching Machine drops it.
-			return feedParams{Q: p.Q, Machine: v, Source: p.Source, Warnings: p.Warnings}
-		}))
+		mrow.Chips = append(mrow.Chips, toggle(chip{Label: m.Label, Title: m.ID}, p.Machine, m.ID, p.withMachine))
 	}
 	srow := chipRow{Label: "Source"}
 	for _, src := range sources {

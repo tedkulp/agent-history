@@ -2,6 +2,8 @@ package web
 
 import (
 	"io"
+
+	"github.com/tedkulp/agent-history/internal/hub/store"
 	"net/http"
 	"net/url"
 	"strings"
@@ -153,4 +155,28 @@ func getHX(t *testing.T, url string) (int, string) {
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, string(b)
+}
+
+func TestMarkSnippetEscapesThenMarks(t *testing.T) {
+	in := `<img src=x onerror=alert(1)> ` + store.SnippetOpen + `kiwi` + store.SnippetClose + ` & "fruit"`
+	want := `&lt;img src=x onerror=alert(1)&gt; <mark>kiwi</mark> &amp; &#34;fruit&#34;`
+	if got := markSnippet(in); got != want {
+		t.Errorf("markSnippet = %s, want %s", got, want)
+	}
+}
+
+func TestTermMarkerMatchesLikeFTS(t *testing.T) {
+	for _, c := range []struct{ q, in, want string }{
+		{"cat", "Cat concatenate catalog", "<mark>Cat</mark> concatenate <mark>cat</mark>alog"},
+		// "cat" must be a whole word; the last term "dog" is a prefix.
+		{"cat dog", "catalog dogs dog, cat.", "catalog <mark>dog</mark>s <mark>dog</mark>, <mark>cat</mark>."},
+		{"cat dog", "dog catalog", "<mark>dog</mark> catalog"},
+		{`"big dog"`, "a big-dog and big  dogs", "a <mark>big-dog</mark> and <mark>big  dog</mark>s"},
+		{"a<b", "x a<b y", "x <mark>a&lt;b</mark> y"},
+		{"b", "<b>b</b>", "&lt;<mark>b</mark>&gt;<mark>b</mark>&lt;/<mark>b</mark>&gt;"},
+	} {
+		if got := termMarker(store.ParseQuery(c.q))(c.in); got != c.want {
+			t.Errorf("q=%q on %q = %s, want %s", c.q, c.in, got, c.want)
+		}
+	}
 }

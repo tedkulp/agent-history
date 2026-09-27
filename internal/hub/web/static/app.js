@@ -24,9 +24,12 @@
   flush();
   if (!terms.length) return;
 
-  var re = new RegExp(terms.map(function (t) {
-    return t.split(" ").map(function (w) { return w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }).join("\\s+");
-  }).join("|"), "giu");
+  // Match the way FTS5 did (web.termMarker): a match starts at a word, and
+  // ends at one except for the last term, which is a prefix.
+  var re = new RegExp("(?<![\\p{L}\\p{N}])(?:" + terms.map(function (t, i) {
+    var alt = t.split(" ").map(function (w) { return w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }).join("[^\\p{L}\\p{N}]+");
+    return i < terms.length - 1 ? alt + "(?![\\p{L}\\p{N}])" : alt;
+  }).join("|") + ")", "giu");
 
   var nodes = [];
   main.querySelectorAll(".head h1, .msg").forEach(function (root) {

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"html"
 	"strings"
 	"unicode"
 
@@ -14,8 +13,8 @@ import (
 
 // Search row kinds (hub.md §3.7).
 const (
-	searchMessage = "message"
-	searchTitle   = "title"
+	searchKindMessage = "message"
+	searchKindTitle   = "title"
 )
 
 // A Session's search rows get rowids from sessionID<<searchRowBits: the
@@ -43,7 +42,7 @@ func insertSearchTitle(ctx context.Context, tx execer, sessionID int64, title st
 	}
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO search (rowid, body, kind, session_id, message_id) VALUES (?, ?, ?, ?, NULL)`,
-		searchRowID(sessionID, 0), title, searchTitle, sessionID)
+		searchRowID(sessionID, 0), title, searchKindTitle, sessionID)
 	return err
 }
 
@@ -75,7 +74,7 @@ func insertSearchMessage(ctx context.Context, tx execer, sessionID int64, ordina
 	}
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO search (rowid, body, kind, session_id, message_id) VALUES (?, ?, ?, ?, ?)`,
-		searchRowID(sessionID, ordinal+1), body, searchMessage, sessionID, m.ID)
+		searchRowID(sessionID, ordinal+1), body, searchKindMessage, sessionID, m.ID)
 	return err
 }
 
@@ -126,12 +125,6 @@ func matchExpr(terms []string) string {
 	return strings.Join(quoted, " AND ") + "*"
 }
 
-// SearchFilter narrows search to the active chips and pages through hits.
-type SearchFilter struct {
-	FeedFilter // Before is ignored: hits are ranked, not dated
-	Offset     int
-}
-
 // Hit is one search result: a Message, or a Session's title.
 type Hit struct {
 	SessionID   int64
@@ -143,20 +136,26 @@ type Hit struct {
 	ProjectCwd  string
 	MessageID   string // "" for a title hit
 	Role        string // the Message's role; "" for a title hit
-	Snippet     string // HTML: escaped text with the terms in <mark>
+	Snippet     string // raw text, each match between SnippetOpen and SnippetClose
 	ParentID    int64  // set for a hit in a Child Session
 	ParentTitle string
 }
 
-// Snippet sentinels: private-use runes that Transcript text is vanishingly
-// unlikely to hold. The snippet is escaped, then they become <mark> tags.
+// Snippet sentinels around each match: private-use runes that Transcript
+// text is vanishingly unlikely to hold. The web layer escapes the snippet,
+// then turns them into <mark> tags (hub.md §3.7).
 const (
-	markOpen  = ""
-	markClose = ""
+	SnippetOpen  = "\uE000"
+	SnippetClose = "\uE001"
 )
 
 // snippetTokens is how many tokens a snippet spans (hub.md §3.7).
 const snippetTokens = 24
+
+// searchFrom joins each search row to its Session (s) and Machine (m).
+const searchFrom = `search
+	JOIN sessions s ON s.id = search.session_id
+	JOIN machines m ON m.id = s.machine_id`
 
 // searchWhere is the WHERE clause and args for a search over terms with f's
 // chips. The visible Sessions are the parsed ones, Child Sessions included.
@@ -167,27 +166,26 @@ func searchWhere(terms []string, f FeedFilter) (string, []any) {
 	return strings.Join(append(where, w...), " AND "), append(args, a...)
 }
 
-// Search returns the hits for terms, best first, at most limit of them
-// (hub.md §4.7).
-func (s *Store) Search(ctx context.Context, terms []string, f SearchFilter, limit int) ([]Hit, error) {
+// Search returns the hits for terms with f's chips, best first: at most
+// limit of them after skipping offset (hub.md §4.7). f.Before is ignored,
+// since hits are ranked, not dated.
+func (s *Store) Search(ctx context.Context, terms []string, f FeedFilter, offset, limit int) ([]Hit, error) {
 	if len(terms) == 0 {
 		return nil, nil
 	}
-	where, args := searchWhere(terms, f.FeedFilter)
+	where, args := searchWhere(terms, f)
 	rows, err := s.read.QueryContext(ctx, `
 		SELECT s.id, s.source, s.native_id, coalesce(s.title, ''), m.id, `+machineLabel+`, coalesce(s.project_cwd, ''),
 			coalesce(search.message_id, ''), coalesce(msg.role, ''),
 			snippet(search, 0, ?, ?, '…', ?),
 			coalesce(p.id, 0), coalesce(p.title, p.native_id, '')
-		FROM search
-		JOIN sessions s ON s.id = search.session_id
-		JOIN machines m ON m.id = s.machine_id
+		FROM `+searchFrom+`
 		LEFT JOIN messages msg ON msg.session_id = s.id AND msg.id = search.message_id
 		LEFT JOIN sessions p ON p.id = s.parent_session_id
 		WHERE `+where+`
-		ORDER BY bm25(search) * CASE search.kind WHEN 'title' THEN 2.0 ELSE 1.0 END, s.id, search.rowid
+		ORDER BY bm25(search) * CASE search.kind WHEN ? THEN 2.0 ELSE 1.0 END, s.id, search.rowid
 		LIMIT ? OFFSET ?`,
-		append(append([]any{markOpen, markClose, snippetTokens}, args...), limit, f.Offset)...)
+		append(append([]any{SnippetOpen, SnippetClose, snippetTokens}, args...), searchKindTitle, limit, offset)...)
 	if err != nil {
 		return nil, err
 	}
@@ -199,17 +197,9 @@ func (s *Store) Search(ctx context.Context, terms []string, f SearchFilter, limi
 			&h.MessageID, &h.Role, &h.Snippet, &h.ParentID, &h.ParentTitle); err != nil {
 			return nil, err
 		}
-		h.Snippet = markSnippet(h.Snippet)
 		out = append(out, h)
 	}
 	return out, rows.Err()
-}
-
-// markSnippet HTML-escapes an FTS5 snippet, then turns its sentinels into
-// <mark> tags, so Transcript text can't inject markup (hub.md §3.7).
-func markSnippet(s string) string {
-	s = html.EscapeString(s)
-	return strings.NewReplacer(markOpen, "<mark>", markClose, "</mark>").Replace(s)
 }
 
 // Facet is one facet value with its hit count.
@@ -246,9 +236,7 @@ func (s *Store) SearchFacets(ctx context.Context, terms []string, f FeedFilter) 
 	} {
 		rows, err := s.read.QueryContext(ctx, fmt.Sprintf(`
 			SELECT %s, count(*) AS n
-			FROM search
-			JOIN sessions s ON s.id = search.session_id
-			JOIN machines m ON m.id = s.machine_id
+			FROM `+searchFrom+`
 			WHERE %s
 			GROUP BY 1, 3
 			ORDER BY n DESC, 2, 3`, q.cols, where), args...)

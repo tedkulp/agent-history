@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/a-h/templ"
 
@@ -57,7 +59,7 @@ func (s *server) search(w http.ResponseWriter, r *http.Request, p feedParams, te
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 	offset = max(offset, 0)
 	f := p.filter()
-	hits, err := s.store.Search(r.Context(), terms, store.SearchFilter{FeedFilter: f, Offset: offset}, searchPageSize+1)
+	hits, err := s.store.Search(r.Context(), terms, f, offset, searchPageSize+1)
 	if err != nil {
 		s.internal(w, r, err)
 		return
@@ -99,7 +101,7 @@ func hitFor(h store.Hit, q string, mark func(string) string) hitView {
 	v.Project, v.ProjectFull = projectName(h.ProjectCwd)
 	if h.MessageID != "" {
 		v.Href += "#m-" + h.MessageID
-		v.Snippet = templ.Raw(h.Snippet)
+		v.Snippet = templ.Raw(markSnippet(h.Snippet))
 	} else {
 		v.Role = "title"
 	}
@@ -118,12 +120,7 @@ func (s *server) facets(ctx context.Context, p feedParams, terms []string, f sto
 	}
 	machines := facetGroup{Label: "Machine"}
 	for _, fc := range fs.Machines {
-		q := p
-		if q.Machine != fc.Value {
-			// A Project belongs to one Machine, so switching Machine drops it.
-			q.Machine, q.Project = fc.Value, ""
-		}
-		machines.Items = append(machines.Items, facetItem{Label: fc.Machine, Title: fc.MachineID, Hits: fc.Hits, On: p.Machine == fc.Value, Href: q.url()})
+		machines.Items = append(machines.Items, facetItem{Label: fc.Machine, Title: fc.MachineID, Hits: fc.Hits, On: p.Machine == fc.Value, Href: p.withMachine(fc.Value).url()})
 	}
 	sources := facetGroup{Label: "Source"}
 	for _, fc := range fs.Sources {
@@ -147,29 +144,52 @@ func (s *server) facets(ctx context.Context, p feedParams, terms []string, f sto
 	return []facetGroup{machines, sources, projects}, nil
 }
 
+// markSnippet HTML-escapes an FTS5 snippet, then turns its sentinels into
+// <mark> tags, so Transcript text can't inject markup (hub.md §3.7).
+func markSnippet(s string) string {
+	s = html.EscapeString(s)
+	return strings.NewReplacer(store.SnippetOpen, "<mark>", store.SnippetClose, "</mark>").Replace(s)
+}
+
 // termMarker returns a function that HTML-escapes text and wraps each
-// case-insensitive match of the terms in <mark>. A phrase matches across any
-// run of whitespace.
+// case-insensitive match of the terms in <mark>, the way FTS5 matched them:
+// a match starts at a word, and ends at one except for the last term, which
+// is a prefix. A phrase matches across any run of non-word characters.
 func termMarker(terms []string) func(string) string {
 	var alts []string
-	for _, t := range terms {
+	for i, t := range terms {
 		words := strings.Fields(t)
-		for i, w := range words {
-			words[i] = regexp.QuoteMeta(w)
+		for j, w := range words {
+			words[j] = regexp.QuoteMeta(w)
 		}
-		alts = append(alts, strings.Join(words, `\s+`))
+		alt := strings.Join(words, `[^\pL\pN]+`)
+		if i < len(terms)-1 {
+			alt += `(?:[^\pL\pN]|$)`
+		}
+		alts = append(alts, alt)
 	}
 	if len(alts) == 0 {
 		return html.EscapeString
 	}
-	re := regexp.MustCompile(`(?i)` + strings.Join(alts, "|"))
+	// RE2 has no lookbehind: the leading group consumes the character before
+	// a match, which stays unmarked.
+	re := regexp.MustCompile(`(?i)(^|[^\pL\pN])(` + strings.Join(alts, "|") + `)`)
 	return func(s string) string {
 		var b strings.Builder
 		last := 0
-		for _, m := range re.FindAllStringIndex(s, -1) {
-			b.WriteString(html.EscapeString(s[last:m[0]]))
-			b.WriteString("<mark>" + html.EscapeString(s[m[0]:m[1]]) + "</mark>")
-			last = m[1]
+		for _, m := range re.FindAllStringSubmatchIndex(s, -1) {
+			start, end := m[4], m[5]
+			// Trim the trailing boundary a non-last term consumed.
+			for end > start {
+				r, size := utf8.DecodeLastRuneInString(s[start:end])
+				if unicode.IsLetter(r) || unicode.IsNumber(r) {
+					break
+				}
+				end -= size
+			}
+			b.WriteString(html.EscapeString(s[last:start]))
+			b.WriteString("<mark>" + html.EscapeString(s[start:end]) + "</mark>")
+			last = end
 		}
 		b.WriteString(html.EscapeString(s[last:]))
 		return b.String()
