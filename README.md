@@ -50,7 +50,7 @@ this repo):
 ```yaml
 services:
   hub:
-    image: ghcr.io/tedkulp/agent-history-hub:v0.1
+    image: ghcr.io/tedkulp/agent-history-hub:v0.2
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -78,7 +78,7 @@ one.
 
 ```sh
 mkdir -p data backups
-docker run -d --name agent-history-hub -p 8080:8080 -v "$PWD/data:/data" -v "$PWD/backups:/backups" --restart unless-stopped ghcr.io/tedkulp/agent-history-hub:v0.1
+docker run -d --name agent-history-hub -p 8080:8080 -v "$PWD/data:/data" -v "$PWD/backups:/backups" --restart unless-stopped ghcr.io/tedkulp/agent-history-hub:v0.2
 docker ps --filter name=agent-history-hub   # STATUS shows "(healthy)" once the Hub is ready
 ```
 
@@ -108,9 +108,9 @@ With plain Docker, pull, remove the container, and run the same
 `docker run` command again; the data stays in `./data`:
 
 ```sh
-docker pull ghcr.io/tedkulp/agent-history-hub:v0.1
+docker pull ghcr.io/tedkulp/agent-history-hub:v0.2
 docker rm -f agent-history-hub
-docker run -d --name agent-history-hub -p 8080:8080 -v "$PWD/data:/data" -v "$PWD/backups:/backups" --restart unless-stopped ghcr.io/tedkulp/agent-history-hub:v0.1
+docker run -d --name agent-history-hub -p 8080:8080 -v "$PWD/data:/data" -v "$PWD/backups:/backups" --restart unless-stopped ghcr.io/tedkulp/agent-history-hub:v0.2
 ```
 
 To move to a new minor version, change the tag first. An upgrade that

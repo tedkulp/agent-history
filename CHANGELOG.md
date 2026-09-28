@@ -9,6 +9,8 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-28
+
 ### Added
 
 - opencode support: the Collector ships opencode history from `~/.local/share/opencode` (or `XDG_DATA_HOME`, and `OPENCODE_DB` for the database, written by re-running `agent-history init`): each Session exported from opencode's database, read-only without blocking opencode, plus any leftover pre-2026 JSON files. The Hub shows it as Transcripts with Child Sessions, preferring the database when a Session is in both.
@@ -20,7 +22,7 @@ One version covers the Collector and the Hub together (see
 
 ### Changed
 
-- The sample `compose.yaml` pins the Hub image to `v0.1` instead of `latest`, so `docker compose pull` takes patch releases but not a new minor version.
+- The sample `compose.yaml` pins the Hub image to its minor version (`v0.2`) instead of `latest`, so `docker compose pull` takes patch releases but not a new minor version.
 - Jumping within a Transcript (outline prompts, Tool call and Child Session links) no longer adds a browser history entry per click, so Back leaves the page. The address bar still shows the anchor.
 
 ## [0.1.0] - 2026-09-27
@@ -60,5 +62,6 @@ One version covers the Collector and the Hub together (see
 - Release pipeline: CI, GoReleaser archives for the Collector and a
   multi-arch Hub image, published from a version tag.
 
-[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/tedkulp/agent-history/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/tedkulp/agent-history/releases/tag/v0.1.0
