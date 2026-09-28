@@ -43,6 +43,10 @@ _Avoid_: event, entry
 One typed piece of a Message: text, thinking, Tool call, image, attachment, marker, or unknown.
 _Avoid_: block, item
 
+**Housekeeping command**:
+A slash command that manages the Source itself rather than asking for work, such as clearing, resuming, compacting, or switching model. It never becomes a Session's title.
+_Avoid_: built-in command, system command
+
 **Tool call**:
 A tool request together with its result, treated as one unit.
 
