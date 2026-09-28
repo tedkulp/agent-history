@@ -79,8 +79,8 @@ func (a Adapter) Layouts() []source.Layout {
 	return []source.Layout{legacyLayout{}, sqliteLayout{db: a.DB}}
 }
 
-// KnownIgnored is the legacy tree's non-Session state and the pre-2025
-// nested layout, channel databases, and the database's WAL and shared
+// KnownIgnored is the legacy tree's non-Session state and its pre-2025
+// nested tree, channel databases, and the database's WAL and shared
 // memory, read through the database (adapter spec §2.3, §2.4).
 func (Adapter) KnownIgnored() []string {
 	return []string{

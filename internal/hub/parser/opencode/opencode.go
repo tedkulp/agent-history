@@ -76,8 +76,8 @@ func isFile(s, prefix string) bool {
 	return ok && isID(id, prefix)
 }
 
-// info is the Session's fields, from the session row or file.
-type info struct {
+// sessionInfo is the Session's fields, from the session row or file.
+type sessionInfo struct {
 	title, version, dir, parent string
 	created, updated            int64
 	hasDir                      bool
@@ -153,7 +153,7 @@ func (*Parser) Parse(in parser.Input) (parser.Result, error) {
 	var (
 		res  parser.Result
 		warn parser.Warnings
-		s    info
+		s    sessionInfo
 		msgs []*message
 		prts []*part
 	)
@@ -205,8 +205,8 @@ func (*Parser) Parse(in parser.Input) (parser.Result, error) {
 }
 
 // loadExport reads a db: export, one table-tagged row per line (opencode.md §3.1).
-func loadExport(b []byte, warn *parser.Warnings) (info, []*message, []*part) {
-	var s info
+func loadExport(b []byte, warn *parser.Warnings) (sessionInfo, []*message, []*part) {
+	var s sessionInfo
 	var msgs []*message
 	var prts []*part
 	for raw := range bytes.Lines(b) {
@@ -237,7 +237,7 @@ func loadExport(b []byte, warn *parser.Warnings) (info, []*message, []*part) {
 				warn.Add(parser.WarnBadLine, "session", string(raw))
 				continue
 			}
-			s = info{title: r.Title, version: r.Version, created: r.TimeCreated, updated: r.TimeUpdated, raw: raw}
+			s = sessionInfo{title: r.Title, version: r.Version, created: r.TimeCreated, updated: r.TimeUpdated, raw: raw}
 			if r.Directory != nil && *r.Directory != "" {
 				s.dir, s.hasDir = *r.Directory, true
 			}
@@ -277,7 +277,7 @@ func loadExport(b []byte, warn *parser.Warnings) (info, []*message, []*part) {
 
 // loadLegacy reads a legacy-json Session: the session file as Main, its
 // message and part files as attachments, told apart by key.
-func loadLegacy(in parser.Input, warn *parser.Warnings) (info, []*message, []*part) {
+func loadLegacy(in parser.Input, warn *parser.Warnings) (sessionInfo, []*message, []*part) {
 	var r struct {
 		Title     string          `json:"title"`
 		Version   string          `json:"version"`
@@ -289,11 +289,11 @@ func loadLegacy(in parser.Input, warn *parser.Warnings) (info, []*message, []*pa
 			Updated int64 `json:"updated"`
 		} `json:"time"`
 	}
-	s := info{raw: in.Main, hasDir: true}
+	s := sessionInfo{raw: in.Main, hasDir: true}
 	if err := json.Unmarshal(in.Main, &r); err != nil {
 		warn.Add(parser.WarnBadLine, "session", string(in.Main))
 	} else {
-		s = info{title: r.Title, version: r.Version, dir: r.Directory, parent: r.ParentID,
+		s = sessionInfo{title: r.Title, version: r.Version, dir: r.Directory, parent: r.ParentID,
 			created: r.Time.Created, updated: r.Time.Updated, hasDir: r.Directory != "", raw: in.Main}
 		s.revert = revertFrom(r.Revert)
 	}

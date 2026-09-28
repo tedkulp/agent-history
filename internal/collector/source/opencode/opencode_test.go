@@ -232,6 +232,37 @@ func TestReadOnly(t *testing.T) {
 	if got := snapshot(t, root); !mapsEqual(got, files) {
 		t.Errorf("reading a closed database created files: %v", got)
 	}
+
+	// opencode crashed, leaving committed frames in its WAL but no shared
+	// memory: the WAL is still read, not skipped.
+	c, err := sql.Open("sqlite", db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetMaxOpenConns(1)
+	exec(t, c, `PRAGMA wal_autocheckpoint=0`)
+	before, err := os.ReadFile(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec(t, c, `INSERT INTO message VALUES ('msg_y', ?, 5000, 5000, '{}')`, parentID)
+	wal, err := os.ReadFile(db + "-wal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	// Closing checkpoints; put back what a crash would have left.
+	if err := os.WriteFile(db, before, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(db+"-wal", wal, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(db + "-shm")
+	b, err = source.Content(discover(t, l, root)[1])
+	if err != nil || !bytes.Contains(b, []byte("msg_y")) {
+		t.Errorf("export with a WAL and no shared memory (err %v) lacks msg_y", err)
+	}
 }
 
 // snapshot is every file under root with its content.

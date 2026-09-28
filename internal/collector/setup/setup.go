@@ -83,8 +83,13 @@ func Init(ctx context.Context, o Options) (*config.Config, protocol.MachineInfo,
 				sc["root"] = root
 			}
 			if dba, ok := a.(source.DBAdapter); ok {
-				if db := dba.DefaultDB(o.Env, sc["root"].(string)); db != "" {
-					sc["db"] = db
+				// Like the root: kept once set, unless --reset-roots.
+				if d, _ := sc["db"].(string); d == "" || o.ResetRoots {
+					if db := dba.DefaultDB(o.Env, sc["root"].(string)); db != "" {
+						sc["db"] = db
+					} else {
+						delete(sc, "db")
+					}
 				}
 			}
 		}

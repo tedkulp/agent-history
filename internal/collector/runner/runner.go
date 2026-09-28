@@ -117,6 +117,12 @@ type waiter struct {
 	rec    source.Record
 }
 
+// dbLayout is a database Layout of a Source.
+type dbLayout struct {
+	src    Source
+	layout source.Layout
+}
+
 // dbPending is a database Layout that changed, waiting out its debounce
 // before Discover finds which of its records changed (collector.md §4.5).
 type dbPending struct {
@@ -174,9 +180,9 @@ type runner struct {
 	lastSave      time.Time
 
 	watcher     *fsnotify.Watcher
-	watched     map[string]bool      // directories watched with everything under them
-	flat        map[string]bool      // directories watched only for a database's files
-	dbFiles     map[string]dbPending // a database Layout's watched files, by path
+	watched     map[string]bool     // directories watched with everything under them
+	flat        map[string]bool     // directories watched only for a database's files
+	dbFiles     map[string]dbLayout // a database Layout's watched files, by path
 	watchWarned map[string]bool
 
 	// What `status` reports.
@@ -229,7 +235,7 @@ func Run(ctx context.Context, cfg Config) error {
 		needReconcile: true,
 		watched:       map[string]bool{},
 		flat:          map[string]bool{},
-		dbFiles:       map[string]dbPending{},
+		dbFiles:       map[string]dbLayout{},
 		watchWarned:   map[string]bool{},
 		infos:         map[string]protocol.SourceInfo{},
 		records:       map[string]int{},
@@ -787,17 +793,13 @@ func (r *runner) updateWatches() {
 // watchDBFile watches a database Layout's file p through its directory,
 // which isn't watched recursively, since the file may not exist yet (a WAL).
 func (r *runner) watchDBFile(s Source, l source.Layout, p string) {
-	r.dbFiles[p] = dbPending{src: s, layout: l}
+	r.dbFiles[p] = dbLayout{s, l}
 	dir := filepath.Dir(p)
 	if r.flat[dir] {
 		return
 	}
 	if err := r.watcher.Add(dir); err != nil {
-		if !r.watchWarned[s.Root] {
-			r.Log.Warn("can't watch directory, relying on the rescan for this root",
-				"root", s.Root, "dir", dir, "watch_limit", watchLimit(), "rescan_interval", r.RescanInterval, "err", err)
-			r.watchWarned[s.Root] = true
-		}
+		r.watchFailed(s.Root, dir, err)
 		return
 	}
 	r.flat[dir] = true
@@ -813,16 +815,22 @@ func (r *runner) watchTree(root, dir string) {
 			return nil
 		}
 		if err := r.watcher.Add(p); err != nil {
-			if !r.watchWarned[root] {
-				r.Log.Warn("can't watch directory, relying on the rescan for this root",
-					"root", root, "dir", p, "watch_limit", watchLimit(), "rescan_interval", r.RescanInterval, "err", err)
-				r.watchWarned[root] = true
-			}
+			r.watchFailed(root, p, err)
 			return filepath.SkipAll
 		}
 		r.watched[p] = true
 		return nil
 	})
+}
+
+// watchFailed logs one warn per root for a watch that couldn't be added.
+func (r *runner) watchFailed(root, dir string, err error) {
+	if r.watchWarned[root] {
+		return
+	}
+	r.Log.Warn("can't watch directory, relying on the rescan for this root",
+		"root", root, "dir", dir, "watch_limit", watchLimit(), "rescan_interval", r.RescanInterval, "err", err)
+	r.watchWarned[root] = true
 }
 
 // watchLimit describes the OS limit a failed watch most likely hit.

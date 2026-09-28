@@ -54,11 +54,11 @@ Rank **`2`**. Record-key prefix **`db:`**.
 - Lines, in order: the `session` row; its `message` rows ordered by `(time_created, id)`; its `part` rows ordered by `id`; its `session_message` rows ordered by `seq`, if that table exists.
 - `row` holds **every column** (`SELECT *`), keyed by column name, in table order. TEXT → JSON string (the `data` columns stay strings, verbatim), INTEGER and REAL → JSON number, NULL → `null`, BLOB → `{"$base64": "…"}`.
 - Each line ends with `\n`. The export is deterministic, so an unchanged Session exports to identical bytes and the Hub's no-op `replace` rule applies (`protocol.md` §4.4).
-- New columns added by opencode's migrations flow through untouched. A missing `session_message` table is skipped. A missing `session`, `message` or `part` table means the Layout is not detected, and `status` shows the error.
+- New columns added by opencode's migrations flow through untouched. A missing `session_message` table is skipped. A missing `session`, `message` or `part` table fails the Layout's discovery, and `status` shows the error.
 
 **Finding changed Sessions.** Each record's change signal (`collector.md` §3.2) is the number of the Session's rows and the latest `time_updated` among the Session and its `message`, `part` and `session_message` rows. One query lists every Session with its signal; a Session whose signal differs from the one last acked is exported. The row count catches deleted rows, which change no `time_updated`.
 
-**Reading the database**: read-only, never creating, changing or checkpointing the WAL, with a `busy_timeout` of 5 s. SQLite's `mode=ro` still creates a missing WAL and shared-memory file, so the Collector uses it only while both exist (opencode has the database open); otherwise it opens the database `immutable`. Like any WAL reader it takes a read mark in the shared memory, which never blocks opencode's writes. A busy or locked database is retried on the next event or rescan (`collector.md` §4.5).
+**Reading the database**: read-only, never creating, changing or checkpointing the WAL, with a `busy_timeout` of 5 s. SQLite's `mode=ro` still creates a missing WAL, so the Collector uses it only while the WAL exists (opencode has the database open, or left committed frames in it); otherwise it opens the database `immutable`. A WAL without its shared-memory file is read with `mode=ro`, which recreates the shared memory only. Like any WAL reader it takes a read mark in the shared memory, which never blocks opencode's writes. A busy or locked database is retried on the next event or rescan (`collector.md` §4.5).
 
 **Change signal**: the database file and `opencode.db-wal`. **`WatchPaths`**: those two files.
 

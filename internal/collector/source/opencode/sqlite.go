@@ -53,15 +53,15 @@ func (l sqliteLayout) Claims(root, p string) (source.Record, bool) {
 	return source.Record{Path: p}, true
 }
 
-// session is an exported record: one Session row of the database at db.
+// sessionExport is an exported record: one Session row of the database at db.
 // Dir and Parent are read when it is discovered, for exclude.
-type session struct {
+type sessionExport struct {
 	db, id, dir, parent string
 }
 
 // Export is the Session's rows as JSONL (adapter spec §2.2). Its errors
 // are fs.PathErrors, so that a busy database is retried on the next rescan.
-func (s session) Export() ([]byte, error) {
+func (s sessionExport) Export() ([]byte, error) {
 	b, err := withDB(s.db, func(ctx context.Context, tx *sql.Tx) ([]byte, error) {
 		return exportSession(ctx, tx, s.id)
 	})
@@ -99,7 +99,7 @@ func (l sqliteLayout) Discover(root string) ([]source.Record, error) {
 		defer rows.Close()
 		cols, _ := rows.Columns()
 		for rows.Next() {
-			var s session
+			var s sessionExport
 			vals := make([]int64, len(cols)-3)
 			dest := []any{&s.id, &s.dir, &s.parent}
 			for i := range vals {
@@ -127,7 +127,7 @@ func (l sqliteLayout) Discover(root string) ([]source.Record, error) {
 
 // StartCwd is the Session's directory, read when it was discovered.
 func (sqliteLayout) StartCwd(rec source.Record) (string, error) {
-	s, ok := rec.Export.(session)
+	s, ok := rec.Export.(sessionExport)
 	if !ok {
 		return "", nil
 	}
@@ -136,11 +136,11 @@ func (sqliteLayout) StartCwd(rec source.Record) (string, error) {
 
 // Parent is the parent Session of a Child Session.
 func (sqliteLayout) Parent(_ string, rec source.Record) (source.Record, bool) {
-	s, ok := rec.Export.(session)
+	s, ok := rec.Export.(sessionExport)
 	if !ok || s.parent == "" {
 		return source.Record{}, false
 	}
-	p := session{db: s.db, id: s.parent}
+	p := sessionExport{db: s.db, id: s.parent}
 	_, err := withDB(s.db, func(ctx context.Context, tx *sql.Tx) ([]byte, error) {
 		return nil, tx.QueryRowContext(ctx, `SELECT directory, COALESCE(parent_id, '') FROM session WHERE id = ?`, p.id).Scan(&p.dir, &p.parent)
 	})
@@ -285,15 +285,16 @@ const queryTimeout = time.Minute
 // withDB runs fn in one read transaction on the database at path, opened
 // read-only so that opencode is never blocked and its WAL is never created
 // or checkpointed (adapter spec §2.2). A read-only connection still creates
-// a missing WAL and shared-memory file, so when they are missing, which
-// means no one has the database open for writing, it is read as immutable.
+// a missing WAL, so when there is none, which means no one has the
+// database open for writing, it is read as immutable. A WAL left without
+// its shared memory is read through mode=ro, which recreates only the latter.
 func withDB[T any](path string, fn func(context.Context, *sql.Tx) (T, error)) (T, error) {
 	var zero T
 	if !isFile(path) {
 		return zero, fs.ErrNotExist
 	}
 	q := "mode=ro&_pragma=busy_timeout(5000)&_pragma=query_only(1)"
-	if !isFile(path+"-wal") || !isFile(path+"-shm") {
+	if !isFile(path + "-wal") {
 		q = "immutable=1&_pragma=query_only(1)"
 	}
 	u := url.URL{Path: filepath.ToSlash(path)}

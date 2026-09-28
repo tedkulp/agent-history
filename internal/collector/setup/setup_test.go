@@ -418,4 +418,20 @@ func TestInitOpencode(t *testing.T) {
 	if si := info.Sources[0]; !slices.Equal(si.Layouts, []string{"legacy-json", "sqlite"}) {
 		t.Errorf("source info with the configured db %+v", si)
 	}
+
+	// Like the root, a db once written is kept, unless --reset-roots.
+	delete(env, "OPENCODE_DB")
+	if cfg, _, err = Init(context.Background(), f.opts); err != nil {
+		t.Fatal(err)
+	}
+	if sc := cfg.Sources["opencode"]; sc.DB != filepath.Join(root, "work.db") {
+		t.Fatalf("rerun dropped the db: %+v", sc)
+	}
+	f.opts.ResetRoots = true
+	if cfg, _, err = Init(context.Background(), f.opts); err != nil {
+		t.Fatal(err)
+	}
+	if sc := cfg.Sources["opencode"]; sc.DB != "" {
+		t.Fatalf("--reset-roots kept the db: %+v", sc)
+	}
 }
