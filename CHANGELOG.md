@@ -9,6 +9,8 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-28
+
 ### Added
 
 - Every push to `main` publishes the Hub image as `ghcr.io/tedkulp/agent-history-hub:dev`, for trying unreleased changes. A dev Hub accepts any Collector version.
@@ -72,6 +74,7 @@ One version covers the Collector and the Hub together (see
 - Release pipeline: CI, GoReleaser archives for the Collector and a
   multi-arch Hub image, published from a version tag.
 
-[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/tedkulp/agent-history/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/tedkulp/agent-history/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/tedkulp/agent-history/releases/tag/v0.1.0
