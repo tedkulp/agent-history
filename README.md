@@ -175,6 +175,7 @@ You need Go (see `go.mod`) and [just](https://just.systems).
 ```sh
 just check    # gofmt, go vet, go test
 just hub      # run a Hub on :8080 with its data in .data/
+just collector # ship this Machine's history to that Hub, beside any installed Collector
 just build    # build both binaries into bin/
 ```
 

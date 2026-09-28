@@ -54,9 +54,22 @@ hub: generate
     mkdir -p .data
     go run ./cmd/hub serve --listen :8080 --data .data --backup-dir .data/backups --log-level debug
 
-# Run the Collector in the foreground
-collector:
-    go run ./cmd/collector run
+# Run a Collector command (default: run) against the local Hub, beside any installed Collector
+collector cmd="run":
+    #!/usr/bin/env sh
+    set -eu
+    # Config and state live in .data/collector, apart from an installed
+    # Collector's, so the two don't share collector.lock. The first run writes
+    # a config for a new "(dev)" Machine; edit it to change the Hub URL.
+    export XDG_CONFIG_HOME="$PWD/.data/collector/config" XDG_STATE_HOME="$PWD/.data/collector/state"
+    cfg="$XDG_CONFIG_HOME/agent-history/collector.toml"
+    if [ ! -f "$cfg" ]; then
+        mkdir -p "$(dirname "$cfg")"
+        id=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
+        printf 'machine_id = "%s"\ndisplay_name = "%s (dev)"\nhub_url = "http://localhost:8080"\n' \
+            "$(echo "$id" | tr 'A-Z' 'a-z')" "$(hostname)" > "$cfg"
+    fi
+    go run ./cmd/collector {{cmd}}
 
 # Remove build output and local Hub data
 clean:
