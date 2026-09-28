@@ -65,6 +65,10 @@ _Avoid_: era, format, backend
 Something in a Raw record the Hub didn't fully understand while still producing a Transcript: an unknown type, an unreadable line, a missing field, or an orphaned reference. Distinct from a parse failure, where no Transcript is produced.
 _Avoid_: error, drift
 
+**Re-parse**:
+Parsing a Session again from its kept Raw records because a parser changed or someone asked for it, not because new data arrived. It runs behind live parsing.
+_Avoid_: rebuild, reindex
+
 ## Relationships
 
 - A **Machine** runs exactly one **Collector**
