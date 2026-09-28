@@ -364,10 +364,9 @@ func (s *Store) SaveParse(ctx context.Context, job Job, parserVersion int, res p
 	}
 
 	var (
-		firstPrompt string
-		model       string
-		total       parser.Usage
-		hasUsage    bool
+		model    string
+		total    parser.Usage
+		hasUsage bool
 	)
 	for i, m := range res.Messages {
 		var usage sql.NullString
@@ -386,7 +385,6 @@ func (s *Store) SaveParse(ctx context.Context, job Job, parserVersion int, res p
 			id, m.ID, i, m.Role, nullInt(m.Timestamp), nullStr(m.Model), nullStr(m.Provider), usage); err != nil {
 			return err
 		}
-		var texts []string
 		for j, p := range m.Parts {
 			if tc, ok := p.Payload.(parser.ToolCallPayload); ok {
 				if p.Payload, err = splitOutput(ctx, tx, id, p.ID, tc); err != nil {
@@ -402,15 +400,9 @@ func (s *Store) SaveParse(ctx context.Context, job Job, parserVersion int, res p
 				id, m.ID, p.ID, j, p.Kind, string(payload)); err != nil {
 				return err
 			}
-			if tp, ok := p.Payload.(parser.TextPayload); ok {
-				texts = append(texts, tp.Text)
-			}
 		}
 		if err := insertSearchMessage(ctx, tx, id, i, m); err != nil {
 			return err
-		}
-		if firstPrompt == "" && m.Role == parser.MessageUser && len(texts) > 0 {
-			firstPrompt = truncate(strings.Join(texts, "\n"), 300)
 		}
 	}
 
@@ -430,9 +422,10 @@ func (s *Store) SaveParse(ctx context.Context, job Job, parserVersion int, res p
 		}
 	}
 
+	firstPrompt := truncate(parser.FirstUserText(res.Messages), 300)
 	title := res.Session.Title
 	if title == "" {
-		title = truncate(firstPrompt, 80)
+		title = truncate(parser.TitleCandidate(res.Messages), 80)
 	}
 	if err := insertSearchTitle(ctx, tx, id, title); err != nil {
 		return err

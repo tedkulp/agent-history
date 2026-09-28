@@ -298,7 +298,7 @@ CREATE INDEX sessions_parent  ON sessions(parent_session_id);
 - Identity is **(Machine, Source, native id)**. A resume that appends to the same Source file continues the same Session.
 - A `sessions` row is created the first time a Raw record maps to it, with `parse_status = 'pending'`.
 - **Stub rows**: when a parse names a parent or fork origin that has no row yet, the Hub creates one (`parse_status = 'pending'`, no records) so the link always resolves. A stub gets filled when its own records arrive. Stubs are never shown in the feed (§4.7).
-- `title`: from the Source if it has one, else `first_prompt` truncated to 80 characters.
+- `title`: from the Source if it has one, else the Transcript's first title candidate truncated to 80 characters, else empty (the web UI shows the native id). A title candidate is the first user text or the first `slash_command` marker whose text starts with `/` and isn't a **Housekeeping command** (`/clear /reset /new /resume /compact /model /login /logout /config /status /cost /help /exit /effort /fast /theme /permissions /context /usage /init`), whichever comes first. The command's args are kept (`/implement-next 42`). `first_prompt` stays user text only.
 - A failed parse **keeps the previous good Transcript**: only `parse_status`, `parse_error` and `parse_attempted_version` change.
 - Project is a column, not a table. Projects have no metadata of their own.
 - `sessions.unknown_part_count` from the original storage decision is **dropped**: `parse_warnings` replaces it.

@@ -9,6 +9,10 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+### Changed
+
+- A Session with no Source title and no typed prompt before its first slash command is titled by that command (`/implement-next 42`) instead of its id. Housekeeping commands such as `/clear`, `/resume` or `/model` are skipped. Claude Code and oh-my-pi Sessions pick this up when they re-parse.
+
 ## [0.2.0] - 2026-09-28
 
 ### Added

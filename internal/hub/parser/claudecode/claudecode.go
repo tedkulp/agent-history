@@ -20,7 +20,7 @@ import (
 
 // version is the parser_version. Bump it whenever output changes for
 // existing data (hub.md §4.5).
-const version = 8
+const version = 9
 
 const (
 	layout     = "jsonl"

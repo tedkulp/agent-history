@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"regexp"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -341,3 +342,73 @@ func CutBytes(s string, n int) string {
 
 // List returns the aggregated warnings.
 func (w *Warnings) List() []Warning { return w.list }
+
+// housekeepingCommands is every Housekeeping command, shared by all Sources: they
+// never become a Session's title.
+var housekeepingCommands = map[string]bool{
+	"/clear": true, "/reset": true, "/new": true, "/resume": true, "/compact": true,
+	"/model": true, "/login": true, "/logout": true, "/config": true, "/status": true,
+	"/cost": true, "/help": true, "/exit": true, "/effort": true, "/fast": true,
+	"/theme": true, "/permissions": true, "/context": true, "/usage": true, "/init": true,
+}
+
+// FirstUserText returns the text of the first user Message that has any,
+// its text Parts joined by newlines, or "" when there is none.
+func FirstUserText(msgs []Message) string {
+	for _, m := range msgs {
+		if t := userText(m); t != "" {
+			return t
+		}
+	}
+	return ""
+}
+
+// TitleCandidate returns the text a Session is titled by when its Source
+// gives no title: the first user Message's text or the first slash command
+// that isn't a Housekeeping command, whichever comes first. It is "" when
+// there is neither.
+func TitleCandidate(msgs []Message) string {
+	for _, m := range msgs {
+		if m.Role != MessageUser {
+			continue
+		}
+		for _, p := range m.Parts {
+			switch pl := p.Payload.(type) {
+			case TextPayload:
+				if t := userText(m); t != "" {
+					return t
+				}
+			case MarkerPayload:
+				if isTitleMarker(pl) {
+					return pl.Text
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// userText is a user Message's text Parts joined by newlines, or "" for any
+// other Message.
+func userText(m Message) string {
+	if m.Role != MessageUser {
+		return ""
+	}
+	var texts []string
+	for _, p := range m.Parts {
+		if tp, ok := p.Payload.(TextPayload); ok {
+			texts = append(texts, tp.Text)
+		}
+	}
+	return strings.Join(texts, "\n")
+}
+
+// isTitleMarker reports whether a marker is a slash command that isn't a
+// Housekeeping command. oh-my-pi extension markers have no leading slash.
+func isTitleMarker(mp MarkerPayload) bool {
+	if mp.Marker != MarkerSlashCommand {
+		return false
+	}
+	f := strings.Fields(mp.Text)
+	return len(f) > 0 && strings.HasPrefix(f[0], "/") && !housekeepingCommands[f[0]]
+}

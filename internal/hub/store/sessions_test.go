@@ -271,6 +271,28 @@ func TestSaveParseBuildsFeedAndTranscript(t *testing.T) {
 	}
 }
 
+func TestSlashCommandTitlesASessionWithoutPrompt(t *testing.T) {
+	s, _ := openParsing(t)
+	ctx := context.Background()
+	lines := `{"type":"user","uuid":"u1","parentUuid":null,"timestamp":"2026-09-01T10:00:00.000Z","cwd":"/Users/ted/src/app","message":{"role":"user","content":"<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>"}}
+{"type":"user","uuid":"u2","parentUuid":"u1","timestamp":"2026-09-01T10:00:01.000Z","message":{"role":"user","content":"<command-message>implement-next</command-message>\n<command-name>/implement-next</command-name>\n<command-args>42</command-args>"}}
+{"type":"user","uuid":"u3","parentUuid":"u2","isMeta":true,"timestamp":"2026-09-01T10:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"Implement the next ticket."}]}}
+{"type":"assistant","uuid":"a1","parentUuid":"u3","timestamp":"2026-09-01T10:00:02.000Z","message":{"id":"msg_1","model":"claude-opus-5-5","content":[{"type":"text","text":"Continue?"}]}}
+{"type":"user","uuid":"u4","parentUuid":"a1","timestamp":"2026-09-01T10:00:03.000Z","message":{"role":"user","content":"yes, continue"}}
+`
+	appendTo(t, s, protocol.SourceClaudeCode, mainKey, []byte(lines))
+	for parseNext(t, s) {
+	}
+
+	feed, err := s.Feed(ctx, FeedFilter{}, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(feed) != 1 || feed[0].Title != "/implement-next 42" || feed[0].FirstPrompt != "yes, continue" {
+		t.Fatalf("feed = %+v", feed)
+	}
+}
+
 func TestParentStubIsHiddenUntilParsed(t *testing.T) {
 	s, _ := openParsing(t)
 	ctx := context.Background()

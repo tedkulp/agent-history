@@ -350,3 +350,19 @@ func TestNoHeader(t *testing.T) {
 		t.Errorf("result %+v", res)
 	}
 }
+
+func TestTitleCandidateSkipsExtensionMarkersAndReset(t *testing.T) {
+	res, _ := fixture(t, mainKey)
+	if got := parser.TitleCandidate(res.Messages); got != "Use the recommended answers" {
+		t.Errorf("TitleCandidate = %q, want the first prompt past skill-prompt", got)
+	}
+	for i, m := range res.Messages {
+		if m.ID == "c0000007" {
+			if got := parser.TitleCandidate(res.Messages[i:]); got != "Look at this" {
+				t.Errorf("TitleCandidate after reset = %q, want the prompt past /clear", got)
+			}
+			return
+		}
+	}
+	t.Fatal("no reset_boundary message")
+}
