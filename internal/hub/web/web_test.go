@@ -20,6 +20,7 @@ import (
 	"github.com/tedkulp/agent-history/internal/hub/parser"
 	"github.com/tedkulp/agent-history/internal/hub/parser/claudecode"
 	"github.com/tedkulp/agent-history/internal/hub/parser/codex"
+	"github.com/tedkulp/agent-history/internal/hub/parser/ohmypi"
 	"github.com/tedkulp/agent-history/internal/hub/store"
 	"github.com/tedkulp/agent-history/internal/hub/worker"
 	"github.com/tedkulp/agent-history/protocol"
@@ -77,8 +78,18 @@ func newSiteRecords(t *testing.T, recs []record) *httptest.Server {
 // newSiteSource is newSiteRecords for records of any Source.
 func newSiteSource(t *testing.T, source string, recs []record) *httptest.Server {
 	t.Helper()
+	s, _ := newHubSource(t, source, recs)
+	srv := httptest.NewServer(New(s, nil, nil))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// newHubSource is a store holding the given records, parsed, and a func
+// that parses whatever is queued.
+func newHubSource(t *testing.T, source string, recs []record) (*store.Store, func()) {
+	t.Helper()
 	ctx := context.Background()
-	reg := parser.NewRegistry(claudecode.New(), codex.New())
+	reg := parser.NewRegistry(claudecode.New(), codex.New(), ohmypi.New())
 	s, err := store.Open(ctx, t.TempDir(), reg)
 	if err != nil {
 		t.Fatal(err)
@@ -101,18 +112,20 @@ func newSiteSource(t *testing.T, source string, recs []record) *httptest.Server 
 		}
 	}
 	w := worker.New(s, reg, nil)
-	for {
-		worked, _, err := w.RunOnce(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !worked {
-			break
+	drain := func() {
+		t.Helper()
+		for {
+			worked, _, err := w.RunOnce(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !worked {
+				break
+			}
 		}
 	}
-	srv := httptest.NewServer(New(s, nil, nil))
-	t.Cleanup(srv.Close)
-	return srv
+	drain()
+	return s, drain
 }
 
 func get(t *testing.T, url string) (int, string) {

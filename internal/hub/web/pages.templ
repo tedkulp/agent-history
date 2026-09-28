@@ -436,8 +436,8 @@ templ toolCluster(c chunkView) {
 			<details class="tool" id={ "p-" + t.ID }>
 				<summary>
 					<b>{ t.Name }</b>
-					if t.ChildHref != "" {
-						<a class="child" href={ templ.SafeURL(t.ChildHref) }>↳ Child Session</a>
+					for _, h := range t.ChildHrefs {
+						<a class="child" href={ templ.SafeURL(h) }>↳ Child Session</a>
 					}
 					for _, h := range t.NoteHrefs {
 						<a class="call" href={ templ.SafeURL(h) }>↓ notified</a>

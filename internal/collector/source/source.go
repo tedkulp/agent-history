@@ -3,6 +3,7 @@
 package source
 
 import (
+	"compress/gzip"
 	"io"
 	"io/fs"
 	"os"
@@ -60,12 +61,20 @@ type Record struct {
 	Path string
 }
 
-// Open opens a record's file for reading its content. A `.zst` file is read
-// decompressed (collector.md §2.6).
+// Open opens a record's file for reading its content. A `.zst` or `.gz` file
+// is read decompressed (collector.md §2.6).
 func Open(path string) (io.ReadCloser, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
+	}
+	if strings.HasSuffix(path, ".gz") {
+		z, err := gzip.NewReader(f)
+		if err != nil {
+			f.Close()
+			return nil, &fs.PathError{Op: "read", Path: path, Err: err}
+		}
+		return gzipFile{z, f}, nil
 	}
 	if !strings.HasSuffix(path, ".zst") {
 		return f, nil
@@ -89,6 +98,19 @@ func (z zstdFile) Read(p []byte) (int, error) { return z.d.Read(p) }
 func (z zstdFile) Close() error {
 	z.d.Close()
 	return z.f.Close()
+}
+
+// gzipFile is a decompressing reader that closes its file.
+type gzipFile struct {
+	z *gzip.Reader
+	f *os.File
+}
+
+func (g gzipFile) Read(p []byte) (int, error) { return g.z.Read(p) }
+
+func (g gzipFile) Close() error {
+	g.z.Close()
+	return g.f.Close()
 }
 
 // ReadFile reads a record's whole content, decompressed like Open.

@@ -36,7 +36,7 @@ func cxMeta(id, cwd, parent string) string {
 // hubHolds reports whether the Hub's current version of key is body.
 func (f *fixture) hubHolds(key, body string) bool {
 	f.t.Helper()
-	m, err := f.store.Manifest(context.Background(), machine, protocol.SourceCodex)
+	m, err := f.store.Manifest(context.Background(), machine, "")
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -49,9 +49,10 @@ func (f *fixture) hubHolds(key, body string) bool {
 	return false
 }
 
-func (f *fixture) codexRecords() int {
+// records counts the Hub's records of one Source.
+func (f *fixture) records(source string) int {
 	f.t.Helper()
-	m, err := f.store.Manifest(context.Background(), machine, protocol.SourceCodex)
+	m, err := f.store.Manifest(context.Background(), machine, source)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -110,7 +111,7 @@ func TestCodexRolloutLifecycle(t *testing.T) {
 	if n := f.posts.Load() - posts; n != 0 {
 		t.Errorf("compressing and archiving sent %d records requests, want none", n)
 	}
-	if n := f.codexRecords(); n != 1 || !f.hubHolds(cxKey, body) {
+	if n := f.records(protocol.SourceCodex); n != 1 || !f.hubHolds(cxKey, body) {
 		t.Errorf("hub holds %d codex records, current matches: %v", n, f.hubHolds(cxKey, body))
 	}
 }

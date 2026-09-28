@@ -11,6 +11,7 @@ One version covers the Collector and the Hub together (see
 
 ### Added
 
+- oh-my-pi support: the Collector ships oh-my-pi history from `~/.omp/agent` (or `PI_CODING_AGENT_DIR`, `OMP_PROFILE` or `XDG_DATA_HOME`, written by re-running `agent-history init`), including archived Sessions, and the Hub shows it as Transcripts following the latest branch, with sub-agents as Child Sessions.
 - Codex support: the Collector ships Codex history from `~/.codex` (or `CODEX_HOME`, written by re-running `agent-history init`), and the Hub shows it as Transcripts with Child Sessions.
 - A forked Session shows "forked from …" in its Transcript header, linking to the Session it came from.
 - A Transcript shows a "↑ Top" link once you scroll past its header; it returns to the top and focuses the heading without adding a browser history entry.

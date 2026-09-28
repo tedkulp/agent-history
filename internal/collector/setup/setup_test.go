@@ -17,6 +17,7 @@ import (
 	"github.com/tedkulp/agent-history/internal/collector/source"
 	"github.com/tedkulp/agent-history/internal/collector/source/claudecode"
 	"github.com/tedkulp/agent-history/internal/collector/source/codex"
+	"github.com/tedkulp/agent-history/internal/collector/source/ohmypi"
 	"github.com/tedkulp/agent-history/protocol"
 )
 
@@ -328,5 +329,50 @@ func TestShortHostname(t *testing.T) {
 		if got := ShortHostname(in); got != want {
 			t.Errorf("ShortHostname(%q) = %q", in, got)
 		}
+	}
+}
+
+// oh-my-pi's root comes from XDG_DATA_HOME or OMP_PROFILE in the shell rc,
+// on macOS as on Linux, and init enables it (oh-my-pi.md §6).
+func TestInitOhMyPiRoot(t *testing.T) {
+	for _, c := range []struct {
+		name, rc, root string
+	}{
+		{"XDG_DATA_HOME", "export XDG_DATA_HOME=$HOME/xdg\n", "xdg/omp"},
+		{"OMP_PROFILE", "export OMP_PROFILE=work\n", ".omp/profiles/work/agent"},
+		{"PI_CODING_AGENT_DIR", "export PI_CODING_AGENT_DIR=$HOME/agent\n", "agent"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t)
+			home := f.opts.Home
+			if err := os.MkdirAll(filepath.Join(home, c.root, "sessions"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			rc := filepath.Join(home, "rc")
+			if err := os.WriteFile(rc, []byte(c.rc), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			shell := filepath.Join(home, "fakesh")
+			script := "#!/bin/sh\nHOME=" + home + "\n[ \"$1\" = -i ] && . " + rc + "\nshift\nshift\nexec sh -c \"$1\"\n"
+			if err := os.WriteFile(shell, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for _, k := range []string{"XDG_DATA_HOME", "OMP_PROFILE", "PI_PROFILE", "PI_CODING_AGENT_DIR", "PI_CONFIG_DIR"} {
+				t.Setenv(k, "")
+			}
+			env, err := ShellEnv(context.Background(), shell, 5*time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.opts.Adapters = []source.Adapter{claudecode.Adapter{}, ohmypi.Adapter{}}
+			f.opts.Env = func(k string) string { return env[k] }
+			cfg, _, err := Init(context.Background(), f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if sc := cfg.Sources["oh-my-pi"]; sc.Root != filepath.Join(home, c.root) || !sc.IsEnabled() {
+				t.Fatalf("oh-my-pi source %+v", sc)
+			}
+		})
 	}
 }

@@ -21,21 +21,25 @@ Source: [oh-my-pi on-disk history format](https://github.com/tedkulp/agent-histo
 
 The root is omp's **agent directory**, the one that contains `sessions/`.
 
+`<config>` is `~/` + `$PI_CONFIG_DIR` (a name relative to the home directory), default `~/.omp`. A profile is `OMP_PROFILE` (or the legacy `PI_PROFILE`), unless it is empty or `default`.
+
 `DefaultRoot(env)` takes the first of these that contains a `sessions/` directory:
 
-1. `$PI_CODING_AGENT_DIR`
-2. with `OMP_PROFILE` (or the legacy `PI_PROFILE`) set: `<config>/profiles/<profile>/agent`, where `<config>` is `$PI_CONFIG_DIR` or `~/.omp`
-3. `$XDG_STATE_HOME/omp/agent`, then `$XDG_DATA_HOME/omp/agent` (omp honours XDG on macOS as well as Linux once `omp config init-xdg` has run)
+1. `$PI_CODING_AGENT_DIR`, when no profile is set (omp ignores it under a profile)
+2. with a profile: `$XDG_DATA_HOME/omp/profiles/<profile>`, then `<config>/profiles/<profile>/agent`
+3. without one: `$XDG_DATA_HOME/omp`
 4. `<config>/agent`, i.e. `~/.omp/agent`
 
-If none contains `sessions/`, the root is `~/.omp/agent` (reported "not detected").
+omp files `sessions/` under the XDG *data* directory, with no `agent/` segment, and only when `XDG_DATA_HOME` is set: there is no `~/.local/share` fallback. It does this on macOS as well as Linux once `omp config init-xdg` has run. `archive/sessions/` sits next to `sessions/` in either case.
+
+If none contains `sessions/`, the root is omp's default agent directory: `<config>/profiles/<profile>/agent` with a profile, else `<config>/agent` (reported "not detected").
 
 | | |
 |---|---|
 | `Detect(root)` | `root/sessions` or `root/archive/sessions` is a directory |
 | `Version(root)` | empty |
 
-The XDG sub-paths in step 3 follow the research reading of `packages/utils/src/dirs.ts`. Confirm them against that file when the adapter is built (§6, first item).
+The XDG paths were checked against the compiled `dirs.ts` of omp 18.3.4 (`agentSubdir(…, "sessions", "data")`) when the adapter was built. The research reading (`$XDG_STATE_HOME/omp/agent`, `$XDG_DATA_HOME/omp/agent`) was wrong.
 
 Source: [oh-my-pi on-disk history format](https://github.com/tedkulp/agent-history/issues/4), [Collector design](https://github.com/tedkulp/agent-history/issues/11); the search order filled in while writing this spec
 
@@ -63,7 +67,7 @@ One Layout, **`jsonl`**, rank `1`. Record keys have no Layout prefix.
 
 - `**/.*.lock`, `**/.*.lock.os` (omp's lock files)
 - `**/*.jsonl.*.bak` (rewrite backups)
-- inside a Session's artifacts directory: `*.md`, `*.json`, `*.read.log`, `url-search/**` (sub-agent outputs and tool caches, not history)
+- inside a Session's artifacts directory, at any depth: `*.md`, `*.json`, `*.log` (`.read.log`, `.bash.log`, `.bash-original.log`, `.eval.log`), `local/**` and `url-search/**` (sub-agent outputs, tool logs and caches, not history)
 
 **Scan paths**: `sessions/` and `archive/sessions/`. `agent.db`, `history.db`, `models.db`, `stats.db`, `blobs/`, `config.yml` and the rest of the agent directory are outside the scan.
 
@@ -102,12 +106,12 @@ Source: [Collector design](https://github.com/tedkulp/agent-history/issues/11)
 |---|---|
 | `title` | The title slot (first physical line). Session title (§3.6). |
 | `session` | The header. Session fields (§3.6). |
-| `session_init` | A sub-agent's header: the agent name, model, task and tools. The `task` text becomes the first `user` Message of the Child Session. `systemPrompt` is Raw only. |
+| `session_init` | A sub-agent's header: the agent name, model, task and tools. The `task` text becomes the first `user` Message of the Child Session (§3.5). `systemPrompt` is Raw only. |
 | `message` | Messages (§3.3) |
 | `model_change` | `marker` (`model_change`), text = `model` |
 | `thinking_level_change` | `marker` (`thinking_level`), text = `thinkingLevel` |
 | `compaction` | `marker` (`compaction`), text = its summary |
-| `branch_summary` | `marker` (`compaction`), text = `Branch summary: ` + its summary |
+| `branch_summary` | `marker` (`compaction`), text = `Branch summary: ` + its summary, or `Branch discarded` when the summary is empty (omp writes an empty one when it drops an entry) |
 | `reset_boundary` | `marker` (`slash_command`), text = `/clear` |
 | `custom_message` | If `display` is true: `marker` (`slash_command`), text = `customType` plus `details.name` when present (e.g. `skill-prompt: setup-matt-pocock-skills`). Otherwise Raw only. |
 | `title_change`, `credential_pin`, `model_usage`, `custom`, `service_tier_change`, `ttsr_injection`, `mode_change`, `label` | Raw only (bookkeeping, auth hashes, non-chat model calls, extension state) |
@@ -147,7 +151,7 @@ Content blocks:
 | Block | Part |
 |---|---|
 | `text` | `text`. `textSignature` is Raw only. |
-| `thinking` | `thinking` with the `thinking` text. Signatures and `providerPayload` are Raw only. |
+| `thinking` | `thinking` with the `thinking` text. Signatures and `providerPayload` are Raw only. A block with no text (only a signature) has no Part. |
 | `toolCall` | `tool_call` (§3.4) |
 | `image` with inline base64 data | `image` |
 | `image` with a `blob:sha256:<hash>` reference | `attachment`, label `image (blob <first 12 hex chars>)`. omp's shared blob store isn't collected in v1. |
@@ -185,7 +189,7 @@ A sub-agent file is its own Session, hidden from top-level browse.
 
 - `parent_native_id` = the native id with its last `/<segment>` removed. It is derived from the key, not from `session.parentSession` (which holds an absolute path on the Machine).
 - `spawning_call_id` = `null`. The sub-agent file doesn't record the call id. The parent's `task` call links forward through `child_sessions`, and the Hub finds the spawning call from there (`hub.md` §4.7).
-- Its first Message is the `session_init` `task` text, as a `user` Message.
+- Its first Message is the `session_init` `task` text, as a `user` Message. omp 18 also writes the task as the next `message` on the path, a `user` message with the same text; that message then stands in for it, so the task shows once.
 
 Source: [Normalized Transcript model](https://github.com/tedkulp/agent-history/issues/9); filled in while writing this spec
 

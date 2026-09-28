@@ -8,7 +8,7 @@ disk and ships it, raw, to one **Hub**. The Hub keeps every record verbatim,
 parses it into readable transcripts, and serves a web UI with full-text
 search. It never deletes anything.
 
-Supported today: **Claude Code** and **Codex**. oh-my-pi and opencode are
+Supported today: **Claude Code**, **Codex** and **oh-my-pi**. opencode is
 specced and planned.
 
 > [!WARNING]

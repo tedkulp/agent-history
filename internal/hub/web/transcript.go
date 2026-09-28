@@ -61,19 +61,19 @@ type imageView struct {
 }
 
 type toolView struct {
-	ID        string // the Part id, as the row's anchor
-	Name      string
-	Summary   string // one line of input
-	Status    string
-	Input     string // pretty-printed JSON
-	Diff      *diffView
-	Output    string
-	HasOutput bool
-	Stub      string // "Output collapsed · 5.2 KB"; "" when inline
-	Preview   string
-	OutputURL string
-	ChildHref string   // the Child Session it spawned; "" when none
-	NoteHrefs []string // the task_notification pills about this call
+	ID         string // the Part id, as the row's anchor
+	Name       string
+	Summary    string // one line of input
+	Status     string
+	Input      string // pretty-printed JSON
+	Diff       *diffView
+	Output     string
+	HasOutput  bool
+	Stub       string // "Output collapsed · 5.2 KB"; "" when inline
+	Preview    string
+	OutputURL  string
+	ChildHrefs []string // the Child Sessions it spawned, in call order
+	NoteHrefs  []string // the task_notification pills about this call
 }
 
 type diffView struct {
@@ -129,8 +129,7 @@ func (s *server) chunks(sessionID int64, parts []store.TranscriptPart, childHref
 			tv := newToolView(sessionID, p.ID, tc)
 			for _, c := range tc.ChildSessions {
 				if href, ok := childHrefs[c]; ok {
-					tv.ChildHref = href
-					break
+					tv.ChildHrefs = append(tv.ChildHrefs, href)
 				}
 			}
 			if n := len(out); n > 0 && out[n-1].Tools != nil {
@@ -143,7 +142,7 @@ func (s *server) chunks(sessionID int64, parts []store.TranscriptPart, childHref
 	for i := range out {
 		if out[i].Tools != nil {
 			out[i].Label = clusterLabel(out[i].Tools)
-			out[i].Open = slices.ContainsFunc(out[i].Tools, func(t toolView) bool { return t.ChildHref != "" })
+			out[i].Open = slices.ContainsFunc(out[i].Tools, func(t toolView) bool { return len(t.ChildHrefs) > 0 })
 		}
 	}
 	return out
