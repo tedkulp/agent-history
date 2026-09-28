@@ -440,6 +440,20 @@ templ taskLine(m *markerView) {
 	}
 }
 
+// toolStatus is a tool call's ✓, ✗ or ⋯.
+templ toolStatus(status string) {
+	<span class={ "st", status }>
+		switch status {
+			case parser.StatusOK:
+				✓
+			case parser.StatusError:
+				✗
+			default:
+				⋯
+		}
+	</span>
+}
+
 // toolCluster is a run of consecutive tool calls, folded into one collapsed
 // row (hub.md §4.7).
 templ toolCluster(c chunkView) {
@@ -458,16 +472,12 @@ templ toolCluster(c chunkView) {
 					if t.Summary != "" {
 						<span class="dim">{ t.Summary }</span>
 					}
-					<span class={ "st", t.Status }>
-						switch t.Status {
-							case parser.StatusOK:
-								✓
-							case parser.StatusError:
-								✗
-							default:
-								⋯
-						}
-					</span>
+					if t.Command != "" {
+						@toolStatus(t.Status)
+						<code class="cmd">{ t.Command }</code>
+					} else {
+						@toolStatus(t.Status)
+					}
 				</summary>
 				<div class="body">
 					if t.Diff != nil {

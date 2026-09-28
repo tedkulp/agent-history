@@ -52,6 +52,7 @@ details.cluster[open]>summary{margin-bottom:4px}
 details.tool{border-left:2px solid var(--line);margin:2px 0 2px 10px;padding-left:10px;scroll-margin-top:20px}
 details.tool>summary{cursor:pointer;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 details.tool>summary .dim{font:12px var(--mono);margin-left:6px}
+details.tool>summary code.cmd{display:block;font-size:12px;background:none;padding:0;margin-left:16px;color:var(--dim);overflow:hidden;text-overflow:ellipsis}
 details.tool>summary a.child{margin-left:6px} details.tool>summary a.call{margin-left:6px;font-size:12px}
 details.tool.is-target>summary{background:var(--tool)}
 details.tool .st{margin-left:6px} .st.ok{color:var(--add-ink)} .st.error{color:var(--bad)}

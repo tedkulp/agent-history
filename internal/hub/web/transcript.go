@@ -64,6 +64,7 @@ type toolView struct {
 	ID         string // the Part id, as the row's anchor
 	Name       string
 	Summary    string // one line of input
+	Command    string // a second line under a description; "" when none
 	Status     string
 	Input      string // pretty-printed JSON
 	Diff       *diffView
@@ -206,7 +207,8 @@ func newMarkerView(partID string, mp parser.MarkerPayload) *markerView {
 }
 
 func newToolView(sessionID int64, partID string, tc parser.ToolCallPayload) toolView {
-	v := toolView{ID: partID, Name: tc.Name, Status: tc.Status, Summary: inputSummary(tc.Input), Input: prettyJSON(tc.Input)}
+	v := toolView{ID: partID, Name: tc.Name, Status: tc.Status, Input: prettyJSON(tc.Input)}
+	v.Summary, v.Command = inputSummary(tc.Input)
 	for _, n := range tc.Notifications {
 		v.NoteHrefs = append(v.NoteHrefs, "#p-"+n)
 	}
@@ -256,25 +258,39 @@ func clusterLabel(tools []toolView) string {
 // summaryKeys are input fields that make a good one-line summary of a call.
 var summaryKeys = []string{"command", "file_path", "path", "pattern", "url", "query", "description", "prompt"}
 
+// secondKeys are the fields shown under a call's description.
+var secondKeys = []string{"command", "file_path", "path", "pattern", "url", "query"}
+
 // inputSummary is one line describing a call's input: its most telling
-// string field, else its compact JSON, cut to 100 characters.
-func inputSummary(in json.RawMessage) string {
+// string field, else its compact JSON, cut to 100 characters. When the input
+// has a description, that leads and the field it would otherwise have shown
+// comes back as second, the same way cut; second is "" when there is none.
+func inputSummary(in json.RawMessage) (summary, second string) {
 	var obj map[string]any
 	if json.Unmarshal(in, &obj) == nil {
-		for _, k := range summaryKeys {
-			if v, ok := obj[k].(string); ok && v != "" {
-				return cut(oneLine(v), 100)
+		first := func(keys ...string) string {
+			for _, k := range keys {
+				if v, ok := obj[k].(string); ok && v != "" {
+					return cut(oneLine(v), 100)
+				}
 			}
+			return ""
+		}
+		if d := first("description"); d != "" {
+			return d, first(secondKeys...)
+		}
+		if s := first(summaryKeys...); s != "" {
+			return s, ""
 		}
 	}
 	var buf bytes.Buffer
 	if json.Compact(&buf, in) != nil {
-		return ""
+		return "", ""
 	}
 	if s := buf.String(); s != "{}" && s != "null" {
-		return cut(s, 100)
+		return cut(s, 100), ""
 	}
-	return ""
+	return "", ""
 }
 
 func cut(s string, n int) string {

@@ -64,6 +64,7 @@ func TestOpencodeSessions(t *testing.T) {
 		`<span class="del">- fmt.Println(&#34;hi&#34;)</span>`,
 		"Error: MessageAbortedError: Aborted",
 		"⚠ unknown <code>hologram</code>",
+		`<summary><b>bash</b> <span class="dim">Run the tests</span> <span class="st ok">✓</span> <code class="cmd">go test ./...</code></summary>`,
 	} {
 		if !strings.Contains(parent, want) {
 			t.Errorf("parent lacks %q", want)

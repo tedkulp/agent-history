@@ -9,6 +9,10 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+### Added
+
+- A Tool call with a description (Claude Code, opencode) shows the description on its row, with the command or path it ran in monospace beneath it.
+
 ## [0.3.0] - 2026-09-28
 
 ### Added

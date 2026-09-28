@@ -371,6 +371,7 @@ func TestTranscriptToolCallsAndImages(t *testing.T) {
 		{"t3", "Bash", map[string]any{"command": "false"}, "exit 1", true},
 		{"t4", "Read", map[string]any{"file_path": "/big"}, big, false},
 		{"t5", "Read", map[string]any{"file_path": "/mid"}, mid, false},
+		{"t6", "Bash", map[string]any{"command": "go test ./...", "description": "Run the tests"}, "ok", false},
 	}
 	for i, c := range calls {
 		a, r := fmt.Sprintf("a%d", i), fmt.Sprintf("r%d", i)
@@ -399,7 +400,11 @@ func TestTranscriptToolCallsAndImages(t *testing.T) {
 		t.Fatalf("status %d", code)
 	}
 	for _, want := range []string{
-		"⚙ 5 tool calls · Bash ✗, Edit, Read",
+		"⚙ 6 tool calls · Bash ✗, Edit, Read",
+		// A call without a description shows its most telling field; one with
+		// a description shows that, its command on a line beneath (#60).
+		`<summary><b>Read</b> <span class="dim">/big</span> <span class="st ok">✓</span></summary>`,
+		`<summary><b>Bash</b> <span class="dim">Run the tests</span> <span class="st ok">✓</span> <code class="cmd">go test ./...</code></summary>`,
 		"&lt;b&gt;bold?&lt;/b&gt;", // output is text, not HTML
 		`<div class="diff-file">/src/app/main.go</div>`,
 		`<span class="del">- old line</span>`, `<span class="add">+ new line</span>`, `<span class="">  keep</span>`,
