@@ -33,6 +33,9 @@ type Config struct {
 type SourceConfig struct {
 	Enabled *bool  `toml:"enabled"`
 	Root    string `toml:"root"`
+	// DB is the Source's database, when it isn't the default under the
+	// root (opencode only).
+	DB string `toml:"db"`
 }
 
 // IsEnabled reports whether the Source is enabled; it defaults to true.
@@ -83,6 +86,9 @@ func Load(path string) (*Config, error) {
 	for id, s := range c.Sources {
 		if s.Root != "" && !filepath.IsAbs(s.Root) {
 			errs = append(errs, fmt.Errorf("sources.%s.root must be an absolute path", id))
+		}
+		if s.DB != "" && !filepath.IsAbs(s.DB) {
+			errs = append(errs, fmt.Errorf("sources.%s.db must be an absolute path", id))
 		}
 	}
 	if err := errors.Join(errs...); err != nil {

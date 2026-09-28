@@ -1,0 +1,24 @@
+{
+  "id": "prt_d2e470dd9001Qs6vLx4cNw8mTp",
+  "sessionID": "ses_2d1b8f2a3ffeQm7xLs9vNw4cTp",
+  "messageID": "msg_d2e470dd7001Mq4xLw9cNs2vTp",
+  "type": "tool",
+  "tool": "task",
+  "callID": "toolu_01AbCdEf",
+  "state": {
+    "status": "completed",
+    "input": {
+      "description": "Find the flake",
+      "prompt": "Find it."
+    },
+    "output": "The clock isn't frozen.",
+    "time": {
+      "start": 1,
+      "end": 2
+    },
+    "title": "task",
+    "metadata": {
+      "sessionId": "ses_2d1b8e1c4ffeNw2xMq8vLs5cTp"
+    }
+  }
+}

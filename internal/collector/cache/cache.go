@@ -5,7 +5,6 @@ package cache
 
 import (
 	"encoding/json"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -26,10 +25,10 @@ type Entry struct {
 	SrcMtime time.Time `json:"src_mtime"`
 }
 
-// Unchanged reports whether fi has the size and mtime recorded at the ack,
-// so the record can be skipped without reading it.
-func (e Entry) Unchanged(fi fs.FileInfo) bool {
-	return e.SrcSize == fi.Size() && e.SrcMtime.Equal(fi.ModTime())
+// Unchanged reports whether a record's change signal, size and mtime, is
+// the one recorded at the ack, so the record can be skipped without reading it.
+func (e Entry) Unchanged(size int64, mtime time.Time) bool {
+	return e.SrcSize == size && e.SrcMtime.Equal(mtime)
 }
 
 // Key is the cache key for a record: source + NUL + Record key.

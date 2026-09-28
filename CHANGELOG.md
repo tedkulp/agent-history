@@ -11,6 +11,7 @@ One version covers the Collector and the Hub together (see
 
 ### Added
 
+- opencode support: the Collector ships opencode history from `~/.local/share/opencode` (or `XDG_DATA_HOME`, and `OPENCODE_DB` for the database, written by re-running `agent-history init`): each Session exported from opencode's database, read-only without blocking opencode, plus any leftover pre-2026 JSON files. The Hub shows it as Transcripts with Child Sessions, preferring the database when a Session is in both.
 - oh-my-pi support: the Collector ships oh-my-pi history from `~/.omp/agent` (or `PI_CODING_AGENT_DIR`, `OMP_PROFILE` or `XDG_DATA_HOME`, written by re-running `agent-history init`), including archived Sessions, and the Hub shows it as Transcripts following the latest branch, with sub-agents as Child Sessions.
 - Codex support: the Collector ships Codex history from `~/.codex` (or `CODEX_HOME`, written by re-running `agent-history init`), and the Hub shows it as Transcripts with Child Sessions.
 - A forked Session shows "forked from …" in its Transcript header, linking to the Session it came from.

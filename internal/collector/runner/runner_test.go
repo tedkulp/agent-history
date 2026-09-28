@@ -52,6 +52,8 @@ type fixture struct {
 	blockMu  sync.Mutex
 	block    chan struct{} // when set, records requests wait for it to close
 	blocked  chan struct{} // receives once per request that starts waiting
+	modesMu  sync.Mutex
+	modes    []string // each records request's key and mode, as "key mode"
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -95,6 +97,9 @@ func newFixture(t *testing.T) *fixture {
 			}
 		}
 		f.posts.Add(1)
+		f.modesMu.Lock()
+		f.modes = append(f.modes, r.Header.Get(protocol.HeaderRecordKey)+" "+r.Header.Get(protocol.HeaderMode))
+		f.modesMu.Unlock()
 		if f.dropAcks.Load() > 0 {
 			f.dropAcks.Add(-1)
 			h.ServeHTTP(httptest.NewRecorder(), r)

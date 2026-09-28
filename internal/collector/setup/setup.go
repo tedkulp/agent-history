@@ -82,6 +82,11 @@ func Init(ctx context.Context, o Options) (*config.Config, protocol.MachineInfo,
 				}
 				sc["root"] = root
 			}
+			if dba, ok := a.(source.DBAdapter); ok {
+				if db := dba.DefaultDB(o.Env, sc["root"].(string)); db != "" {
+					sc["db"] = db
+				}
+			}
 		}
 		return nil
 	})
@@ -140,18 +145,30 @@ func MachineInfo(cfg *config.Config, adapters []source.Adapter, hostname, home, 
 		if !sc.IsEnabled() || sc.Root == "" {
 			continue
 		}
+		a = Configure(a, sc)
 		si := protocol.SourceInfo{Source: a.ID(), Root: sc.Root, Layouts: []string{}, Detected: a.Detect(sc.Root)}
 		if si.Detected {
 			if v := a.Version(sc.Root); v != "" {
 				si.Version = &v
 			}
 			for _, l := range a.Layouts() {
+				if !source.Present(l, sc.Root) {
+					continue
+				}
 				si.Layouts = append(si.Layouts, l.Name())
 			}
 		}
 		info.Sources = append(info.Sources, si)
 	}
 	return info
+}
+
+// Configure is a with the settings in its [sources.<id>] table beyond the root.
+func Configure(a source.Adapter, sc config.SourceConfig) source.Adapter {
+	if dba, ok := a.(source.DBAdapter); ok && sc.DB != "" {
+		return dba.WithDB(sc.DB)
+	}
+	return a
 }
 
 // ShellEnv reads the environment of the user's interactive shell by running

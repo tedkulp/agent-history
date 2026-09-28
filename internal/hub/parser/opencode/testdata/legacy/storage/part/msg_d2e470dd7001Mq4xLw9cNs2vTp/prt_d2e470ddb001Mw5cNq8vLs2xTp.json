@@ -1,0 +1,18 @@
+{
+  "id": "prt_d2e470ddb001Mw5cNq8vLs2xTp",
+  "sessionID": "ses_2d1b8f2a3ffeQm7xLs9vNw4cTp",
+  "messageID": "msg_d2e470dd7001Mq4xLw9cNs2vTp",
+  "type": "step-finish",
+  "reason": "tool-calls",
+  "tokens": {
+    "total": 1,
+    "input": 1,
+    "output": 0,
+    "reasoning": 0,
+    "cache": {
+      "write": 0,
+      "read": 0
+    }
+  },
+  "cost": 0
+}

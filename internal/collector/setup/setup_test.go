@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/tedkulp/agent-history/internal/collector/source/claudecode"
 	"github.com/tedkulp/agent-history/internal/collector/source/codex"
 	"github.com/tedkulp/agent-history/internal/collector/source/ohmypi"
+	"github.com/tedkulp/agent-history/internal/collector/source/opencode"
 	"github.com/tedkulp/agent-history/protocol"
 )
 
@@ -374,5 +376,46 @@ func TestInitOhMyPiRoot(t *testing.T) {
 				t.Fatalf("oh-my-pi source %+v", sc)
 			}
 		})
+	}
+}
+
+// opencode's root comes from XDG_DATA_HOME; init writes sources.opencode.db
+// only when OPENCODE_DB is set, and reports the Layouts present
+// (opencode.md §6).
+func TestInitOpencode(t *testing.T) {
+	f := newFixture(t)
+	home := f.opts.Home
+	root := filepath.Join(home, "xdg", "opencode")
+	if err := os.MkdirAll(filepath.Join(root, "storage", "session"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"XDG_DATA_HOME": filepath.Join(home, "xdg")}
+	f.opts.Adapters = []source.Adapter{opencode.Adapter{}}
+	f.opts.Env = func(k string) string { return env[k] }
+	cfg, info, err := Init(context.Background(), f.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sc := cfg.Sources["opencode"]; sc.Root != root || sc.DB != "" || !sc.IsEnabled() {
+		t.Fatalf("opencode source %+v", sc)
+	}
+	if si := info.Sources[0]; !si.Detected || !slices.Equal(si.Layouts, []string{"legacy-json"}) {
+		t.Errorf("source info %+v", si)
+	}
+
+	// OPENCODE_DB, relative to the root as opencode reads it.
+	if err := os.WriteFile(filepath.Join(root, "work.db"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env["OPENCODE_DB"] = "work.db"
+	cfg, info, err = Init(context.Background(), f.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sc := cfg.Sources["opencode"]; sc.DB != filepath.Join(root, "work.db") {
+		t.Fatalf("opencode source %+v", sc)
+	}
+	if si := info.Sources[0]; !slices.Equal(si.Layouts, []string{"legacy-json", "sqlite"}) {
+		t.Errorf("source info with the configured db %+v", si)
 	}
 }

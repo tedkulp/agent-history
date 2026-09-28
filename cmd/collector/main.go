@@ -35,6 +35,7 @@ import (
 	"github.com/tedkulp/agent-history/internal/collector/source/claudecode"
 	"github.com/tedkulp/agent-history/internal/collector/source/codex"
 	"github.com/tedkulp/agent-history/internal/collector/source/ohmypi"
+	"github.com/tedkulp/agent-history/internal/collector/source/opencode"
 	"github.com/tedkulp/agent-history/internal/collector/state"
 	"github.com/tedkulp/agent-history/internal/collector/status"
 	"github.com/tedkulp/agent-history/protocol"
@@ -57,7 +58,7 @@ commands:
 `
 
 // adapters are the Sources this Collector can read.
-var adapters = []source.Adapter{claudecode.Adapter{}, codex.Adapter{}, ohmypi.Adapter{}}
+var adapters = []source.Adapter{claudecode.Adapter{}, codex.Adapter{}, ohmypi.Adapter{}, opencode.Adapter{}}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -199,7 +200,7 @@ func runnerConfig(cfg *config.Config, home, dir string, log *slog.Logger) (runne
 	var sources []runner.Source
 	for _, a := range adapters {
 		if sc := cfg.Sources[a.ID()]; sc.IsEnabled() {
-			sources = append(sources, runner.Source{Adapter: a, Root: sourceRoot(a, sc, home)})
+			sources = append(sources, runner.Source{Adapter: setup.Configure(a, sc), Root: sourceRoot(a, sc, home)})
 		}
 	}
 	hub, err := hubclient.New(cfg.HubURL, cfg.MachineID, buildinfo.Version, &http.Client{Timeout: 5 * time.Minute})
@@ -356,11 +357,15 @@ func localReport(ctx context.Context, cfg *config.Config, home string) status.Re
 	for _, a := range adapters {
 		sc := cfg.Sources[a.ID()]
 		s := status.Source{ID: a.ID(), Root: sourceRoot(a, sc, home), Enabled: sc.IsEnabled()}
+		a := setup.Configure(a, sc)
 		if s.Enabled {
 			s.Detected = a.Detect(s.Root)
 		}
 		if s.Detected {
 			for _, l := range a.Layouts() {
+				if !source.Present(l, s.Root) {
+					continue
+				}
 				recs, err := l.Discover(s.Root)
 				if err != nil {
 					s.LastError = status.NewFailure(fmt.Errorf("discovering %s records: %w", l.Name(), err), now)

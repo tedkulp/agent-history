@@ -197,11 +197,16 @@ Each **Layout** provides:
 |---|---|
 | `Name` | e.g. `jsonl`, `legacy-json`, `sqlite`. Reported in `status` and `PUT /machines/{id}`. |
 | `Rank` | Higher wins when one Session appears in two Layouts. The Hub applies this (see `hub.md`); the Collector only reports it. |
-| `Discover(root)` | Lists the Layout's Raw records: each with its Record key, a way to read its content, and its change signal (size + mtime, or `time_updated` for a database) |
+| `Discover(root)` | Lists the Layout's Raw records: each with its Record key, a way to read its content, and its change signal (size + mtime, or for a database the Session's row count + latest `time_updated`) |
 | `Claims(path)` | Whether a path under the root belongs to this Layout. Used to find unclaimed paths. |
 | `WatchPaths(root)` | The directories (or files) to watch with fsnotify |
 | `StartCwd(record)` | The Session's starting cwd, read cheaply from metadata. Used only for `exclude` (§4.6). |
 | `Parent(record)` | For a Child Session's record: the Record key of its parent. For an attachment record: the Record key of the `main` it belongs to. Only when knowable from the path or metadata. Used only for `exclude`. |
+
+A Layout may also be:
+
+- **optional**: it reports whether it's present under the root, so a Source with two Layouts (opencode) lists only those it finds, in `status` and `PUT /machines/{id}`.
+- **a database**: its records are rows in one database, exported rather than read from files (§4.5). Its `WatchPaths` name files, which may not exist yet, so they're watched through their directory, not recursively.
 
 Rules every adapter follows (from `protocol.md` §3.3):
 
@@ -252,15 +257,13 @@ Source: [Collector design](https://github.com/tedkulp/agent-history/issues/11), 
       "src_mtime": "2026-09-26T14:02:11.123Z"
     }
   },
-  "opencode_last_time_updated": 1790000000000,
   "unclaimed_seen": ["codex\u0000sessions/2026/09/26/notes.bin"]
 }
 ```
 
 - Keys are `source` + NUL + Record key.
 - `length` and `sha256` are what the Hub acknowledged: decompressed bytes, cut at the last complete line for JSONL content (`protocol.md` §3.2).
-- `src_size` and `src_mtime` are the on-disk file's stat at the time of that ack. When both are unchanged, the record is skipped without reading it.
-- `opencode_last_time_updated` is the highest `session.time_updated` already exported (§4.5).
+- `src_size` and `src_mtime` are the on-disk file's stat at the time of that ack. When both are unchanged, the record is skipped without reading it. For a database export they hold its change signal instead: the Session's row count and latest `time_updated` (§4.5).
 - `unclaimed_seen` holds unclaimed paths already logged, as `source` + NUL + path relative to the root, so each one is logged only once (§4.7). A path that is no longer unclaimed is dropped from it, so the list doesn't grow forever; if it comes back, it's logged again.
 - The file is written atomically (write a temp file, then rename), at most once every 5 s and on shutdown.
 - If `hub_url` in the cache differs from config, or the file is missing or unreadable, the cache is discarded and rebuilt by the next reconcile.
@@ -342,9 +345,9 @@ Source: [Collector → Hub ingestion protocol](https://github.com/tedkulp/agent-
 opencode's `sqlite` Layout is not a file per Session, so it's handled differently:
 
 - The Collector watches `opencode.db-wal` (and `opencode.db`). A change starts the debounce for the whole database.
-- It opens the database **read-only** (`mode=ro`, never creating or checkpointing the WAL) and queries Sessions changed since `opencode_last_time_updated`: the Session's own `time_updated`, or that of any of its rows, is newer (`adapters/opencode.md` §2.2).
-- For each such Session it exports that Session's `session`, `message`, `part` and `session_message` rows as table-tagged JSONL. The exact line shape is in `adapters/opencode.md`. Each export is sent as a `replace` (`protocol.md` §4.2), which the Hub treats as a no-op when nothing changed.
-- `opencode_last_time_updated` moves forward only after every exported Session is acked.
+- It then opens the database **read-only** and lists every Session with its change signal: its number of rows and the latest `time_updated` among the Session and its rows (`adapters/opencode.md` §2.2). A Session whose signal differs from its cache entry has changed.
+- For each changed Session it exports that Session's `session`, `message`, `part` and `session_message` rows as table-tagged JSONL. The exact line shape is in `adapters/opencode.md`. Each export is sent as a `replace` (`protocol.md` §4.2), which the Hub treats as a no-op when nothing changed.
+- A Session's cache entry takes the new signal only once its export is acked, so a failed export is tried again.
 - If the database is locked or busy, retry on the next event or rescan.
 
 Source: [Collector design](https://github.com/tedkulp/agent-history/issues/11), [Collector → Hub ingestion protocol](https://github.com/tedkulp/agent-history/issues/10), [opencode on-disk history format](https://github.com/tedkulp/agent-history/issues/5)

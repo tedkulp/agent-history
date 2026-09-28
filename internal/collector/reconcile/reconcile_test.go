@@ -566,7 +566,7 @@ func TestReconcileFillsCache(t *testing.T) {
 	}
 	e, ok := c.Get(cache.Key(protocol.SourceClaudeCode, key))
 	fi, _ := os.Stat(filepath.Join(f.root, filepath.FromSlash(key)))
-	if !ok || e.Length != 8 || e.Sha256 != hexSum([]byte("{\"n\":1}\n")) || !e.Unchanged(fi) {
+	if !ok || e.Length != 8 || e.Sha256 != hexSum([]byte("{\"n\":1}\n")) || !e.Unchanged(fi.Size(), fi.ModTime()) {
 		t.Fatalf("cache entry %+v, ok %v", e, ok)
 	}
 }

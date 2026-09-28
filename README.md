@@ -8,8 +8,7 @@ disk and ships it, raw, to one **Hub**. The Hub keeps every record verbatim,
 parses it into readable transcripts, and serves a web UI with full-text
 search. It never deletes anything.
 
-Supported today: **Claude Code**, **Codex** and **oh-my-pi**. opencode is
-specced and planned.
+Supported today: **Claude Code**, **Codex**, **oh-my-pi** and **opencode**.
 
 > [!WARNING]
 > The Hub has no authentication and no TLS. Run it on a private network

@@ -117,31 +117,31 @@ type waiter struct {
 	rec    source.Record
 }
 
-// fileStat is the change signal of a record's file.
-type fileStat struct {
-	size  int64
-	mtime time.Time
+// dbPending is a database Layout that changed, waiting out its debounce
+// before Discover finds which of its records changed (collector.md §4.5).
+type dbPending struct {
+	src         Source
+	layout      source.Layout
+	first, last time.Time
 }
-
-func statOf(fi fs.FileInfo) fileStat { return fileStat{fi.Size(), fi.ModTime()} }
 
 // job is one record handed to an upload goroutine.
 type job struct {
 	key      string
 	src      string
 	rec      source.Record
-	failedAt *fileStat // the stat at the record's last non-transient failure
-	warned   bool      // an unreadable-file warning was already logged
+	failedAt *source.Stat // the stat at the record's last non-transient failure
+	warned   bool         // an unreadable-file warning was already logged
 }
 
 // result is what an upload goroutine reports back.
 type result struct {
 	key        string
-	acked      bool      // the Hub acknowledged the record's state
-	err        error     // why the record wasn't shipped, if it failed
-	failedAt   *fileStat // skip the record until its stat differs from this
-	unreadable bool      // the file couldn't be read; the next rescan retries it
-	transient  bool      // the Hub is unreachable
+	acked      bool         // the Hub acknowledged the record's state
+	err        error        // why the record wasn't shipped, if it failed
+	failedAt   *source.Stat // skip the record until its stat differs from this
+	unreadable bool         // the file couldn't be read; the next rescan retries it
+	transient  bool         // the Hub is unreachable
 	tooOld     *hubclient.TooOldError
 }
 
@@ -160,9 +160,11 @@ type runner struct {
 
 	dirty      map[string]*pending
 	inFlight   map[string]bool
-	failed     map[string]fileStat
+	failed     map[string]source.Stat
 	unreadable map[string]bool
 	waiting    map[string]waiter
+	// Database Layouts that changed, keyed by Source id + NUL + Layout name.
+	dbDirty map[string]*dbPending
 
 	online        bool
 	needReconcile bool
@@ -172,7 +174,9 @@ type runner struct {
 	lastSave      time.Time
 
 	watcher     *fsnotify.Watcher
-	watched     map[string]bool
+	watched     map[string]bool      // directories watched with everything under them
+	flat        map[string]bool      // directories watched only for a database's files
+	dbFiles     map[string]dbPending // a database Layout's watched files, by path
 	watchWarned map[string]bool
 
 	// What `status` reports.
@@ -218,11 +222,14 @@ func Run(ctx context.Context, cfg Config) error {
 		wasDetected:   map[string]bool{},
 		dirty:         map[string]*pending{},
 		inFlight:      map[string]bool{},
-		failed:        map[string]fileStat{},
+		failed:        map[string]source.Stat{},
 		unreadable:    map[string]bool{},
 		waiting:       map[string]waiter{},
+		dbDirty:       map[string]*dbPending{},
 		needReconcile: true,
 		watched:       map[string]bool{},
+		flat:          map[string]bool{},
+		dbFiles:       map[string]dbPending{},
 		watchWarned:   map[string]bool{},
 		infos:         map[string]protocol.SourceInfo{},
 		records:       map[string]int{},
@@ -335,15 +342,19 @@ func (r *runner) step(ctx, uploadCtx context.Context, now time.Time) time.Time {
 	}
 
 	if r.online && !r.needReconcile && !r.reconciling {
+		for k, p := range r.dbDirty {
+			if due := debounced(p.first, p.last, r.Debounce, r.DebounceCap); now.Before(due) {
+				soonest(due)
+				continue
+			}
+			delete(r.dbDirty, k)
+			r.refreshDB(p.src, p.layout, now)
+		}
 		for k, p := range r.dirty {
 			if r.inFlight[k] {
 				continue
 			}
-			due := p.last.Add(r.Debounce)
-			if capped := p.first.Add(r.DebounceCap); capped.Before(due) {
-				due = capped
-			}
-			if now.Before(due) {
+			if due := debounced(p.first, p.last, r.Debounce, r.DebounceCap); now.Before(due) {
 				soonest(due)
 				continue
 			}
@@ -375,7 +386,7 @@ func (r *runner) step(ctx, uploadCtx context.Context, now time.Time) time.Time {
 func (r *runner) ship(ctx context.Context, j job) result {
 	res := result{key: j.key}
 	log := r.Log.With("source", j.src, "key", j.rec.Key)
-	fi, err := os.Stat(j.rec.Path)
+	st, err := source.StatOf(j.rec)
 	if errors.Is(err, fs.ErrNotExist) {
 		// Gone from disk: the next rescan drops its cache entry.
 		return res
@@ -388,9 +399,8 @@ func (r *runner) ship(ctx context.Context, j job) result {
 		res.err = err
 		return res
 	}
-	st := statOf(fi)
 	e, cached := r.Cache.Get(j.key)
-	if cached && e.Unchanged(fi) {
+	if cached && e.Unchanged(st.Size, st.Mtime) {
 		return res
 	}
 	if j.failedAt != nil && *j.failedAt == st {
@@ -482,6 +492,7 @@ func (r *runner) startReconcile(ctx, uploadCtx context.Context) {
 	// The reconcile covers every record on disk; events from now on mark
 	// records dirty again, as does discover for records it stops waiting on.
 	clear(r.dirty)
+	clear(r.dbDirty)
 	sources, infos := r.discover()
 	r.updateWatches()
 	info := r.Info
@@ -597,18 +608,9 @@ func (r *runner) rescan() {
 		}
 		for _, rec := range s.Records {
 			present[rec.Key] = true
-			fi, err := os.Stat(rec.Path)
-			if err != nil {
-				continue
+			if r.changed(s.ID, rec) {
+				r.markDirty(s.ID, rec)
 			}
-			k := cache.Key(s.ID, rec.Key)
-			if e, ok := r.Cache.Get(k); ok && e.Unchanged(fi) {
-				continue
-			}
-			if f, ok := r.failed[k]; ok && f == statOf(fi) {
-				continue
-			}
-			r.markDirty(s.ID, rec)
 		}
 		r.Cache.Prune(s.ID, present)
 		gone := func(k string) bool {
@@ -657,6 +659,9 @@ func (r *runner) discover() ([]reconcile.Source, []protocol.SourceInfo) {
 			ok := true
 			present := map[string]bool{}
 			for _, l := range a.Layouts() {
+				if !source.Present(l, s.Root) {
+					continue
+				}
 				recs, err := l.Discover(s.Root)
 				if err != nil {
 					r.Log.Error("discovering records", "source", a.ID(), "layout", l.Name(), "err", err)
@@ -701,14 +706,62 @@ func (r *runner) scanDrift(s Source) {
 	r.drifts[id] = res
 }
 
+// changed reports whether rec's change signal differs from the cache's
+// and from its last failure's.
+func (r *runner) changed(src string, rec source.Record) bool {
+	st, err := source.StatOf(rec)
+	if err != nil {
+		return false
+	}
+	k := cache.Key(src, rec.Key)
+	if e, ok := r.Cache.Get(k); ok && e.Unchanged(st.Size, st.Mtime) {
+		return false
+	}
+	if f, ok := r.failed[k]; ok && f == st {
+		return false
+	}
+	return true
+}
+
+// debounced is when a change first seen at first and last seen at last is
+// due: debounce after the last, or cap after the first if that's sooner.
+func debounced(first, last time.Time, debounce, cap time.Duration) time.Time {
+	due := last.Add(debounce)
+	if capped := first.Add(cap); capped.Before(due) {
+		due = capped
+	}
+	return due
+}
+
 func (r *runner) markDirty(src string, rec source.Record) {
 	k := cache.Key(src, rec.Key)
 	now := time.Now()
 	if p, ok := r.dirty[k]; ok {
 		p.last = now
+		p.rec = rec
 		return
 	}
 	r.dirty[k] = &pending{src: src, rec: rec, first: now, last: now}
+}
+
+// refreshDB lists a changed database Layout's records and marks those that
+// changed due at once: the database's own debounce has already run. A busy
+// or locked database is retried on the next event or rescan.
+func (r *runner) refreshDB(s Source, l source.Layout, now time.Time) {
+	id := s.Adapter.ID()
+	recs, err := l.Discover(s.Root)
+	if err != nil {
+		r.Log.Warn("reading database, retrying on the next change or rescan", "source", id, "layout", l.Name(), "err", err)
+		return
+	}
+	for _, rec := range recs {
+		if !r.shippable(s, l, rec) || !r.changed(id, rec) {
+			continue
+		}
+		r.markDirty(id, rec)
+		p := r.dirty[cache.Key(id, rec.Key)]
+		p.first, p.last = now.Add(-r.DebounceCap), now.Add(-r.Debounce)
+	}
 }
 
 // updateWatches adds every not-yet-watched directory under each detected
@@ -719,11 +772,35 @@ func (r *runner) updateWatches() {
 	}
 	for _, s := range r.detected {
 		for _, l := range s.Adapter.Layouts() {
+			_, db := l.(source.Database)
 			for _, p := range l.WatchPaths(s.Root) {
-				r.watchTree(s.Root, p)
+				if db {
+					r.watchDBFile(s, l, p)
+				} else {
+					r.watchTree(s.Root, p)
+				}
 			}
 		}
 	}
+}
+
+// watchDBFile watches a database Layout's file p through its directory,
+// which isn't watched recursively, since the file may not exist yet (a WAL).
+func (r *runner) watchDBFile(s Source, l source.Layout, p string) {
+	r.dbFiles[p] = dbPending{src: s, layout: l}
+	dir := filepath.Dir(p)
+	if r.flat[dir] {
+		return
+	}
+	if err := r.watcher.Add(dir); err != nil {
+		if !r.watchWarned[s.Root] {
+			r.Log.Warn("can't watch directory, relying on the rescan for this root",
+				"root", s.Root, "dir", dir, "watch_limit", watchLimit(), "rescan_interval", r.RescanInterval, "err", err)
+			r.watchWarned[s.Root] = true
+		}
+		return
+	}
+	r.flat[dir] = true
 }
 
 // watchTree watches dir and every directory under it. When a watch can't be
@@ -761,14 +838,20 @@ func (r *runner) handleEvent(ev fsnotify.Event) {
 	if ev.Has(fsnotify.Remove) || ev.Has(fsnotify.Rename) {
 		// The OS drops watches on a removed directory and those under it;
 		// forget them so a re-created directory is watched again.
-		for p := range r.watched {
-			if p == ev.Name || strings.HasPrefix(p, ev.Name+string(filepath.Separator)) {
-				delete(r.watched, p)
+		for _, m := range []map[string]bool{r.watched, r.flat} {
+			for p := range m {
+				if p == ev.Name || strings.HasPrefix(p, ev.Name+string(filepath.Separator)) {
+					delete(m, p)
+				}
 			}
 		}
 		return
 	}
 	if !ev.Has(fsnotify.Create) && !ev.Has(fsnotify.Write) {
+		return
+	}
+	if db, ok := r.dbFiles[ev.Name]; ok {
+		r.markDBDirty(db.src, db.layout)
 		return
 	}
 	s, ok := r.sourceFor(ev.Name)
@@ -777,6 +860,10 @@ func (r *runner) handleEvent(ev fsnotify.Event) {
 	}
 	if ev.Has(fsnotify.Create) {
 		if fi, err := os.Stat(ev.Name); err == nil && fi.IsDir() {
+			if !r.watched[filepath.Dir(ev.Name)] {
+				// Created in a directory watched only for a database.
+				return
+			}
 			r.watchTree(s.Root, ev.Name)
 			// Files may have been written before the watch was added.
 			filepath.WalkDir(ev.Name, func(p string, d fs.DirEntry, err error) error {
@@ -791,10 +878,25 @@ func (r *runner) handleEvent(ev fsnotify.Event) {
 	r.claim(s, ev.Name)
 }
 
+// markDBDirty starts or extends the debounce of a database Layout.
+func (r *runner) markDBDirty(s Source, l source.Layout) {
+	k := cache.Key(s.Adapter.ID(), l.Name())
+	now := time.Now()
+	if p, ok := r.dbDirty[k]; ok {
+		p.last = now
+		return
+	}
+	r.dbDirty[k] = &dbPending{src: s, layout: l, first: now, last: now}
+}
+
 // claim marks the record at path dirty when one of s's Layouts claims it
-// and exclude lets it leave the Machine.
+// and exclude lets it leave the Machine. A database's files are handled by
+// markDBDirty.
 func (r *runner) claim(s Source, path string) {
 	for _, l := range s.Adapter.Layouts() {
+		if _, db := l.(source.Database); db {
+			continue
+		}
 		if rec, ok := l.Claims(s.Root, path); ok {
 			if r.shippable(s, l, rec) {
 				r.markDirty(s.Adapter.ID(), rec)

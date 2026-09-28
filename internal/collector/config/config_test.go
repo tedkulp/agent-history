@@ -54,10 +54,11 @@ enabled = false
 
 func TestLoadRejects(t *testing.T) {
 	cases := map[string]string{
-		"machine_id is required":   `hub_url = "http://h"`,
-		"hub_url is required":      `machine_id = "m"`,
-		"at least 1m":              "machine_id = \"m\"\nhub_url = \"http://h\"\nrescan_interval = \"30s\"",
-		"must be an absolute path": "machine_id = \"m\"\nhub_url = \"http://h\"\n[sources.claude-code]\nroot = \"~/.claude/projects\"",
+		"machine_id is required":                       `hub_url = "http://h"`,
+		"hub_url is required":                          `machine_id = "m"`,
+		"at least 1m":                                  "machine_id = \"m\"\nhub_url = \"http://h\"\nrescan_interval = \"30s\"",
+		"must be an absolute path":                     "machine_id = \"m\"\nhub_url = \"http://h\"\n[sources.claude-code]\nroot = \"~/.claude/projects\"",
+		"sources.opencode.db must be an absolute path": "machine_id = \"m\"\nhub_url = \"http://h\"\n[sources.opencode]\ndb = \"work.db\"",
 	}
 	for want, body := range cases {
 		_, err := Load(writeConfig(t, body))

@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/tedkulp/agent-history/internal/collector/cache"
@@ -216,7 +215,7 @@ func Ship(ctx context.Context, hub Hub, sourceID string, rec source.Record, h *p
 	var out Shipped
 	// Stat before reading: if the file changes meanwhile, its new stat
 	// differs from the cached one and the change is picked up again.
-	fi, err := os.Stat(rec.Path)
+	st, err := source.StatOf(rec)
 	if err != nil {
 		return out, err
 	}
@@ -224,7 +223,7 @@ func Ship(ctx context.Context, hub Hub, sourceID string, rec source.Record, h *p
 	if err != nil {
 		return out, err
 	}
-	jsonl := isJSONL(rec.Key)
+	jsonl := isJSONL(rec)
 	if jsonl {
 		var cut bool
 		if L, cut = cutOversizedLine(L, protocol.MaxBodyBytes); cut {
@@ -233,12 +232,17 @@ func Ship(ctx context.Context, hub Hub, sourceID string, rec source.Record, h *p
 	}
 	for conflicts := 0; ; conflicts++ {
 		a := decide(h, L)
+		if a.kind == doAppend && a.offset > 0 && rec.Export != nil {
+			// An export's rows change in place, so a matching prefix
+			// is no reason to append (protocol.md §4.2).
+			a = action{kind: doReplace}
+		}
 		if a.kind == doNothing {
-			out.Entry = cache.Entry{Length: h.Length, Sha256: h.Sha256, SrcSize: fi.Size(), SrcMtime: fi.ModTime()}
+			out.Entry = cache.Entry{Length: h.Length, Sha256: h.Sha256, SrcSize: st.Size, SrcMtime: st.Mtime}
 			return out, nil
 		}
 		out.did = a.kind
-		n, st, err := upload(ctx, hub, sourceID, rec.Key, L, jsonl, a)
+		n, hs, err := upload(ctx, hub, sourceID, rec.Key, L, jsonl, a)
 		out.Sent += n
 		var conflict *hubclient.ConflictError
 		if errors.As(err, &conflict) && conflicts < maxConflicts {
@@ -248,7 +252,7 @@ func Ship(ctx context.Context, hub Hub, sourceID string, rec source.Record, h *p
 		if err != nil {
 			return out, err
 		}
-		out.Entry = cache.Entry{Length: st.Length, Sha256: st.Sha256, SrcSize: fi.Size(), SrcMtime: fi.ModTime()}
+		out.Entry = cache.Entry{Length: hs.Length, Sha256: hs.Sha256, SrcSize: st.Size, SrcMtime: st.Mtime}
 		return out, nil
 	}
 }
@@ -340,19 +344,20 @@ func cutOversizedLine(L []byte, max int) ([]byte, bool) {
 // cut at the last complete line, so a half-written line is never sent
 // (protocol.md §3.2).
 func content(rec source.Record) ([]byte, error) {
-	b, err := source.ReadFile(rec.Path)
+	b, err := source.Content(rec)
 	if err != nil {
 		return nil, err
 	}
-	if isJSONL(rec.Key) {
+	if isJSONL(rec) {
 		b = b[:bytes.LastIndexByte(b, '\n')+1]
 	}
 	return b, nil
 }
 
-// isJSONL reports whether a record is JSONL content (protocol.md §3.2).
-func isJSONL(key string) bool {
-	return strings.HasSuffix(key, ".jsonl")
+// isJSONL reports whether a record is JSONL content (protocol.md §3.2): a
+// .jsonl file or a database export.
+func isJSONL(rec source.Record) bool {
+	return rec.Export != nil || strings.HasSuffix(rec.Key, ".jsonl")
 }
 
 func hexSum(b []byte) string {

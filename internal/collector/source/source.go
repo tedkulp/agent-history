@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -53,12 +54,86 @@ type Layout interface {
 	Parent(root string, rec Record) (Record, bool)
 }
 
+// Optional is implemented by a Layout that may be absent while its Source
+// is detected, such as opencode's legacy-json tree. An absent Layout isn't
+// reported or discovered.
+type Optional interface {
+	Present(root string) bool
+}
+
+// Present reports whether l is present under root: always, unless l is Optional.
+func Present(l Layout, root string) bool {
+	o, ok := l.(Optional)
+	return !ok || o.Present(root)
+}
+
+// Database is implemented by a Layout whose records are rows in one
+// database rather than files (opencode's sqlite, collector.md §4.5). Its
+// WatchPaths name files, watched through their directory; a change to any
+// of them marks the whole database changed, and Discover then finds the
+// records that changed by their Stat. Its records are exports: Export is set.
+type Database interface {
+	Layout
+	IsDatabase()
+}
+
+// DBAdapter is implemented by an adapter whose database can live outside
+// its root (collector.md §2.3, sources.<id>.db).
+type DBAdapter interface {
+	Adapter
+	// DefaultDB is the database path init writes to config, read from the
+	// shell's environment, or empty when the default applies.
+	DefaultDB(getenv func(string) string, root string) string
+	// WithDB is the adapter reading the database at path.
+	WithDB(path string) Adapter
+}
+
 // Record is one discovered Raw record.
 type Record struct {
 	// Key is the Record key, relative to the Source root.
 	Key string
 	// Path is the absolute path of the file holding the record's content.
+	// For an export it is the database file.
 	Path string
+	// Export, when set, makes the record's content instead of reading Path:
+	// a database export, which is JSONL content always sent as a replace
+	// (protocol.md §3.2, §4.2). Its dynamic type must be comparable.
+	Export Exporter
+	// Stat is an export's change signal, taken when it was discovered.
+	Stat Stat
+}
+
+// Exporter makes an exported record's content.
+type Exporter interface {
+	Export() ([]byte, error)
+}
+
+// Stat is a record's change signal: its file's size and mtime, or what
+// the Layout reports for an export (for a database, its row count and
+// latest time_updated).
+type Stat struct {
+	Size  int64
+	Mtime time.Time
+}
+
+// StatOf is rec's current change signal. For a file it stats Path.
+func StatOf(rec Record) (Stat, error) {
+	if rec.Export != nil {
+		return rec.Stat, nil
+	}
+	fi, err := os.Stat(rec.Path)
+	if err != nil {
+		return Stat{}, err
+	}
+	return Stat{fi.Size(), fi.ModTime()}, nil
+}
+
+// Content is rec's content: its export, or its file read decompressed.
+func Content(rec Record) ([]byte, error) {
+	if rec.Export != nil {
+		return rec.Export.Export()
+	}
+	return ReadFile(rec.Path)
 }
 
 // Open opens a record's file for reading its content. A `.zst` or `.gz` file

@@ -30,6 +30,7 @@ Source: [opencode on-disk history format](https://github.com/tedkulp/agent-histo
 | Database | `$OPENCODE_DB` if set (absolute, or relative to the root); else `<root>/opencode.db` |
 | `Detect(root)` | `root/storage` is a directory or the database file exists |
 | `Version(root)` | `session.version` of the most recently updated Session row, read with the database query below; else empty |
+| Layouts present | `legacy-json` when `storage/session/` is a directory; `sqlite` when the database exists |
 
 - When `init` sees `OPENCODE_DB` in the shell environment, it writes the resolved absolute path to config as `sources.opencode.db` (`collector.md` §2.3).
 - Channel databases (`opencode-<channel>.db`, from non-stable builds) are known-ignored in v1.
@@ -55,9 +56,9 @@ Rank **`2`**. Record-key prefix **`db:`**.
 - Each line ends with `\n`. The export is deterministic, so an unchanged Session exports to identical bytes and the Hub's no-op `replace` rule applies (`protocol.md` §4.4).
 - New columns added by opencode's migrations flow through untouched. A missing `session_message` table is skipped. A missing `session`, `message` or `part` table means the Layout is not detected, and `status` shows the error.
 
-**Finding changed Sessions.** The Collector keeps a watermark (`opencode_last_time_updated`, `collector.md` §3.2). A Session is exported when its own `time_updated`, or the `time_updated` of any of its `message`, `part` or `session_message` rows, is above the watermark. The watermark moves to the highest value seen once every exported Session is acked.
+**Finding changed Sessions.** Each record's change signal (`collector.md` §3.2) is the number of the Session's rows and the latest `time_updated` among the Session and its `message`, `part` and `session_message` rows. One query lists every Session with its signal; a Session whose signal differs from the one last acked is exported. The row count catches deleted rows, which change no `time_updated`.
 
-**Reading the database**: read-only (`mode=ro`), never creating or checkpointing the WAL, with a `busy_timeout` of 5 s. A busy or locked database is retried on the next event or rescan (`collector.md` §4.5).
+**Reading the database**: read-only, never creating, changing or checkpointing the WAL, with a `busy_timeout` of 5 s. SQLite's `mode=ro` still creates a missing WAL and shared-memory file, so the Collector uses it only while both exist (opencode has the database open); otherwise it opens the database `immutable`. Like any WAL reader it takes a read mark in the shared memory, which never blocks opencode's writes. A busy or locked database is retried on the next event or rescan (`collector.md` §4.5).
 
 **Change signal**: the database file and `opencode.db-wal`. **`WatchPaths`**: those two files.
 

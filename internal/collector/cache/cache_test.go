@@ -80,11 +80,11 @@ func TestUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := Entry{Length: 3, SrcSize: fi.Size(), SrcMtime: fi.ModTime()}
-	if !e.Unchanged(fi) {
+	if !e.Unchanged(fi.Size(), fi.ModTime()) {
 		t.Fatal("same stat should be unchanged")
 	}
 	e.SrcMtime = e.SrcMtime.Add(-time.Second)
-	if e.Unchanged(fi) {
+	if e.Unchanged(fi.Size(), fi.ModTime()) {
 		t.Fatal("different mtime should be changed")
 	}
 }

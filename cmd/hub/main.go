@@ -28,6 +28,7 @@ import (
 	"github.com/tedkulp/agent-history/internal/hub/parser/claudecode"
 	"github.com/tedkulp/agent-history/internal/hub/parser/codex"
 	"github.com/tedkulp/agent-history/internal/hub/parser/ohmypi"
+	"github.com/tedkulp/agent-history/internal/hub/parser/opencode"
 	"github.com/tedkulp/agent-history/internal/hub/store"
 	"github.com/tedkulp/agent-history/internal/hub/web"
 	"github.com/tedkulp/agent-history/internal/hub/worker"
@@ -83,7 +84,7 @@ func envOr(key, def string) string {
 }
 
 // parsers holds the Hub's Source parsers.
-var parsers = parser.NewRegistry(claudecode.New(), codex.New(), ohmypi.New())
+var parsers = parser.NewRegistry(claudecode.New(), codex.New(), ohmypi.New(), opencode.New())
 
 // startup attaches records that now map and queues stale Sessions for a
 // re-parse (hub.md §4.1 steps 6 and 7).

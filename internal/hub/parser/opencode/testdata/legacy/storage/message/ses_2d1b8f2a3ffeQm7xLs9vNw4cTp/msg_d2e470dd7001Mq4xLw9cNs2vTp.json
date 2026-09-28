@@ -1,0 +1,29 @@
+{
+  "id": "msg_d2e470dd7001Mq4xLw9cNs2vTp",
+  "sessionID": "ses_2d1b8f2a3ffeQm7xLs9vNw4cTp",
+  "role": "assistant",
+  "time": {
+    "created": 1755177596555,
+    "completed": 1755177597435
+  },
+  "modelID": "claude-sonnet-4",
+  "providerID": "anthropic",
+  "cost": 0.01,
+  "tokens": {
+    "input": 12,
+    "output": 340,
+    "reasoning": 0,
+    "cache": {
+      "read": 9000,
+      "write": 800
+    }
+  },
+  "path": {
+    "cwd": "/Users/ted/src/app",
+    "root": "/Users/ted/src/app"
+  },
+  "system": [
+    "redacted"
+  ],
+  "mode": "build"
+}
