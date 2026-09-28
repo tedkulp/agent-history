@@ -266,6 +266,11 @@ templ transcriptHead(h headerView) {
 			} else if h.ParentLabel != "" {
 				<span class="parent">{ h.ParentLabel }</span>
 			}
+			if h.ForkHref != "" {
+				<a class="fork" href={ templ.SafeURL(h.ForkHref) }>{ h.ForkLabel }</a>
+			} else if h.ForkLabel != "" {
+				<span class="fork">{ h.ForkLabel }</span>
+			}
 		</div>
 		if h.ParseError != "" {
 			@failureNote(h)

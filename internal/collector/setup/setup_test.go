@@ -16,6 +16,7 @@ import (
 	"github.com/tedkulp/agent-history/internal/collector/hubclient"
 	"github.com/tedkulp/agent-history/internal/collector/source"
 	"github.com/tedkulp/agent-history/internal/collector/source/claudecode"
+	"github.com/tedkulp/agent-history/internal/collector/source/codex"
 	"github.com/tedkulp/agent-history/protocol"
 )
 
@@ -214,6 +215,47 @@ func TestInitClaudeConfigDirFromShellRC(t *testing.T) {
 	}
 	if got := cfg.Sources["claude-code"].Root; got != "/opt/claude/projects" {
 		t.Fatalf("root %q", got)
+	}
+}
+
+// Codex's root is CODEX_HOME from the shell rc, else ~/.codex, and init
+// enables it (codex.md §6).
+func TestInitCodexRoot(t *testing.T) {
+	home := t.TempDir()
+	rc := filepath.Join(home, "rc")
+	if err := os.WriteFile(rc, []byte("export CODEX_HOME=/opt/codex\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	shell := filepath.Join(home, "fakesh")
+	script := "#!/bin/sh\n[ \"$1\" = -i ] && . " + rc + "\nshift\nshift\nexec sh -c \"$1\"\n"
+	if err := os.WriteFile(shell, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_HOME", "")
+	env, err := ShellEnv(context.Background(), shell, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f := newFixture(t)
+	f.opts.Adapters = []source.Adapter{claudecode.Adapter{}, codex.Adapter{}}
+	f.opts.Env = func(k string) string { return env[k] }
+	cfg, _, err := Init(context.Background(), f.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sc := cfg.Sources["codex"]; sc.Root != "/opt/codex" || !sc.IsEnabled() {
+		t.Fatalf("codex source %+v", sc)
+	}
+
+	f = newFixture(t)
+	f.opts.Adapters = []source.Adapter{claudecode.Adapter{}, codex.Adapter{}}
+	cfg, _, err = Init(context.Background(), f.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sc := cfg.Sources["codex"]; sc.Root != filepath.Join(f.opts.Home, ".codex") || !sc.IsEnabled() {
+		t.Fatalf("codex source without CODEX_HOME %+v", sc)
 	}
 }
 

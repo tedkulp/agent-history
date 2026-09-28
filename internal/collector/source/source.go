@@ -2,6 +2,15 @@
 // (collector.md §2.6). Each Source lives in its own sub-package.
 package source
 
+import (
+	"io"
+	"io/fs"
+	"os"
+	"strings"
+
+	"github.com/klauspost/compress/zstd"
+)
+
 // Adapter finds one Source's Raw records on this Machine.
 type Adapter interface {
 	// ID is the Source identifier (protocol.md §3.1).
@@ -49,4 +58,49 @@ type Record struct {
 	Key string
 	// Path is the absolute path of the file holding the record's content.
 	Path string
+}
+
+// Open opens a record's file for reading its content. A `.zst` file is read
+// decompressed (collector.md §2.6).
+func Open(path string) (io.ReadCloser, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.HasSuffix(path, ".zst") {
+		return f, nil
+	}
+	d, err := zstd.NewReader(f, zstd.WithDecoderConcurrency(1))
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return zstdFile{d, f}, nil
+}
+
+// zstdFile is a decompressing reader that closes its file.
+type zstdFile struct {
+	d *zstd.Decoder
+	f *os.File
+}
+
+func (z zstdFile) Read(p []byte) (int, error) { return z.d.Read(p) }
+
+func (z zstdFile) Close() error {
+	z.d.Close()
+	return z.f.Close()
+}
+
+// ReadFile reads a record's whole content, decompressed like Open.
+func ReadFile(path string) ([]byte, error) {
+	r, err := Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	b, err := io.ReadAll(r)
+	if err != nil {
+		return nil, &fs.PathError{Op: "read", Path: path, Err: err}
+	}
+	return b, nil
 }

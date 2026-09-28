@@ -98,11 +98,11 @@ Source: [Normalized Transcript model](https://github.com/tedkulp/agent-history/i
 ### 3.2 Order and stitching
 
 - Codex has no branches inside a file: the Transcript is the lines in **`ordinal`** order.
-- For a thread with continuation files, the parser orders the files by following `history_base` in `session_meta` (a paginated file names the prefix file and position it continues from). Where `history_base` is absent, it orders files by `<ts>` in the key. Lines from each file are taken up to the position the next file continues from.
+- For a thread with continuation files, the parser orders the files by following `history_base` in `session_meta` (a paginated file names the prefix file and position it continues from). Its shape is `{"thread_id", "end_ordinal_exclusive", "end_byte_offset"}` (`HistoryPosition` in `codex-rs/protocol`): `thread_id` is the prefix file's **rollout id** (the key's `_<rollout>`, or the thread id for a thread's first file), and the prefix file contributes its lines with `ordinal` below `end_ordinal_exclusive`. The current file is the one no other file continues from; files off its chain were reverted away and are Raw only. Where `history_base` is absent, it orders files by `<ts>` in the key. Lines from each file are taken up to the position the next file continues from.
 - A sub-agent's file starts with inherited parent context. Lines whose `ordinal` is below `session_meta.subagent_history_start_ordinal` are Raw only.
 - Duplicate `ordinal` values across stitched files: the later file wins.
 
-Source: [Normalized Transcript model](https://github.com/tedkulp/agent-history/issues/9), [Source format drift](https://github.com/tedkulp/agent-history/issues/16); the stitching and inherited-context rules filled in while writing this spec. The exact `history_base` field shape is to be confirmed against `codex-rs/rollout` when the parser is built (§6, first item).
+Source: [Normalized Transcript model](https://github.com/tedkulp/agent-history/issues/9), [Source format drift](https://github.com/tedkulp/agent-history/issues/16); the stitching and inherited-context rules filled in while writing this spec. The `history_base` shape was confirmed against `openai/codex` at commit `659b35f` (2026-09-27), `codex-rs/protocol/src/protocol.rs` and `codex-rs/thread-store/src/local/rollout_lineage.rs`.
 
 ### 3.3 Messages and Parts
 

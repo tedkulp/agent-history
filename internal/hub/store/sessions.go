@@ -442,6 +442,14 @@ func (s *Store) SaveParse(ctx context.Context, job Job, parserVersion int, res p
 		b, _ := json.Marshal(total)
 		usageJSON = sql.NullString{String: string(b), Valid: true}
 	}
+	var forkedFrom sql.NullInt64
+	if res.Session.ForkedFromNativeID != "" {
+		fid, err := sessionFor(ctx, tx, machineID, source, res.Session.ForkedFromNativeID)
+		if err != nil {
+			return err
+		}
+		forkedFrom = sql.NullInt64{Int64: fid, Valid: true}
+	}
 	var parentID sql.NullInt64
 	if res.Session.ParentNativeID != "" {
 		pid, err := sessionFor(ctx, tx, machineID, source, res.Session.ParentNativeID)
@@ -455,13 +463,13 @@ func (s *Store) SaveParse(ctx context.Context, job Job, parserVersion int, res p
 		UPDATE sessions SET
 			title = ?, first_prompt = ?, started_at = ?, last_activity_at = ?, cwd = ?, project_cwd = ?,
 			git_branch = ?, source_version = ?, model = ?, parent_session_id = ?, spawning_call_id = ?,
-			usage_json = ?, parse_status = 'ok', parse_error = NULL, parsed_at = ?,
+			forked_from_id = ?, usage_json = ?, parse_status = 'ok', parse_error = NULL, parsed_at = ?,
 			parser_version = ?, parse_attempted_version = ?
 		WHERE id = ?`,
 		nullStr(title), nullStr(firstPrompt), nullInt(res.Session.StartedAt), nullInt(res.Session.LastActivityAt),
 		nullStr(res.Session.Cwd), nullStr(ProjectCwd(res.Session.Cwd, homeDir.String)),
 		nullStr(res.Session.GitBranch), nullStr(res.Session.SourceVersion), nullStr(model), parentID,
-		nullStr(res.Session.SpawningCallID), usageJSON, t, parserVersion, parserVersion, id); err != nil {
+		nullStr(res.Session.SpawningCallID), forkedFrom, usageJSON, t, parserVersion, parserVersion, id); err != nil {
 		return err
 	}
 	if !parsedAt.Valid {

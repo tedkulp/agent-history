@@ -461,6 +461,8 @@ type headerView struct {
 	WarningNote string // the Notes summary; "" without warnings
 	ParentLabel string // "↰ child of …" for a Child Session
 	ParentHref  string // the spawning call in the parent; "" when the parent is a stub
+	ForkLabel   string // "forked from …" for a fork
+	ForkHref    string // the Session it was forked from; "" when that is a stub
 }
 
 // sessionHref is a Session's Transcript page.
@@ -728,6 +730,12 @@ func (s *server) transcriptView(h store.SessionHeader, msgs []store.TranscriptMe
 			if p.CallPart != "" {
 				hv.ParentHref += "#p-" + p.CallPart
 			}
+		}
+	}
+	if f := h.ForkedFrom; f != nil {
+		hv.ForkLabel = "forked from " + titleOr(f.Title, f.NativeID)
+		if f.Parsed {
+			hv.ForkHref = sessionHref(f.ID)
 		}
 	}
 	childHrefs := map[string]string{}

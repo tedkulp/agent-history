@@ -261,12 +261,22 @@ type SessionHeader struct {
 	Parsed        bool
 	// Parent is set for a Child Session; Children are the parsed Child
 	// Sessions filed under it, oldest first (hub.md §4.7).
-	Parent   *ParentLink
-	Children []ChildLink
+	Parent *ParentLink
+	// ForkedFrom is set for a fork: the Session it was forked from.
+	ForkedFrom *SessionLink
+	Children   []ChildLink
 	// CallChildren maps each parsed Child Session named by this Session's
 	// tool calls to its id. A nested Child Session is filed under the
 	// top-level Session, so it's here but not in Children (claude-code.md §3.5).
 	CallChildren map[string]int64
+}
+
+// SessionLink is another Session a Transcript's header links to.
+type SessionLink struct {
+	ID       int64
+	NativeID string
+	Title    string
+	Parsed   bool // false for a stub, which has no page
 }
 
 // ParentLink is a Child Session's parent and the spawning call in it.
@@ -375,18 +385,19 @@ func (s *Store) HasTranscript(ctx context.Context, id int64) (bool, error) {
 func (s *Store) sessionHeader(ctx context.Context, id int64) (h SessionHeader, ok bool, err error) {
 	var (
 		parentID       sql.NullInt64
+		forkedFrom     sql.NullInt64
 		spawningCallID string
 		parseErr       sql.NullString
 	)
 	err = s.read.QueryRowContext(ctx, `
 		SELECT s.id, s.source, s.native_id, coalesce(s.title, ''), m.id, `+machineLabel+`, coalesce(s.project_cwd, ''),
 			coalesce(s.git_branch, ''), coalesce(s.model, ''), coalesce(s.started_at, 0), coalesce(s.source_version, ''),
-			s.parent_session_id, coalesce(s.spawning_call_id, ''),
+			s.parent_session_id, coalesce(s.spawning_call_id, ''), s.forked_from_id,
 			CASE WHEN s.parse_status = 'failed' THEN coalesce(s.parse_error, '') END, s.parsed_at IS NOT NULL
 		FROM sessions s JOIN machines m ON m.id = s.machine_id
 		WHERE s.id = ? AND (s.parsed_at IS NOT NULL OR s.parse_status = 'failed')`, id).Scan(
 		&h.ID, &h.Source, &h.NativeID, &h.Title, &h.MachineID, &h.Machine, &h.ProjectCwd, &h.GitBranch, &h.Model, &h.StartedAt, &h.SourceVersion,
-		&parentID, &spawningCallID, &parseErr, &h.Parsed)
+		&parentID, &spawningCallID, &forkedFrom, &parseErr, &h.Parsed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return h, false, nil
 	}
@@ -406,6 +417,15 @@ func (s *Store) sessionHeader(ctx context.Context, id int64) (h SessionHeader, o
 		if h.Parent, err = s.parentLink(ctx, parentID.Int64, spawningCallID, h.NativeID); err != nil {
 			return h, false, err
 		}
+	}
+	if forkedFrom.Valid {
+		l := &SessionLink{ID: forkedFrom.Int64}
+		if err := s.read.QueryRowContext(ctx, `
+			SELECT native_id, coalesce(title, ''), parsed_at IS NOT NULL FROM sessions WHERE id = ?`, l.ID).Scan(
+			&l.NativeID, &l.Title, &l.Parsed); err != nil {
+			return h, false, err
+		}
+		h.ForkedFrom = l
 	}
 	if h.Children, err = s.childLinks(ctx, id); err != nil {
 		return h, false, err

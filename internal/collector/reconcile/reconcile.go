@@ -336,10 +336,11 @@ func cutOversizedLine(L []byte, max int) ([]byte, bool) {
 	return L, false
 }
 
-// content reads a record's local content L. JSONL content is cut at the last
-// complete line, so a half-written line is never sent (protocol.md §3.2).
+// content reads a record's local content L, decompressed. JSONL content is
+// cut at the last complete line, so a half-written line is never sent
+// (protocol.md §3.2).
 func content(rec source.Record) ([]byte, error) {
-	b, err := os.ReadFile(rec.Path)
+	b, err := source.ReadFile(rec.Path)
 	if err != nil {
 		return nil, err
 	}

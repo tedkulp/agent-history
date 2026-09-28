@@ -19,6 +19,7 @@ import (
 
 	"github.com/tedkulp/agent-history/internal/hub/parser"
 	"github.com/tedkulp/agent-history/internal/hub/parser/claudecode"
+	"github.com/tedkulp/agent-history/internal/hub/parser/codex"
 	"github.com/tedkulp/agent-history/internal/hub/store"
 	"github.com/tedkulp/agent-history/internal/hub/worker"
 	"github.com/tedkulp/agent-history/protocol"
@@ -70,8 +71,14 @@ func newSite(t *testing.T, files map[string]string) *httptest.Server {
 // Machine m1 is "laptop" with home /Users/ted; m2 is "desk" with home /home/ted.
 func newSiteRecords(t *testing.T, recs []record) *httptest.Server {
 	t.Helper()
+	return newSiteSource(t, protocol.SourceClaudeCode, recs)
+}
+
+// newSiteSource is newSiteRecords for records of any Source.
+func newSiteSource(t *testing.T, source string, recs []record) *httptest.Server {
+	t.Helper()
 	ctx := context.Background()
-	reg := parser.NewRegistry(claudecode.New())
+	reg := parser.NewRegistry(claudecode.New(), codex.New())
 	s, err := store.Open(ctx, t.TempDir(), reg)
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +94,7 @@ func newSiteRecords(t *testing.T, recs []record) *httptest.Server {
 	empty := sha256.Sum256(nil)
 	for _, r := range recs {
 		if _, err := s.Append(ctx, store.AppendRequest{
-			MachineID: r.machine, Source: protocol.SourceClaudeCode, RecordKey: r.key,
+			MachineID: r.machine, Source: source, RecordKey: r.key,
 			PrefixSha256: hex.EncodeToString(empty[:]), Data: []byte(r.body), Compressed: enc.EncodeAll([]byte(r.body), nil),
 		}); err != nil {
 			t.Fatal(err)
