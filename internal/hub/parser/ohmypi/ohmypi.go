@@ -83,22 +83,22 @@ func nativeID(key string) (string, bool) {
 // entry is one line: the union of the fields the parser reads from each
 // entry type.
 type entry struct {
-	Type      string          `json:"type"`
-	ID        string          `json:"id"`
-	ParentID  *string         `json:"parentId"`
-	Timestamp string          `json:"timestamp"`
-	Message   *message        `json:"message"`
-	Version   int             `json:"version"`
-	Title     string          `json:"title"`
-	Cwd       string          `json:"cwd"`
-	Task      string          `json:"task"`
-	Agent     string          `json:"agent"`
-	Model     string          `json:"model"`
-	Level     string          `json:"thinkingLevel"`
-	Summary   string          `json:"summary"`
-	Custom    string          `json:"customType"`
-	Display   bool            `json:"display"`
-	Details   json.RawMessage `json:"details"`
+	Type          string          `json:"type"`
+	ID            string          `json:"id"`
+	ParentID      *string         `json:"parentId"`
+	Timestamp     string          `json:"timestamp"`
+	Message       *message        `json:"message"`
+	Version       int             `json:"version"`
+	Title         string          `json:"title"`
+	Cwd           string          `json:"cwd"`
+	Task          string          `json:"task"`
+	Agent         string          `json:"agent"`
+	Model         string          `json:"model"`
+	ThinkingLevel string          `json:"thinkingLevel"`
+	Summary       string          `json:"summary"`
+	CustomType    string          `json:"customType"`
+	Display       bool            `json:"display"`
+	Details       json.RawMessage `json:"details"`
 
 	raw  []byte
 	ts   int64
@@ -118,11 +118,11 @@ type message struct {
 }
 
 type usage struct {
-	Input     int64 `json:"input"`
-	Output    int64 `json:"output"`
-	CacheRead int64 `json:"cacheRead"`
-	CacheWrit int64 `json:"cacheWrite"`
-	Reasoning int64 `json:"reasoningTokens"`
+	Input      int64 `json:"input"`
+	Output     int64 `json:"output"`
+	CacheRead  int64 `json:"cacheRead"`
+	CacheWrite int64 `json:"cacheWrite"`
+	Reasoning  int64 `json:"reasoningTokens"`
 }
 
 // block is one content block.
@@ -203,7 +203,7 @@ func (*Parser) Parse(in parser.Input) (parser.Result, error) {
 	}
 
 	var entries []*entry
-	if header.Version == 1 {
+	if isV1(header.Version, body) {
 		entries = body
 	} else {
 		entries = latestPath(body, &warn)
@@ -213,6 +213,20 @@ func (*Parser) Parse(in parser.Input) (parser.Result, error) {
 	res.Messages, res.Images = b.messages(), b.images
 	res.Warnings = warn.List()
 	return res, nil
+}
+
+// isV1 reports whether a file has no entry tree: its header says version
+// 1, or has no version and no entry has an id (oh-my-pi.md §3.2).
+func isV1(version int, body []*entry) bool {
+	if version != 0 {
+		return version == 1
+	}
+	for _, e := range body {
+		if e.ID != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // latestPath is the path from the root to the latest leaf, the last entry
@@ -301,7 +315,7 @@ func (b *builder) build(entries []*entry) {
 		case "model_change":
 			b.marker(e, parser.MessageAssistant, parser.MarkerModelChange, e.Model)
 		case "thinking_level_change":
-			b.marker(e, parser.MessageAssistant, parser.MarkerThinkingLevel, e.Level)
+			b.marker(e, parser.MessageAssistant, parser.MarkerThinkingLevel, e.ThinkingLevel)
 		case "compaction":
 			text := e.Summary
 			if strings.TrimSpace(text) == "" {
@@ -318,7 +332,7 @@ func (b *builder) build(entries []*entry) {
 			b.marker(e, parser.MessageUser, parser.MarkerSlashCommand, "/clear")
 		case "custom_message":
 			if e.Display {
-				text := e.Custom
+				text := e.CustomType
 				var d struct {
 					Name string `json:"name"`
 				}
@@ -390,7 +404,7 @@ func (b *builder) message(e *entry) {
 		m := b.newMsg(e, parser.MessageAssistant)
 		m.Model, m.Provider = msg.Model, msg.Provider
 		if u := msg.Usage; u != nil {
-			m.Usage = &parser.Usage{Input: u.Input, Output: u.Output, CacheRead: u.CacheRead, CacheWrite: u.CacheWrit, Reasoning: u.Reasoning}
+			m.Usage = &parser.Usage{Input: u.Input, Output: u.Output, CacheRead: u.CacheRead, CacheWrite: u.CacheWrite, Reasoning: u.Reasoning}
 		}
 		b.content(m, msg.Content, e.raw)
 		b.add(m)

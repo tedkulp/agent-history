@@ -199,10 +199,12 @@ func TestDrift(t *testing.T) {
 	}
 	write(t, root, "agent.db", "x")
 	write(t, root, "config.yml", "x")
+	// Outside an artifacts directory, an unknown file is drift.
+	write(t, root, "sessions/-src-app/notes.md", "x")
 
 	r := drift.Scan(Adapter{}, root)
-	if len(r.Unclaimed) != 0 {
-		t.Errorf("unclaimed %q", r.Unclaimed)
+	if want := []string{"sessions/-src-app/notes.md"}; !slices.Equal(r.Unclaimed, want) {
+		t.Errorf("unclaimed %q, want %q", r.Unclaimed, want)
 	}
 	var got []string
 	for _, p := range r.Ignored {

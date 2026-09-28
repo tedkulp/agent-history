@@ -109,8 +109,11 @@ type gzipFile struct {
 func (g gzipFile) Read(p []byte) (int, error) { return g.z.Read(p) }
 
 func (g gzipFile) Close() error {
-	g.z.Close()
-	return g.f.Close()
+	err := g.z.Close()
+	if ferr := g.f.Close(); err == nil {
+		err = ferr
+	}
+	return err
 }
 
 // ReadFile reads a record's whole content, decompressed like Open.

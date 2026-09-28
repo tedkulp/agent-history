@@ -90,12 +90,16 @@ func (Adapter) Version(string) string { return "" }
 func (Adapter) Layouts() []source.Layout { return []source.Layout{jsonlLayout{}} }
 
 // KnownIgnored is omp's lock files and rewrite backups, and the sub-agent
-// outputs, tool logs and caches in artifacts directories (adapter spec §2.2).
+// outputs, tool logs and caches inside a Session's artifacts directory,
+// <cwd-dir>/<ts>_<uuid>/, at any depth (adapter spec §2.2).
 func (Adapter) KnownIgnored() []string {
-	return []string{
-		"**/.*.lock", "**/.*.lock.os", "**/*.jsonl.*.bak",
-		"**/*.md", "**/*.json", "**/*.log", "**/local/**", "**/url-search/**",
+	globs := []string{"**/.*.lock", "**/.*.lock.os", "**/*.jsonl.*.bak"}
+	for _, d := range []string{sessionsDir, archiveDir} {
+		for _, g := range []string{"*.md", "*.json", "*.log", "local/**", "url-search/**"} {
+			globs = append(globs, d+"/*/*/**/"+g)
+		}
 	}
+	return globs
 }
 
 // ScanPaths are the two sessions directories. The rest of the agent
@@ -283,7 +287,7 @@ func (jsonlLayout) StartCwd(rec source.Record) (string, error) {
 // segment removed, plus .jsonl (adapter spec §2.4).
 func (jsonlLayout) Parent(root string, rec source.Record) (source.Record, bool) {
 	dir := path.Dir(rec.Key)
-	if strings.Count(dir, "/") < 1 {
+	if !strings.Contains(dir, "/") {
 		return source.Record{}, false
 	}
 	return bestCopy(root, dir+".jsonl")

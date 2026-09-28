@@ -307,6 +307,10 @@ func TestSchemaVersions(t *testing.T) {
 	if again := parse(t, mainKey, v1); again.Messages[0].ID != a {
 		t.Error("v1 ids aren't stable")
 	}
+	// A header with no version and entries with no ids is v1 as well.
+	if res := parse(t, mainKey, bytes.Replace(v1, []byte(`"version":1,`), nil, 1)); len(res.Messages) != 2 {
+		t.Errorf("versionless v1 %q", summaries(res))
+	}
 
 	v2 := lines(
 		`{"type":"session","version":2,"id":"x","timestamp":"2025-01-01T00:00:00Z","cwd":"/src/v2"}`,

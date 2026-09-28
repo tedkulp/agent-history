@@ -28,7 +28,7 @@ The root is omp's **agent directory**, the one that contains `sessions/`.
 1. `$PI_CODING_AGENT_DIR`, when no profile is set (omp ignores it under a profile)
 2. with a profile: `$XDG_DATA_HOME/omp/profiles/<profile>`, then `<config>/profiles/<profile>/agent`
 3. without one: `$XDG_DATA_HOME/omp`
-4. `<config>/agent`, i.e. `~/.omp/agent`
+4. without one: `<config>/agent`, i.e. `~/.omp/agent`
 
 omp files `sessions/` under the XDG *data* directory, with no `agent/` segment, and only when `XDG_DATA_HOME` is set: there is no `~/.local/share` fallback. It does this on macOS as well as Linux once `omp config init-xdg` has run. `archive/sessions/` sits next to `sessions/` in either case.
 
@@ -126,7 +126,7 @@ Source: [Normalized Transcript model](https://github.com/tedkulp/agent-history/i
 The parser branches on `session.version`:
 
 - **v2 and v3**: every non-header entry has `id` and `parentId`. The **latest leaf** is the last entry in file order with an `id`. The Transcript is the path from the root (`parentId: null`) to that leaf. A `parentId` that names no entry stops the walk with an `orphan` warning.
-- **v1**: no tree. The Transcript is all entries in file order.
+- **v1**: no tree. The Transcript is all entries in file order. A header with no `version` whose entries have no `id` is v1 too.
 - **v2** also used the message role `hookMessage`, which v3 renamed `custom`. Both are treated as `custom` (Raw only).
 - **A version above 3**: parsed as v3. Fields the parser can't find become `missing_field` warnings.
 
@@ -237,7 +237,7 @@ Source: [oh-my-pi on-disk history format](https://github.com/tedkulp/agent-histo
 
 ## 6. Acceptance checklist (after M1)
 
-- [ ] **Build-time fact:** the XDG sub-paths in §2.1 step 3 match `packages/utils/src/dirs.ts` in the omp version being targeted. If they differ, fix §2.1 first.
+- [ ] **Build-time fact:** the XDG paths in §2.1 match `dirs.ts` in the omp version being targeted (checked against omp 18.3.4 when the adapter was built). If they differ, fix §2.1 first.
 - [ ] `init` finds the root through `PI_CODING_AGENT_DIR`, `OMP_PROFILE`, or XDG on macOS when those are set in the shell rc.
 - [ ] A Session file and its nested sub-agent files ship under the keys in §2.2; lock files, `.bak` files and artifact outputs are known-ignored.
 - [ ] `omp gc` archiving a shipped Session ships nothing and creates no second record.
