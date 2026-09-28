@@ -457,9 +457,9 @@ func TestMappingRows(t *testing.T) {
 
 func sortStrings(s []string) []string { s = slices.Clone(s); slices.Sort(s); return s }
 
-// A sub-agent's inherited parent context is Raw only; it links to its
-// parent thread.
-func TestSubAgent(t *testing.T) {
+// A Child Session's inherited parent context is Raw only; it links to its
+// parent Session.
+func TestChildSession(t *testing.T) {
 	child := "01a0d390-1111-7222-8333-944455556666"
 	b := build(t, 0,
 		meta(child, map[string]any{"parent_thread_id": parent, "subagent_history_start_ordinal": 4,
@@ -571,4 +571,79 @@ func TestDeterministic(t *testing.T) {
 	if !reflect.DeepEqual(a, b) {
 		t.Error("two parses differ")
 	}
+}
+
+// Fixes from review: each case once broke a §3 rule.
+func TestEdgeCases(t *testing.T) {
+	t.Run("usage after an empty assistant message goes to the Message shown", func(t *testing.T) {
+		res := parse(t, parser.Input{Main: build(t, 0,
+			meta(thread, nil), turn("gpt-6-sol", "medium"), user(inText("hi")),
+			say("commentary", "Working."),
+			rl{"response_item", map[string]any{"type": "message", "role": "assistant", "content": []any{}}},
+			usage("resp_1", 10, 1),
+		)})
+		if m := res.Messages[1]; m.Usage == nil || m.Usage.Input != 10 {
+			t.Errorf("usage %+v", m.Usage)
+		}
+	})
+	t.Run("a second output for one call is an orphan", func(t *testing.T) {
+		res := parse(t, parser.Input{Main: build(t, 0,
+			meta(thread, nil), user(inText("hi")),
+			rl{"response_item", map[string]any{"type": "function_call", "name": "shell", "arguments": "{}", "call_id": "c1"}},
+			rl{"response_item", map[string]any{"type": "function_call_output", "call_id": "c1", "output": "first"}},
+			rl{"response_item", map[string]any{"type": "function_call_output", "call_id": "c1", "output": "second"}},
+		)})
+		if got := warnings(res); !slices.Equal(got, []string{"orphan:function_call_output×1"}) {
+			t.Errorf("warnings %q", got)
+		}
+		if tc := res.Messages[1].Parts[0].Payload.(parser.ToolCallPayload); *tc.Output != "first" {
+			t.Errorf("output %q", *tc.Output)
+		}
+	})
+	t.Run("injected context is one whole element", func(t *testing.T) {
+		for text, want := range map[string]bool{
+			"<environment_context>\n  <cwd>/x</cwd>\n</environment_context>": true,
+			`<skill name="x">body</skill >`:                                  true,
+			"<a>x</a> and then <a>y</a>":                                     false,
+			"<b>bold</b> is what I mean":                                     false,
+			"<unclosed> tag":                                                 false,
+			"plain":                                                          false,
+		} {
+			if got := injected(text); got != want {
+				t.Errorf("injected(%q) = %v, want %v", text, got, want)
+			}
+		}
+	})
+	t.Run("a Child Session takes its model from inherited context", func(t *testing.T) {
+		child := "01a0d390-1111-7222-8333-944455556666"
+		res := parse(t, parser.Input{NativeID: child, MainKey: "rollout-2026-09-24T09-30-00-" + child + ".jsonl", Main: build(t, 0,
+			meta(child, map[string]any{"parent_thread_id": parent, "subagent_history_start_ordinal": 2}),
+			turn("gpt-6-sol", "high"),
+			user(inText("Explore")),
+			say("final_answer", "Found it."),
+		)})
+		if len(res.Messages) != 2 || res.Messages[1].Model != "gpt-6-sol" || len(res.Messages[0].Parts) != 1 {
+			t.Fatalf("messages %+v", res.Messages)
+		}
+	})
+	t.Run("a continuation whose chain misses the main file follows <ts>", func(t *testing.T) {
+		main := build(t, 0, meta(thread, nil), user(inText("one")))
+		cont := build(t, 2, meta(thread, map[string]any{"history_base": map[string]any{"thread_id": parent, "end_ordinal_exclusive": 2}}), user(inText("two")))
+		res := parse(t, parser.Input{Main: main, Attachments: map[string][]byte{contKey: cont}})
+		var got []string
+		for _, m := range res.Messages {
+			got = append(got, strings.Join(texts(m), ","))
+		}
+		if !slices.Equal(got, []string{"one", "two"}) {
+			t.Errorf("messages %q", got)
+		}
+	})
+	t.Run("a history_base cycle doesn't panic", func(t *testing.T) {
+		main := build(t, 0, meta(thread, map[string]any{"history_base": map[string]any{"thread_id": rollout, "end_ordinal_exclusive": 1}}), user(inText("one")))
+		cont := build(t, 2, meta(thread, map[string]any{"history_base": map[string]any{"thread_id": thread, "end_ordinal_exclusive": 2}}), user(inText("two")))
+		res := parse(t, parser.Input{Main: main, Attachments: map[string][]byte{contKey: cont}})
+		if len(res.Messages) != 2 {
+			t.Errorf("messages %+v", res.Messages)
+		}
+	})
 }

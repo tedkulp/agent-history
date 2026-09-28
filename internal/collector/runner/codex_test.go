@@ -115,8 +115,8 @@ func TestCodexRolloutLifecycle(t *testing.T) {
 	}
 }
 
-// An excluded thread's sub-agent threads stay on the Machine too.
-func TestCodexExcludeCoversSubAgents(t *testing.T) {
+// An excluded Session's Child Sessions stay on the Machine too.
+func TestCodexExcludeCoversChildSessions(t *testing.T) {
 	f := newFixture(t)
 	f.write(cxDay+cxKey, cxMeta(cxThread, "/Users/ted/src/secret/app", ""))
 	// A sub-agent's own cwd doesn't save it.

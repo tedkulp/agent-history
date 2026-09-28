@@ -226,3 +226,17 @@ func TestDriftScan(t *testing.T) {
 		t.Errorf("ignored %q, want %q", ignored, want)
 	}
 }
+
+// A record claimed through its archived copy holds the copy under
+// sessions/ when there is one.
+func TestClaimsPrefersSessions(t *testing.T) {
+	root := t.TempDir()
+	archived := write(t, root, "archived_sessions/"+mainKey, "x\n")
+	if rec, ok := (jsonlLayout{}).Claims(root, archived); !ok || rec.Path != archived {
+		t.Fatalf("Claims(archived) = %+v, %v", rec, ok)
+	}
+	zst := write(t, root, day+mainKey+".zst", compress(t, "x\n"))
+	if rec, ok := (jsonlLayout{}).Claims(root, archived); !ok || rec.Key != mainKey || rec.Path != zst {
+		t.Errorf("Claims(archived) = %+v, %v; want %s", rec, ok, zst)
+	}
+}

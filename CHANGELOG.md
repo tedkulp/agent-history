@@ -11,7 +11,7 @@ One version covers the Collector and the Hub together (see
 
 ### Added
 
-- Codex support: the Collector ships Codex rollouts from `~/.codex` (or `CODEX_HOME`), including compressed and archived ones, and the Hub shows them as Transcripts with sub-agent threads as Child Sessions. An upgraded Collector reads `~/.codex` with no config change; run `agent-history init` again to write the Codex root into `collector.toml`, taking `CODEX_HOME` from your shell. Codex's `thread_history_*.sqlite` store shows as known-ignored in `status`.
+- Codex support: the Collector ships Codex history from `~/.codex` (or `CODEX_HOME`, written by re-running `agent-history init`), and the Hub shows it as Transcripts with Child Sessions.
 - A forked Session shows "forked from …" in its Transcript header, linking to the Session it came from.
 - Background task and sub-agent notifications (`<task-notification>`) show in the Transcript as a compact marker with status, summary and usage, linked to the tool call that started the task, instead of raw text in a user bubble. Existing Sessions pick this up when they re-parse.
 

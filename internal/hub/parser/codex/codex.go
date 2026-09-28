@@ -30,8 +30,8 @@ const (
 
 const uuid = `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`
 
-// keyRe matches a Record key: rollout-<ts>-<thread>[_<rollout>].jsonl.
-var keyRe = regexp.MustCompile(`^rollout-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})-(` + uuid + `)(?:_(` + uuid + `))?\.jsonl$`)
+// rolloutRe matches a Record key: rollout-<ts>-<thread>[_<rollout>].jsonl.
+var rolloutRe = regexp.MustCompile(`^rollout-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})-(` + uuid + `)(?:_(` + uuid + `))?\.jsonl$`)
 
 // Parser is the codex parser.
 type Parser struct{}
@@ -45,18 +45,38 @@ func (*Parser) Source() string { return protocol.SourceCodex }
 // Version implements parser.Parser.
 func (*Parser) Version() int { return version }
 
-// MapKey implements parser.Parser (codex.md §2.3): a thread's first rollout
+// MapKey implements parser.Parser (codex.md §2.3): a Session's first rollout
 // is its main record, continuation files are attachments.
 func (*Parser) MapKey(key string) (parser.Mapping, bool) {
-	a := keyRe.FindStringSubmatch(key)
-	if a == nil {
+	k, ok := parseKey(key)
+	if !ok {
 		return parser.Mapping{}, false
 	}
 	role := parser.RoleMain
-	if a[3] != "" {
+	if k.continuation {
 		role = parser.RoleAttachment
 	}
-	return parser.Mapping{NativeID: a[2], Role: role, Layout: layout, LayoutRank: layoutRank}, true
+	return parser.Mapping{NativeID: k.thread, Role: role, Layout: layout, LayoutRank: layoutRank}, true
+}
+
+// rolloutKey is what a Record key names.
+type rolloutKey struct {
+	ts           string // the creation time
+	thread       string // the Session's native id
+	rollout      string // the file's rollout id: its _<rollout>, else the thread id
+	continuation bool
+}
+
+func parseKey(key string) (rolloutKey, bool) {
+	m := rolloutRe.FindStringSubmatch(key)
+	if m == nil {
+		return rolloutKey{}, false
+	}
+	k := rolloutKey{ts: m[1], thread: m[2], rollout: m[2], continuation: m[3] != ""}
+	if k.continuation {
+		k.rollout = m[3]
+	}
+	return k, true
 }
 
 // line is one rollout line.
@@ -97,7 +117,7 @@ type historyBase struct {
 	EndOrdinalExclusive uint64 `json:"end_ordinal_exclusive"`
 }
 
-// file is one of a thread's rollout files.
+// file is one of a Session's rollout files.
 type file struct {
 	key     string
 	ts      string // <ts> from the key
@@ -154,12 +174,19 @@ func (*Parser) Parse(in parser.Input) (parser.Result, error) {
 	if res.Session.StartedAt == 0 && len(lines) > 0 {
 		res.Session.StartedAt = lines[0].ts
 	}
+	b := &builder{warn: &warn, provider: meta.ModelProvider, outputs: map[string]*output{}, responses: map[string]bool{}}
 	if s := meta.SubagentHistoryStartOrdinal; s != nil {
-		// Inherited parent context is Raw only (codex.md §3.2).
+		// Inherited parent context is Raw only (codex.md §3.2), but its
+		// last turn_context still sets the model.
+		for _, l := range lines {
+			if l.ord < *s && l.Type == "turn_context" {
+				b.turnContext(l)
+			}
+		}
+		b.msgs, b.seenTurn = nil, false
 		lines = slices.DeleteFunc(lines, func(l *line) bool { return l.ord < *s })
 	}
 
-	b := &builder{warn: &warn, provider: meta.ModelProvider, outputs: map[string]*output{}, responses: map[string]bool{}}
 	b.build(lines)
 	res.Messages, res.Images = b.messages(), b.images
 	res.Warnings = warn.List()
@@ -169,11 +196,8 @@ func (*Parser) Parse(in parser.Input) (parser.Result, error) {
 // readFile decodes one rollout. Its first line is session_meta.
 func readFile(key string, content []byte, warn *parser.Warnings) *file {
 	f := &file{key: key}
-	if a := keyRe.FindStringSubmatch(key); a != nil {
-		f.ts, f.rollout = a[1], a[2]
-		if a[3] != "" {
-			f.rollout = a[3]
-		}
+	if k, ok := parseKey(key); ok {
+		f.ts, f.rollout = k.ts, k.rollout
 	}
 	n := uint64(0)
 	for raw := range bytes.Lines(content) {
@@ -204,6 +228,7 @@ func readFile(key string, content []byte, warn *parser.Warnings) *file {
 	return f
 }
 
+// parseTime is an RFC 3339 time in Unix milliseconds, 0 when it doesn't parse.
 func parseTime(s string) int64 {
 	t, err := time.Parse(time.RFC3339Nano, s)
 	if err != nil {
@@ -212,56 +237,27 @@ func parseTime(s string) int64 {
 	return t.UnixMilli()
 }
 
-// stitch orders a thread's files and returns their lines in ordinal order
-// (codex.md §3.2). The current file is the one no other continues from; its
-// history_base chain leads back through the files it continues, each taken
-// up to where the next continues from. Files off that chain were reverted
-// away. With no history_base anywhere, files follow <ts> order.
+// segment is one file's part of a stitched Transcript.
+type segment struct {
+	f   *file
+	end *uint64 // lines from end on belong to the next segment
+}
+
+// stitch orders a Session's files, the main one first, and returns their
+// lines in ordinal order (codex.md §3.2). The current file is the one no
+// other continues from; its history_base chain leads back through the files
+// it continues, each taken up to where the next continues from. Files off
+// that chain were reverted away. When there is no chain back to the main
+// file, files follow <ts> order.
 func stitch(files []*file) []*line {
 	if len(files) == 1 {
 		return files[0].lines
 	}
-	byRollout := map[string]*file{}
-	continued := map[string]bool{}
-	chained := false
-	for _, f := range files {
-		byRollout[f.rollout] = f
-		if b := base(f); b != nil {
-			chained = true
-			continued[b.ThreadID] = true
-		}
-	}
-
-	type segment struct {
-		f   *file
-		end *uint64 // lines from end on belong to the next segment
-	}
-	var segs []segment
-	if chained {
-		var heads []*file
-		for _, f := range files {
-			if !continued[f.rollout] {
-				heads = append(heads, f)
-			}
-		}
-		slices.SortFunc(heads, func(a, b *file) int { return cmp.Or(cmp.Compare(a.ts, b.ts), cmp.Compare(a.key, b.key)) })
-		seen := map[*file]bool{}
-		var end *uint64
-		for f := heads[len(heads)-1]; f != nil && !seen[f]; {
-			seen[f] = true
-			segs = append(segs, segment{f, end})
-			b := base(f)
-			if b == nil {
-				break
-			}
-			e := b.EndOrdinalExclusive
-			end = &e
-			f = byRollout[b.ThreadID]
-		}
-		slices.Reverse(segs)
-	} else {
+	segs, ok := chain(files)
+	if !ok {
 		sorted := slices.Clone(files)
-		slices.SortStableFunc(sorted, func(a, b *file) int { return cmp.Or(cmp.Compare(a.ts, b.ts), cmp.Compare(a.key, b.key)) })
+		slices.SortFunc(sorted, byTime)
+		segs = nil
 		for _, f := range sorted {
 			segs = append(segs, segment{f: f})
 		}
@@ -291,6 +287,51 @@ func stitch(files []*file) []*line {
 	return out
 }
 
+// chain follows history_base back from the current file. ok is false when
+// no chain leads back to the main file, files[0].
+func chain(files []*file) (segs []segment, ok bool) {
+	byRollout := map[string]*file{}
+	continued := map[string]bool{}
+	for _, f := range files {
+		byRollout[f.rollout] = f
+		if b := base(f); b != nil {
+			continued[b.ThreadID] = true
+		}
+	}
+	var heads []*file
+	for _, f := range files {
+		if !continued[f.rollout] {
+			heads = append(heads, f)
+		}
+	}
+	if len(heads) == 0 {
+		return nil, false
+	}
+	slices.SortFunc(heads, byTime)
+	seen := map[*file]bool{}
+	var end *uint64
+	for f := heads[len(heads)-1]; f != nil && !seen[f]; {
+		seen[f] = true
+		segs = append(segs, segment{f, end})
+		b := base(f)
+		if b == nil {
+			break
+		}
+		e := b.EndOrdinalExclusive
+		end = &e
+		f = byRollout[b.ThreadID]
+	}
+	if !seen[files[0]] {
+		return nil, false
+	}
+	slices.Reverse(segs)
+	return segs, true
+}
+
+// byTime orders files by the <ts> in their keys.
+func byTime(a, b *file) int { return cmp.Or(cmp.Compare(a.ts, b.ts), cmp.Compare(a.key, b.key)) }
+
+// base is where f continues another file, or nil.
 func base(f *file) *historyBase {
 	if f.meta == nil {
 		return nil
@@ -332,13 +373,14 @@ type builder struct {
 
 	msgs      []*msg
 	cur       *msg // the assistant Message being grouped
-	lastAsst  *msg // the latest assistant Message, for usage
+	lastAsst  *msg // the latest assistant Message with Parts, for usage
 	outputs   map[string]*output
 	responses map[string]bool // response ids already counted
 	images    []parser.Image
 }
 
-// envelope-level payload of a response_item.
+// item is the payload of a response_item: the union of the fields the
+// parser reads from each item type.
 type item struct {
 	Type      string          `json:"type"`
 	Role      string          `json:"role"`
@@ -361,6 +403,7 @@ type block struct {
 	raw json.RawMessage
 }
 
+// build turns lines into Messages, then warns about outputs no call claimed.
 func (b *builder) build(lines []*line) {
 	// Outputs first, so each call finds its output wherever it lies.
 	for _, l := range lines {
@@ -372,9 +415,12 @@ func (b *builder) build(lines []*line) {
 			continue
 		}
 		if it.Type == "function_call_output" || it.Type == "custom_tool_call_output" {
-			if _, dup := b.outputs[it.CallID]; !dup && it.CallID != "" {
-				b.outputs[it.CallID] = b.readOutput(it, l)
+			if _, dup := b.outputs[it.CallID]; dup || it.CallID == "" {
+				// No call can claim it.
+				b.warn.Add(parser.WarnOrphan, it.Type, string(l.Payload))
+				continue
 			}
+			b.outputs[it.CallID] = b.readOutput(it, l)
 		}
 	}
 
@@ -473,13 +519,16 @@ func msgID(l *line) string {
 	return hex.EncodeToString(sum[:8])
 }
 
+// newMsg starts a Message at l.
 func (b *builder) newMsg(l *line, role string) *msg {
 	return &msg{Message: parser.Message{ID: msgID(l), Role: role, Timestamp: l.ts}}
 }
 
+// flush ends the assistant Message being grouped.
 func (b *builder) flush() {
 	if b.cur != nil && len(b.cur.parts) > 0 {
 		b.msgs = append(b.msgs, b.cur)
+		b.lastAsst = b.cur
 	}
 	b.cur = nil
 }
@@ -489,11 +538,11 @@ func (b *builder) assistant(l *line) *msg {
 	if b.cur == nil {
 		b.cur = b.newMsg(l, parser.MessageAssistant)
 		b.cur.Model, b.cur.Provider = b.model, b.provider
-		b.lastAsst = b.cur
 	}
 	return b.cur
 }
 
+// responseItem maps one response_item (codex.md §3.3).
 func (b *builder) responseItem(l *line) {
 	var it item
 	if json.Unmarshal(l.Payload, &it) != nil {
@@ -543,20 +592,37 @@ func (b *builder) responseItem(l *line) {
 	}
 }
 
+// unknown adds an unknown Part with an unknown_type warning.
 func (b *builder) unknown(m *msg, sourceType string, raw []byte) {
 	b.warn.Add(parser.WarnUnknownType, sourceType, string(raw))
 	m.parts = append(m.parts, &part{kind: parser.KindUnknown, payload: parser.NewUnknown(sourceType, raw)})
 }
 
-// injectedRe matches a block that is one <tag>…</tag> element: context
-// Codex adds to the user's turn (codex.md §3.3).
-var injectedRe = regexp.MustCompile(`(?s)^<([A-Za-z][\w-]*)(?:\s[^>]*)?>.*</([A-Za-z][\w-]*)(?:\s[^>]*)?>$`)
+// openTagRe matches the opening tag at the start of a block.
+var openTagRe = regexp.MustCompile(`^<([A-Za-z][\w-]*)(?:\s[^>]*)?>`)
 
+// injected reports whether a block is one <tag>…</tag> element: context
+// Codex adds to the user's turn (codex.md §3.3). The element's first closing
+// tag must end the block, so "<a>x</a> text <a>y</a>" is the user's own.
 func injected(text string) bool {
-	m := injectedRe.FindStringSubmatch(strings.TrimSpace(text))
-	return m != nil && m[1] == m[2]
+	text = strings.TrimSpace(text)
+	m := openTagRe.FindStringSubmatch(text)
+	if m == nil {
+		return false
+	}
+	body := text[len(m[0]):]
+	i := strings.Index(body, "</"+m[1])
+	if i < 0 {
+		return false
+	}
+	return closeTagRestRe.MatchString(body[i+len("</"+m[1]):])
 }
 
+// closeTagRestRe is what may follow a closing tag's name to end a block.
+var closeTagRestRe = regexp.MustCompile(`^(?:\s[^>]*)?>$`)
+
+// userMessage adds a user Message, leaving out injected context. A message
+// with nothing else adds none.
 func (b *builder) userMessage(l *line, it item) {
 	m := b.newMsg(l, parser.MessageUser)
 	for _, bl := range blocks(it.Content) {
@@ -583,9 +649,9 @@ func (b *builder) userMessage(l *line, it item) {
 // image decodes an inline data: URL image. Other references carry no
 // bytes: they are skipped with an unknown_type warning.
 func (b *builder) image(bl block, raw []byte) (parser.ImagePayload, bool) {
-	rest, ok := strings.CutPrefix(bl.ImageURL, "data:")
-	mime, data, ok2 := strings.Cut(rest, ";base64,")
-	if !ok || !ok2 {
+	rest, isData := strings.CutPrefix(bl.ImageURL, "data:")
+	mime, data, isBase64 := strings.Cut(rest, ";base64,")
+	if !isData || !isBase64 {
 		b.warn.Add(parser.WarnUnknownType, "input_image", string(raw))
 		return parser.ImagePayload{}, false
 	}
@@ -686,6 +752,9 @@ func (b *builder) usage(l *line) {
 		return
 	}
 	m := b.lastAsst
+	if b.cur != nil && len(b.cur.parts) > 0 {
+		m = b.cur
+	}
 	if m == nil {
 		return
 	}

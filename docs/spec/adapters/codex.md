@@ -49,7 +49,7 @@ One Layout, **`jsonl`**, rank `1`. Record keys have no Layout prefix.
 
 **`KnownIgnored`**: `thread_history_*.sqlite`, `thread_history_*.sqlite-wal`, `thread_history_*.sqlite-shm` at the root. `status` lists them with their modification time.
 
-**Scan paths** (for unclaimed-path detection): `sessions/` and `archived_sessions/`. The rest of `~/.codex` (config, logs, caches, other SQLite files, `session_index.jsonl`, `history.jsonl`) is outside the scan and is never reported as unclaimed.
+**Scan paths** (for unclaimed-path detection): `sessions/` and `archived_sessions/`, plus the root-level glob `thread_history_*.sqlite*` so `status` can list the thread store as known-ignored. The rest of `~/.codex` (config, logs, caches, other SQLite files, `session_index.jsonl`, `history.jsonl`) is outside the scan and is never reported as unclaimed.
 
 **`WatchPaths(root)`**: `sessions/` and `archived_sessions/`, recursively. New date directories are added as they appear.
 

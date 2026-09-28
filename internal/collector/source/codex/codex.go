@@ -28,8 +28,10 @@ const (
 	archivedDir = "archived_sessions"
 )
 
+// ID is the Source identifier.
 func (Adapter) ID() string { return protocol.SourceCodex }
 
+// DefaultRoot is CODEX_HOME, else ~/.codex (adapter spec §2.1).
 func (Adapter) DefaultRoot(getenv func(string) string, home string) string {
 	if dir := getenv("CODEX_HOME"); dir != "" {
 		return dir
@@ -47,13 +49,16 @@ func (Adapter) Detect(root string) bool {
 	return false
 }
 
+// Version is empty: the Hub reads cli_version from each parse.
 func (Adapter) Version(string) string { return "" }
 
+// Layouts is the one jsonl Layout.
 func (Adapter) Layouts() []source.Layout { return []source.Layout{jsonlLayout{}} }
 
 // threadStore is the SQLite thread store Codex is migrating to, not read in v1.
 const threadStore = "thread_history_*.sqlite"
 
+// KnownIgnored is the thread store and its WAL files.
 func (Adapter) KnownIgnored() []string {
 	return []string{threadStore, threadStore + "-wal", threadStore + "-shm"}
 }
@@ -77,9 +82,9 @@ func (jsonlLayout) Rank() int    { return 1 }
 
 const uuid = `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`
 
-// fileName matches a rollout file: rollout-<ts>-<thread>[_<rollout>].jsonl,
+// rolloutRe matches a rollout file: rollout-<ts>-<thread>[_<rollout>].jsonl,
 // optionally compressed (adapter spec §2.2).
-var fileName = regexp.MustCompile(`^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(` + uuid + `)(_` + uuid + `)?\.jsonl(\.zst)?$`)
+var rolloutRe = regexp.MustCompile(`^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(` + uuid + `)(_` + uuid + `)?\.jsonl(\.zst)?$`)
 
 // preference ranks copies of one key: uncompressed under sessions/ first,
 // then compressed, then the same under archived_sessions/.
@@ -142,17 +147,17 @@ func (jsonlLayout) WatchPaths(root string) []string {
 	return []string{filepath.Join(root, sessionsDir), filepath.Join(root, archivedDir)}
 }
 
-// Claims maps a rollout file to its record. When an uncompressed copy sits
-// next to a compressed one, the record holds the uncompressed copy.
+// Claims maps a rollout file to its record, which holds the key's
+// preferred copy.
 func (l jsonlLayout) Claims(root, path string) (source.Record, bool) {
 	rec, ok := l.claim(root, path)
-	if ok && strings.HasSuffix(rec.Path, ".zst") {
-		plain := strings.TrimSuffix(rec.Path, ".zst")
-		if fi, err := os.Stat(plain); err == nil && fi.Mode().IsRegular() {
-			rec.Path = plain
-		}
+	if !ok {
+		return rec, false
 	}
-	return rec, ok
+	if best, found := bestCopy(root, rec.Key); found {
+		rec = best
+	}
+	return rec, true
 }
 
 func (jsonlLayout) claim(root, path string) (source.Record, bool) {
@@ -160,7 +165,7 @@ func (jsonlLayout) claim(root, path string) (source.Record, bool) {
 		return source.Record{}, false
 	}
 	name := filepath.Base(path)
-	if !fileName.MatchString(name) {
+	if !rolloutRe.MatchString(name) {
 		return source.Record{}, false
 	}
 	return source.Record{Key: strings.TrimSuffix(name, ".zst"), Path: path}, true
@@ -207,26 +212,33 @@ func (jsonlLayout) StartCwd(rec source.Record) (string, error) {
 	return m.Payload.Cwd, err
 }
 
-// Parent is, for a continuation file, its thread's main record, and for a
-// sub-agent thread, its parent thread's main record (adapter spec §2.4).
+// Parent is, for a continuation file, its Session's main record, and for a
+// Child Session, its parent Session's main record (adapter spec §2.4).
 func (jsonlLayout) Parent(root string, rec source.Record) (source.Record, bool) {
-	a := fileName.FindStringSubmatch(rec.Key)
-	if a == nil {
+	m := rolloutRe.FindStringSubmatch(rec.Key)
+	if m == nil {
 		return source.Record{}, false
 	}
-	if a[2] != "" {
-		return findMain(root, a[1])
+	thread, continuation := m[1], m[2] != ""
+	if continuation {
+		return findMain(root, thread)
 	}
-	m, _, err := readMeta(rec.Path)
-	if err != nil || m.Payload.ParentThreadID == "" {
+	meta, _, err := readMeta(rec.Path)
+	if err != nil || meta.Payload.ParentThreadID == "" {
 		return source.Record{}, false
 	}
-	return findMain(root, m.Payload.ParentThreadID)
+	return findMain(root, meta.Payload.ParentThreadID)
 }
 
-// findMain finds a thread's main rollout, in its preferred copy.
+// findMain finds the main record of the Session with native id thread, in
+// its preferred copy.
 func findMain(root, thread string) (source.Record, bool) {
-	name := "rollout-*-" + thread + ".jsonl"
+	return bestCopy(root, "rollout-*-"+thread+".jsonl")
+}
+
+// bestCopy finds the preferred copy of the record whose key matches the
+// glob name.
+func bestCopy(root, name string) (source.Record, bool) {
 	var found []string
 	for _, pat := range []string{
 		filepath.Join(root, sessionsDir, "*", "*", "*", name),
