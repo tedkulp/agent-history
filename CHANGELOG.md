@@ -17,6 +17,7 @@ One version covers the Collector and the Hub together (see
 
 - A Session with no Source title and no typed prompt before its first slash command is titled by that command (`/implement-next 42`) instead of its id. Housekeeping commands such as `/clear`, `/resume` or `/model` are skipped. Claude Code and oh-my-pi Sessions pick this up when they re-parse.
 - The "Re-parsing N Sessions…" banner counts down every 3 s instead of only on reload, and says "Re-parse finished · reload" when it's done.
+- The feed updates in place instead of showing the "↑ N Sessions updated" pill: a Session parsed from live data moves to the top (or appears there), and the rows you're looking at stay put.
 
 ## [0.2.0] - 2026-09-28
 

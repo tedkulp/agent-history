@@ -82,24 +82,24 @@ templ feedPage(v feedView) {
 			<a class="banner" href={ templ.SafeURL(b.Href) }>⚠ { b.Text }</a>
 		}
 		@chipRows(v.Chips)
-		if v.Events != "" {
-			// app.js shows the "Sessions updated" pill here (hub.md §4.7).
-			<a class="pill-updated" hidden data-events={ v.Events } href={ templ.SafeURL(v.Reload) }></a>
-		}
-		if len(v.Days) == 0 {
-			if v.Filtered {
-				<p class="dim">No Sessions match.</p>
-			} else {
-				<p class="dim">No Sessions yet.</p>
+		// On the first page, app.js places rows here as Sessions are parsed
+		// from live data (hub.md §4.7).
+		<div class="feed" { v.liveAttrs()... }>
+			if len(v.Days) == 0 {
+				if v.Filtered {
+					<p class="dim empty">No Sessions match.</p>
+				} else {
+					<p class="dim empty">No Sessions yet.</p>
+				}
 			}
-		}
-		@feedRows(v)
+			@feedRows(v)
+		</div>
 	}
 }
 
 // reparseBanner polls /reparse every 3 s while text is set. Once the
-// re-parse is done it offers a reload of this page instead, so the rows never
-// change without a click (hub.md §4.7).
+// re-parse is done it offers a reload of this page instead, so re-parsed rows
+// show on the next load (hub.md §4.7).
 templ reparseBanner(text string) {
 	if text != "" {
 		<div class="banner reparse" hx-get="/reparse" hx-trigger="every 3s" hx-swap="outerHTML">⟳ { text }</div>
@@ -110,14 +110,15 @@ templ reparseBanner(text string) {
 }
 
 // feedRows is one page of the feed, followed by its "Load more" link. htmx
-// swaps the link for the next page.
+// swaps the link for the next page. Each row carries its Session, time and
+// day label, so the live feed can place it (app.js).
 templ feedRows(v feedView) {
 	for _, d := range v.Days {
 		if d.Label != "" {
 			<div class="day">{ d.Label }</div>
 		}
 		for _, r := range d.Rows {
-			<a class="row" href={ templ.SafeURL(sessionHref(r.ID)) }>
+			<a class="row" href={ templ.SafeURL(sessionHref(r.ID)) } data-id={ strconv.FormatInt(r.ID, 10) } data-at={ strconv.FormatInt(r.LastActivityAt, 10) } data-day={ r.Day }>
 				<span class="tm">{ r.Time }</span>
 				<span>
 					<span class="t">{ r.Title }</span>

@@ -87,6 +87,10 @@ func TestFeedFilters(t *testing.T) {
 		{"no project", FeedFilter{Machine: "m1", Project: strp("")}, []int64{3}},
 		{"combined", FeedFilter{Machine: "m1", Project: strp("/Users/ted/src/app"), Source: "codex"}, []int64{2}},
 		{"unknown machine", FeedFilter{Machine: "nope"}, nil},
+		// A live feed page fetches the rows of named Sessions, by the same rules.
+		{"ids", FeedFilter{IDs: []int64{1, 3, 5, 6, 7, 99}}, []int64{3, 1}},
+		{"ids and chips", FeedFilter{IDs: []int64{1, 2, 3}, Source: "codex"}, []int64{2}},
+		{"no ids", FeedFilter{IDs: []int64{}}, nil},
 	}
 	for _, c := range cases {
 		rows, err := s.Feed(ctx, c.f, 50)

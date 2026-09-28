@@ -1,6 +1,7 @@
 package web
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -14,15 +15,18 @@ func TestFeedPageListensOnlyOnItsFirstPage(t *testing.T) {
 	_, page := get(t, ls.srv.URL+"/?machine=m1&source=claude-code")
 	for _, want := range []string{
 		`data-events="/events?machine=m1&amp;source=claude-code"`,
-		`href="/?machine=m1&amp;source=claude-code"></a>`,
+		`data-rows="/feed/rows?machine=m1&amp;source=claude-code"`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("first page lacks %s", want)
 		}
 	}
-	// Input with no search terms shows the feed; the pill reloads it without.
-	if _, page := get(t, ls.srv.URL+"/?q=%22%22"); !strings.Contains(page, `data-events="/events"`) || !strings.Contains(page, `data-events="/events" href="/"`) {
-		t.Error("a feed from an empty search doesn't listen at /events and reload to /")
+	if strings.Contains(page, "pill-updated") || strings.Contains(page, "Sessions updated") {
+		t.Error("the feed still has the Sessions updated pill")
+	}
+	// Input with no search terms shows the feed; it listens and fetches without.
+	if _, page := get(t, ls.srv.URL+"/?q=%22%22"); !strings.Contains(page, `data-events="/events" data-rows="/feed/rows"`) {
+		t.Error("a feed from an empty search doesn't listen at /events and fetch from /feed/rows")
 	}
 	for name, u := range map[string]string{
 		"a later page": "/?before=9999999999999&before_id=9",
@@ -111,5 +115,48 @@ func TestFeedParamsShowMatchesTheChips(t *testing.T) {
 		if got := c.p.shows(c.s); got != c.want {
 			t.Errorf("%+v shows %+v = %v, want %v", c.p, c.s, got, c.want)
 		}
+	}
+}
+
+func TestFeedRowsServesTheNamedSessionsByTheChips(t *testing.T) {
+	ls := newLiveSite(t, line("u1", "", "user", `"first prompt"`))
+	at := regexp.MustCompile(`data-at="(\d+)"`)
+
+	code, frag := getHX(t, ls.srv.URL+"/feed/rows?ids=1,7&machine=m1")
+	if code != 200 {
+		t.Fatalf("status %d", code)
+	}
+	for _, want := range []string{`href="/sessions/1"`, `data-id="1"`, `data-day="`, "first prompt"} {
+		if !strings.Contains(frag, want) {
+			t.Errorf("rows lack %s:\n%s", want, frag)
+		}
+	}
+	for _, not := range []string{"<html", `class="more"`, "data-events"} {
+		if strings.Contains(frag, not) {
+			t.Errorf("rows hold %s", not)
+		}
+	}
+	first := at.FindStringSubmatch(frag)
+	if first == nil {
+		t.Fatal("row lacks data-at")
+	}
+
+	// Sessions the chips hide never come back.
+	for _, u := range []string{"/feed/rows?ids=1&machine=m2", "/feed/rows?ids=1&warnings=1", "/feed/rows?ids="} {
+		if _, frag := getHX(t, ls.srv.URL+u); strings.Contains(frag, "data-id") {
+			t.Errorf("%s lists a row", u)
+		}
+	}
+
+	// A live parse moves the row's time; without ids it's the first page.
+	ls.append(line("a1", "u1", "assistant", `[{"type":"text","text":"hi"}]`))
+	ls.parse()
+	_, frag = getHX(t, ls.srv.URL+"/feed/rows")
+	if m := at.FindStringSubmatch(frag); m == nil || m[1] == first[1] {
+		t.Errorf("first page rows after a live parse: %s", frag)
+	}
+
+	if code, _ := getHX(t, ls.srv.URL+"/feed/rows?ids=1,x"); code != 400 {
+		t.Errorf("bad ids: status %d, want 400", code)
 	}
 }

@@ -116,9 +116,8 @@ mark{background:var(--mark);color:inherit;border-radius:2px;padding:0 1px}
 .outline-prompts:has(.prompts:empty){display:none}
 .banner.stale{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);margin:0;box-shadow:0 2px 8px #0003;z-index:10}
 
-/* Live feed: the "Sessions updated" pill above the rows. */
-.pill-updated{position:sticky;top:8px;z-index:5;display:block;width:max-content;margin:0 auto 8px;padding:4px 14px;border-radius:999px;background:var(--panel);border:1px solid var(--acc);color:var(--acc);font-size:13px;box-shadow:0 2px 8px #0002}
-.pill-updated[hidden]{display:none}
+/* Live feed: app.js keeps the rows on screen put itself. */
+.feed{overflow-anchor:none}
 
 /* Transcript: "↑ Top" floats in the right gutter once the header scrolls away.
    Below 1200px (.wrap's 1100px, the 52px link each side, a scrollbar)

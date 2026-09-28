@@ -57,6 +57,7 @@ func New(s *store.Store, b *live.Broadcaster, log *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", srv.feed)
 	mux.HandleFunc("GET /events", srv.feedEvents)
+	mux.HandleFunc("GET /feed/rows", srv.feedLiveRows)
 	mux.HandleFunc("GET /reparse", srv.reparseStatus)
 	mux.HandleFunc("GET /sessions/{id}", srv.transcript)
 	mux.HandleFunc("GET /sessions/{id}/events", srv.events)
@@ -94,6 +95,7 @@ type feedDay struct {
 
 type feedRow struct {
 	store.FeedRow
+	Day         string // its day group's label, even when the group continues a page
 	Time        string
 	Prompt      string
 	Project     string
@@ -129,7 +131,15 @@ type feedView struct {
 	Days     []feedDay
 	More     string // "Load more" URL, "" on the last page
 	Events   string // where the first page hears of live Sessions; "" on later pages
-	Reload   string // the first page, which the "Sessions updated" pill reloads
+	Rows     string // where the first page fetches rows to place live
+}
+
+// liveAttrs are the feed's data-events and data-rows, on its first page only.
+func (v feedView) liveAttrs() templ.Attributes {
+	if v.Events == "" {
+		return nil
+	}
+	return templ.Attributes{"data-events": v.Events, "data-rows": v.Rows}
 }
 
 // noProject is the project param value for "No project".
@@ -259,9 +269,9 @@ func (s *server) feed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if f.Before == nil {
-		// Input that left no terms isn't worth keeping on reload.
-		v.Reload = p.withQ("").url()
-		v.Events = "/events" + strings.TrimPrefix(v.Reload, "/")
+		// Input that left no terms has no say in the live rows.
+		chips := strings.TrimPrefix(p.withQ("").url(), "/")
+		v.Events, v.Rows = "/events"+chips, "/feed/rows"+chips
 	}
 	if v.Chips, err = s.chips(r.Context(), p); err != nil {
 		s.internal(w, r, err)
@@ -276,6 +286,37 @@ func (s *server) feed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.render(w, r, http.StatusOK, feedPage(v))
+}
+
+// feedLiveRows serves the rows an open feed page places after a live parse
+// (hub.md §4.7): with ids=<id>,<id>,…, those Sessions' rows; without, the
+// first page's. Either way the query's chips and the feed's rules apply, in
+// one query.
+func (s *server) feedLiveRows(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	f := feedParamsFrom(q).filter()
+	limit := feedPageSize
+	if q.Has("ids") {
+		f.IDs = []int64{}
+		for _, v := range strings.Split(q.Get("ids"), ",") {
+			if v == "" {
+				continue
+			}
+			id, err := strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				http.Error(w, "bad ids", http.StatusBadRequest)
+				return
+			}
+			f.IDs = append(f.IDs, id)
+		}
+		limit = len(f.IDs)
+	}
+	rows, err := s.store.Feed(r.Context(), f, limit)
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	s.render(w, r, http.StatusOK, feedRows(feedView{Days: groupByDay(rows, s.now(), "")}))
 }
 
 // chips builds the Machine and Source rows and, with a Machine picked, its
@@ -417,7 +458,7 @@ func groupByDay(rows []store.FeedRow, now time.Time, continuesDay string) []feed
 			days = append(days, d)
 			cur = label
 		}
-		v := feedRow{FeedRow: row, Time: t.Format("15:04"), Prompt: oneLine(row.FirstPrompt)}
+		v := feedRow{FeedRow: row, Day: label, Time: t.Format("15:04"), Prompt: oneLine(row.FirstPrompt)}
 		v.Title = titleOr(row.Title, row.NativeID)
 		v.Project, v.ProjectFull = projectName(row.ProjectCwd)
 		d := &days[len(days)-1]

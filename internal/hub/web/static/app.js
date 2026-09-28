@@ -219,23 +219,88 @@
 })();
 
 // Live feed (hub.md §4.7): the first page of the feed hears which of its
-// Sessions were parsed from live data and shows "↑ N Sessions updated", N
-// counting each Session once. The rows stay put; the pill links to the first
-// page with the same chips.
+// Sessions were parsed from live data, fetches just their rows and moves
+// them to where they now sort, which is the top. Rows are never removed. The
+// rows on screen stay put when rows land above them. After the stream drops
+// and reopens, the first page's rows are fetched and merged the same way.
 (function () {
   "use strict";
-  var pill = document.querySelector(".pill-updated[data-events]");
-  if (!pill || !window.EventSource) return;
-  var seen = new Set();
-  var es = new EventSource(pill.dataset.events);
-  es.addEventListener("changed", function (e) {
-    e.data.split(",").forEach(function (id) { if (id) seen.add(id); });
-    pill.textContent = "↑ " + seen.size + (seen.size === 1 ? " Session" : " Sessions") + " updated";
-    pill.hidden = false;
+  var feed = document.querySelector(".feed[data-events]");
+  if (!feed || !window.EventSource || !window.fetch) return;
+  var es = new EventSource(feed.dataset.events);
+  var opened = false, queue = Promise.resolve();
+
+  es.addEventListener("open", function () {
+    if (opened) fetchRows(null);
+    opened = true;
   });
-  // Leaving the page closes the stream, so it doesn't count against the
-  // browser's connection limit while the next page loads.
-  pill.addEventListener("click", function () { es.close(); });
+  es.addEventListener("changed", function (e) { fetchRows(e.data); });
+
+  // fetchRows fetches the named Sessions' rows (null: the first page's) and
+  // merges them, one fetch at a time so merges land in order.
+  function fetchRows(ids) {
+    var url = new URL(feed.dataset.rows, location.href);
+    if (ids !== null) url.searchParams.set("ids", ids);
+    queue = queue.then(function () {
+      return fetch(url, { headers: { "HX-Request": "true" } }).then(function (r) {
+        if (!r.ok) throw new Error("status " + r.status);
+        return r.text();
+      }).then(merge);
+    }).catch(function (err) {
+      console.warn("live feed update failed:", err);
+    });
+  }
+
+  // after reports whether row a sorts after row b: older, the id breaking
+  // ties, as the feed orders them.
+  function after(a, b) {
+    var d = Number(a.dataset.at) - Number(b.dataset.at);
+    return d < 0 || (d === 0 && Number(a.dataset.id) < Number(b.dataset.id));
+  }
+
+  function merge(html) {
+    var tpl = document.createElement("template");
+    tpl.innerHTML = html;
+    var fresh = Array.prototype.slice.call(tpl.content.querySelectorAll(".row[data-id]"));
+    if (!fresh.length) return;
+    var more = feed.querySelector(".more");
+    var byId = new Map();
+    fresh.forEach(function (r) { byId.set(r.dataset.id, r); });
+    var kept = Array.prototype.filter.call(feed.querySelectorAll(".row[data-id]"), function (r) { return !byId.has(r.dataset.id); });
+    // A row sorting past the last one kept belongs to a page "Load more"
+    // hasn't fetched yet; it will come from there, so the page keeps its
+    // current copy, if any.
+    var last = kept[kept.length - 1];
+    fresh = fresh.filter(function (r) {
+      if (!(more && last && after(r, last))) return true;
+      var old = feed.querySelector('.row[data-id="' + CSS.escape(r.dataset.id) + '"]');
+      if (old) kept.push(old);
+      return false;
+    });
+
+    var anchor = null, top = 0;
+    if (feed.getBoundingClientRect().top < 0) {
+      anchor = kept.find(function (r) { return r.getBoundingClientRect().bottom > 0; });
+      if (anchor) top = anchor.getBoundingClientRect().top;
+    }
+
+    var rows = kept.concat(fresh).sort(function (a, b) { return after(a, b) ? 1 : after(b, a) ? -1 : 0; });
+    feed.querySelectorAll(":scope > .day, :scope > .row, :scope > .empty").forEach(function (e) { e.remove(); });
+    var frag = document.createDocumentFragment(), day = null;
+    rows.forEach(function (r) {
+      if (r.dataset.day !== day) {
+        day = r.dataset.day;
+        var h = document.createElement("div");
+        h.className = "day";
+        h.textContent = day;
+        frag.appendChild(h);
+      }
+      frag.appendChild(r);
+    });
+    feed.insertBefore(frag, more);
+
+    if (anchor) window.scrollBy(0, anchor.getBoundingClientRect().top - top);
+  }
 })();
 
 // Back to top: the "↑ Top" link shows once the Transcript header has scrolled

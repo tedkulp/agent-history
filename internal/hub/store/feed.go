@@ -45,6 +45,7 @@ type FeedFilter struct {
 	Project  *string // nil = any; "" = No project
 	Warnings bool    // only Sessions with Parse warnings or a failed parse
 	Before   *Cursor // only rows older than this one (later in feed order)
+	IDs      []int64 // non-nil: only these Sessions, for a live feed page
 }
 
 // hasWarnings selects Sessions with any Parse warning or a failed parse: the
@@ -69,6 +70,12 @@ func (s *Store) Feed(ctx context.Context, f FeedFilter, limit int) ([]FeedRow, e
 	if f.Before != nil {
 		where = append(where, `(coalesce(s.last_activity_at, 0), s.id) < (?, ?)`)
 		args = append(args, f.Before.At, f.Before.ID)
+	}
+	if f.IDs != nil {
+		// One parameter, however many ids.
+		ids, _ := json.Marshal(f.IDs)
+		where = append(where, `s.id IN (SELECT value FROM json_each(?))`)
+		args = append(args, string(ids))
 	}
 	rows, err := s.read.QueryContext(ctx, `
 		SELECT s.id, s.source, s.native_id, coalesce(s.title, ''), coalesce(s.first_prompt, ''),

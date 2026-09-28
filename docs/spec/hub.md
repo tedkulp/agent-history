@@ -590,13 +590,17 @@ The UI is **search-first**: a search box over a feed of recent Sessions from eve
   - A Session whose parse failed and that never parsed successfully has no title or first prompt. Its row shows the native id and a **"parse failed"** badge, and links to its Transcript page, which shows only the failure note. So a parser bug can't hide a Session.
 - Each row: last-activity time, title, `first_prompt` (one line, truncated), a Source badge, and Machine › Project. The row links to `/sessions/{id}`.
 - 50 rows per page. A "Load more" button fetches the next page with htmx (`before=<last_activity_at of the last row>&before_id=<its id>`; the id breaks ties so paging neither skips nor repeats rows).
-- **Live updates**: the first page (no `before`) opens an `EventSource` on `/events` with its chips, and a "↑ N Sessions updated" pill appears above the feed when Sessions it lists are parsed from live data. The rows never move until the pill is clicked; it links to the first page with the same chips. "Load more" pages and search results don't listen.
+- **Live updates**: the first page (no `before`) opens an `EventSource` on `/events` with its chips and keeps its rows current in place as Sessions it lists are parsed from live data. "Load more" pages and search results don't listen.
   - The stream sends `event: changed` with `data: <id>,<id>,…`, the Sessions since its last event, at most one event every **2 s**. Child Sessions, Sessions with no Messages, Sessions the chips hide and priority 1 re-parses send nothing. Heartbeat, flushing and shutdown work as on the Transcript page.
-  - N counts distinct Session ids from the events since the page loaded, so the same Session twice counts once.
-  - The stream reads nothing from the database, so an idle feed tab costs no queries; only clicking the pill refetches.
+  - On `changed`, the page fetches `/feed/rows?ids=<id>,<id>,…` with its chips: those Sessions' rows, rendered like feed rows, by the same rules (top-level, parsed with at least one Message or failed, matching the chips). Each row replaces its old copy, if any, including one "Load more" added, and takes its place in feed order, which puts it at the top. Rows sit under the right day heading; a missing heading is created and an emptied one removed. There is no highlight or other cue.
+  - Rows are only added or moved, never removed, even when a listed Session stops matching the chips. The next load corrects that.
+  - When rows land or leave above the viewport, the scroll position compensates, so the rows on screen stay put.
+  - "Load more" still pages from the last row it had: a moved row is newer than that cursor, so it never comes twice. A row that would sort past the last loaded row while "Load more" remains is left for "Load more" to bring.
+  - When the stream reopens after dropping (say, the Hub restarted), the page fetches `/feed/rows` with its chips and no ids, the first page's rows, and merges them the same way, so changes made during the gap aren't lost. No banner.
+  - The stream reads nothing from the database, so an idle feed tab costs no queries. Each `changed` event costs one query, for just the named rows.
 - **Banners** above the feed:
   - **Re-parse**: "Re-parsing N Sessions…" while priority 1 rows remain in `parse_queue`. N is the current count.
-    - A page rendered with this banner polls it with htmx every **3 s** and updates N. When no priority 1 rows remain, the answer is HTTP `286`, which stops the polling, and the banner becomes "Re-parse finished · reload", linking to the same URL, so the rows on screen never change without a click.
+    - A page rendered with this banner polls it with htmx every **3 s** and updates N. When no priority 1 rows remain, the answer is HTTP `286`, which stops the polling, and the banner becomes "Re-parse finished · reload", linking to the same URL, so re-parsed rows show on the next load.
     - A page rendered without the banner never polls, so an idle feed tab still makes no queries. A Re-parse that starts after the page loaded shows up on the next load.
   - **Drift**: one banner per `(source, source_version)` with warnings, e.g. "Codex 0.52: 14 Sessions have unrecognised data". It shows only when at least one Session active in the last **7 days** has warnings for that pair, so old noise fades. It links to `/?warnings=1&source=<source>`.
 
