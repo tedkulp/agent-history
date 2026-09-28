@@ -19,6 +19,7 @@ One version covers the Collector and the Hub together (see
 ### Changed
 
 - The sample `compose.yaml` pins the Hub image to `v0.1` instead of `latest`, so `docker compose pull` takes patch releases but not a new minor version.
+- Jumping within a Transcript (outline prompts, Tool call and Child Session links) no longer adds a browser history entry per click, so Back leaves the page. The address bar still shows the anchor.
 
 ## [0.1.0] - 2026-09-27
 

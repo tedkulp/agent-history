@@ -53,7 +53,7 @@ details.tool{border-left:2px solid var(--line);margin:2px 0 2px 10px;padding-lef
 details.tool>summary{cursor:pointer;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 details.tool>summary .dim{font:12px var(--mono);margin-left:6px}
 details.tool>summary a.child{margin-left:6px} details.tool>summary a.call{margin-left:6px;font-size:12px}
-details.tool:target>summary{background:var(--tool)}
+details.tool.is-target>summary{background:var(--tool)}
 details.tool .st{margin-left:6px} .st.ok{color:var(--add-ink)} .st.error{color:var(--bad)}
 details.tool>.body{display:grid;gap:4px;padding:4px 0}
 pre.in,pre.out{max-height:480px;margin:0}
@@ -109,8 +109,8 @@ mark{background:var(--mark);color:inherit;border-radius:2px;padding:0 1px}
 .facets a.on{color:var(--acc);font-weight:600}
 @media (max-width:760px){.results{grid-template-columns:minmax(0,1fr)}.facets{order:-1}}
 
-/* Arriving from search: the target Message flashes. */
-.msg:target{animation:flash 2s ease-out} @keyframes flash{from{background:var(--mark)}}
+/* The Message jumped to (from search or an in-page link) flashes. */
+.msg.is-target{animation:flash 2s ease-out} @keyframes flash{from{background:var(--mark)}}
 /* Live Transcript: the prompts heading waits for a prompt; the reload banner
    floats where the reader is. */
 .outline-prompts:has(.prompts:empty){display:none}

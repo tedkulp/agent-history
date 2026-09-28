@@ -624,7 +624,7 @@ The UI is **search-first**: a search box over a feed of recent Sessions from eve
   - If the Message at ordinal `count-1` still has id `after`, the fragment holds that Message re-rendered (it may have grown, or a tool call may have finished) plus every later one, their outline entries, and the header and Child Session list afresh. The page swaps Messages and outline entries in by id and appends new ones. Open `<details>` stay open, the scroll position stays put, and the page follows new Messages only when the reader was already at the bottom.
   - Otherwise (a rewind, a new branch or a compaction reshuffled earlier Messages) the endpoint answers `409`, and the page shows a "Transcript changed — reload" banner instead of patching.
   - An update costs one Message query from `count-1` on plus the header, well under a full page render.
-- **Arriving from search**: the target Message flashes briefly, and each `hl` term is wrapped in `<mark>` in the rendered text, case-insensitive. Highlighting touches text nodes only, never tags or attributes.
+- **Arriving from search**: the target Message flashes briefly (as does any Message jumped to by an in-page link), and each `hl` term is wrapped in `<mark>` in the rendered text, case-insensitive. Highlighting touches text nodes only, never tags or attributes.
 
 **Rejected:** drill-down pages (a page per level is slow for the most common action, "find that conversation"); a three-pane reader (tool calls always expanded bury the conversation, and three panes are cramped on narrow screens).
 

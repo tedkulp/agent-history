@@ -61,6 +61,61 @@
   target.scrollIntoView({ block: "center" });
 })();
 
+// In-page links: a same-page # link jumps without a history entry, so Back
+// leaves the page rather than stepping through every jump. The address bar
+// still shows the anchor. replaceState doesn't move :target, so the jumped-to
+// element carries .is-target instead (the live Transcript carries it onto
+// re-rendered copies). Modified clicks and links whose own handler already
+// acted (↑ Top) are left alone.
+(function () {
+  "use strict";
+
+  function byHash(hash) {
+    if (hash.length < 2) return null;
+    try { return document.getElementById(decodeURIComponent(hash.slice(1))); }
+    catch (err) { return null; }
+  }
+
+  // setTarget moves .is-target, restarting its flash when the same element is hit again.
+  function setTarget(el) {
+    document.querySelectorAll(".is-target").forEach(function (t) { t.classList.remove("is-target"); });
+    if (!el) return;
+    void el.offsetWidth;
+    el.classList.add("is-target");
+  }
+
+  function openAncestors(el) {
+    for (var d = el.parentElement && el.parentElement.closest("details"); d; d = d.parentElement && d.parentElement.closest("details")) d.open = true;
+  }
+
+  // On load the browser has scrolled already, unless the target sat in a
+  // collapsed row it didn't open.
+  var initial = byHash(location.hash);
+  if (initial) {
+    var hidden = !initial.getClientRects().length;
+    openAncestors(initial);
+    if (hidden) initial.scrollIntoView({ block: "center" });
+  }
+  setTarget(initial);
+  window.addEventListener("hashchange", function () { setTarget(byHash(location.hash)); });
+
+  document.addEventListener("click", function (e) {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    var a = e.target.closest('a[href^="#"]');
+    if (!a) return;
+    var hash = a.getAttribute("href"), el = byHash(hash);
+    if (!el) return;
+    e.preventDefault();
+    openAncestors(el);
+    el.scrollIntoView({ block: "center" });
+    // Tab continues from the target, as it would after a real jump.
+    if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "-1");
+    el.focus({ preventScroll: true });
+    history.replaceState(history.state, "", hash);
+    setTarget(el);
+  });
+})();
+
 // Live Transcript (hub.md §4.7): when the Session is parsed again from live data,
 // fetch the page's last Message and every later one, swap them in by id, and
 // refresh the header and outline. Open <details> stay open, the scroll
@@ -125,13 +180,19 @@
   }
 
   // swap replaces old with its re-rendered copy, keeping which <details> are
-  // open: a tool row by its id, any other by its place among the id-less ones.
+  // open (a tool row by its id, any other by its place among the id-less
+  // ones) and which element is the in-page target.
   function swap(old, fresh) {
     if (!old || !fresh) return;
     var open = {};
     keyed(old).forEach(function (e) { open[e.k] = e.d.open; });
     keyed(fresh).forEach(function (e) { if (e.k in open) e.d.open = open[e.k]; });
+    var t = old.classList.contains("is-target") ? old : old.querySelector(".is-target");
     old.replaceWith(fresh);
+    if (t && t.id) {
+      var n = fresh.id === t.id ? fresh : fresh.querySelector("#" + CSS.escape(t.id));
+      if (n) n.classList.add("is-target");
+    }
     htmx.process(fresh);
   }
 
