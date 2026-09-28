@@ -76,7 +76,7 @@ templ feedPage(v feedView) {
 	@layout("Agent History") {
 		@searchForm(v.Params)
 		if v.Reparse != "" {
-			<div class="banner reparse">⟳ { v.Reparse }</div>
+			@reparseBanner(v.Reparse)
 		}
 		for _, b := range v.Banners {
 			<a class="banner" href={ templ.SafeURL(b.Href) }>⚠ { b.Text }</a>
@@ -94,6 +94,18 @@ templ feedPage(v feedView) {
 			}
 		}
 		@feedRows(v)
+	}
+}
+
+// reparseBanner polls /reparse every 3 s while text is set. Once the
+// re-parse is done it offers a reload of this page instead, so the rows never
+// change without a click (hub.md §4.7).
+templ reparseBanner(text string) {
+	if text != "" {
+		<div class="banner reparse" hx-get="/reparse" hx-trigger="every 3s" hx-swap="outerHTML">⟳ { text }</div>
+	} else {
+		// An empty href reloads the current URL.
+		<a class="banner reparse" href="">✓ Re-parse finished · reload</a>
 	}
 }
 

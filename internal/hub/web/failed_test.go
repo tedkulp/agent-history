@@ -125,9 +125,19 @@ func TestFailedSessionsAndReparseBanner(t *testing.T) {
 	if _, home := get(t, srv.URL+"/"); !strings.Contains(home, "Re-parsing 2 Sessions…") {
 		t.Error("banner did not count down")
 	}
+	// An open page polls the banner, which keeps polling while jobs remain.
+	if code, frag := get(t, srv.URL+"/reparse"); code != http.StatusOK || !strings.Contains(frag, "Re-parsing 2 Sessions…") ||
+		!strings.Contains(frag, `hx-trigger="every 3s"`) {
+		t.Errorf("banner poll (%d):\n%s", code, frag)
+	}
 	runAll()
 	if _, home := get(t, srv.URL+"/"); strings.Contains(home, "Re-parsing") || strings.Contains(home, `class="badge failed"`) {
 		t.Errorf("home after re-parse:\n%s", home)
+	}
+	// Once done, the poll answers 286 to stop htmx polling and offers a reload.
+	if code, frag := get(t, srv.URL+"/reparse"); code != 286 || !strings.Contains(frag, "Re-parse finished") ||
+		strings.Contains(frag, "hx-trigger") {
+		t.Errorf("banner poll after re-parse (%d):\n%s", code, frag)
 	}
 }
 

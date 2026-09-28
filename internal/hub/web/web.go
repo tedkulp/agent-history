@@ -57,6 +57,7 @@ func New(s *store.Store, b *live.Broadcaster, log *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", srv.feed)
 	mux.HandleFunc("GET /events", srv.feedEvents)
+	mux.HandleFunc("GET /reparse", srv.reparseStatus)
 	mux.HandleFunc("GET /sessions/{id}", srv.transcript)
 	mux.HandleFunc("GET /sessions/{id}/events", srv.events)
 	mux.HandleFunc("GET /sessions/{id}/messages", srv.transcriptTail)
@@ -367,6 +368,22 @@ func (s *server) reparseBanner(ctx context.Context) (string, error) {
 		return "Re-parsing 1 Session…", nil
 	}
 	return "Re-parsing " + strconv.Itoa(n) + " Sessions…", nil
+}
+
+// reparseStatus answers the re-parse banner's poll with the banner at the
+// current count. Once no re-parse jobs remain it answers 286, which stops
+// htmx polling, with a "finished" banner in its place (hub.md §4.7).
+func (s *server) reparseStatus(w http.ResponseWriter, r *http.Request) {
+	text, err := s.reparseBanner(r.Context())
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	status := http.StatusOK
+	if text == "" {
+		status = 286
+	}
+	s.render(w, r, status, reparseBanner(text))
 }
 
 // toggle completes chip c for the value val of a param now set to cur. The

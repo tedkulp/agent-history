@@ -91,6 +91,7 @@ All on one listener, plain HTTP.
 |---|---|
 | `GET /` | Home: the feed, or search results when `q` is set. Query params: `q`, `machine`, `project` (`-` = "No project"), `source`, `warnings=1`, `before` and `before_id` (feed cursor), `offset` (search paging: hits are ranked, not dated). |
 | `GET /events` | `text/event-stream` for the feed's first page: a `changed` event naming the Sessions the feed lists (with the chips in the query: `machine`, `project`, `source`, `warnings`) that were parsed from live data since the last event (§4.7) |
+| `GET /reparse` | htmx fragment: the re-parse banner at the current count, polled by a feed page that shows it (§4.7). `286` with a "finished" banner once no re-parse jobs remain. |
 | `GET /sessions/{id}` | A Transcript page. Optional `hl=<terms>` highlights search terms. Messages carry anchors `#m-<message id>`. |
 | `GET /sessions/{id}/events` | `text/event-stream`: a `changed` event each time the Session is parsed again from live data (§4.7). `404` for a stub or unknown id. |
 | `GET /sessions/{id}/messages?after=<message id>&count=<n>` | htmx fragment: what an open Transcript page needs to catch up after a re-parse (§4.7), or `409` when earlier Messages moved |
@@ -595,6 +596,8 @@ The UI is **search-first**: a search box over a feed of recent Sessions from eve
   - The stream reads nothing from the database, so an idle feed tab costs no queries; only clicking the pill refetches.
 - **Banners** above the feed:
   - **Re-parse**: "Re-parsing N Sessions…" while priority 1 rows remain in `parse_queue`. N is the current count.
+    - A page rendered with this banner polls it with htmx every **3 s** and updates N. When no priority 1 rows remain, the answer is HTTP `286`, which stops the polling, and the banner becomes "Re-parse finished · reload", linking to the same URL, so the rows on screen never change without a click.
+    - A page rendered without the banner never polls, so an idle feed tab still makes no queries. A Re-parse that starts after the page loaded shows up on the next load.
   - **Drift**: one banner per `(source, source_version)` with warnings, e.g. "Codex 0.52: 14 Sessions have unrecognised data". It shows only when at least one Session active in the last **7 days** has warnings for that pair, so old noise fades. It links to `/?warnings=1&source=<source>`.
 
 #### Search results (`/?q=…`)
