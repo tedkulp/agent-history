@@ -32,3 +32,45 @@ jobs:
         with:
           version: "~> v2"
           args: release --snapshot --clean
+
+  # Every push to main publishes the Hub image as :dev. The binary keeps
+  # protocol.DevVersion (no version ldflags), so a dev Hub skips the
+  # Collector floor check and accepts any Collector.
+  dev-image:
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go generate ./...
+      # Same layout GoReleaser's dockers_v2 gives the Dockerfile:
+      # $TARGETPLATFORM/agent-history-hub in the build context.
+      - run: |
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -ldflags "-s -w" \
+              -o "$RUNNER_TEMP/image/linux/$arch/agent-history-hub" ./cmd/hub
+          done
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: ${{ runner.temp }}/image
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/tedkulp/agent-history-hub:dev
+          labels: |
+            org.opencontainers.image.source=https://github.com/tedkulp/agent-history
+            org.opencontainers.image.version=dev
+            org.opencontainers.image.revision=${{ github.sha }}

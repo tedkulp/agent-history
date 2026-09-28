@@ -31,6 +31,13 @@ rc sections into the final release's section when you cut it.
 A `vX.Y.Z-rc.N` tag publishes a prerelease and only the `vX.Y.Z-rc.N` image
 tag; `vX.Y` and `latest` stay where they are.
 
+## Dev image
+
+Every push to `main` that passes CI publishes
+`ghcr.io/tedkulp/agent-history-hub:dev` (the `dev-image` job in
+`.github/workflows/ci.yml`). It carries no version, so it skips the
+Collector floor check. Nothing else is published.
+
 ## Check before tagging
 
 - `just snapshot` builds the four archives and both image architectures into
