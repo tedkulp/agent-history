@@ -297,17 +297,10 @@ func (s *server) feedLiveRows(w http.ResponseWriter, r *http.Request) {
 	f := feedParamsFrom(q).filter()
 	limit := feedPageSize
 	if q.Has("ids") {
-		f.IDs = []int64{}
-		for _, v := range strings.Split(q.Get("ids"), ",") {
-			if v == "" {
-				continue
-			}
-			id, err := strconv.ParseInt(v, 10, 64)
-			if err != nil {
-				http.Error(w, "bad ids", http.StatusBadRequest)
-				return
-			}
-			f.IDs = append(f.IDs, id)
+		var err error
+		if f.IDs, err = parseIDs(q.Get("ids")); err != nil {
+			http.Error(w, "bad ids", http.StatusBadRequest)
+			return
 		}
 		limit = len(f.IDs)
 	}
@@ -317,6 +310,23 @@ func (s *server) feedLiveRows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.render(w, r, http.StatusOK, feedRows(feedView{Days: groupByDay(rows, s.now(), "")}))
+}
+
+// parseIDs reads a comma-separated list of Session ids, as a feed event
+// names them. It is never nil, so an empty list matches no Session.
+func parseIDs(list string) ([]int64, error) {
+	ids := []int64{}
+	for _, v := range strings.Split(list, ",") {
+		if v == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 // chips builds the Machine and Source rows and, with a Machine picked, its
