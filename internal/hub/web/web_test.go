@@ -404,7 +404,7 @@ func TestTranscriptToolCallsAndImages(t *testing.T) {
 		// A call without a description shows its most telling field; one with
 		// a description shows that, its command on a line beneath (#60).
 		`<summary><b>Read</b> <span class="dim">/big</span> <span class="st ok">✓</span></summary>`,
-		`<summary><b>Bash</b> <span class="dim">Run the tests</span> <span class="st ok">✓</span> <code class="cmd">go test ./...</code></summary>`,
+		`<summary><b>Bash</b> <span class="dim">Run the tests</span> <span class="st ok">✓</span> <code class="target">go test ./...</code></summary>`,
 		"&lt;b&gt;bold?&lt;/b&gt;", // output is text, not HTML
 		`<div class="diff-file">/src/app/main.go</div>`,
 		`<span class="del">- old line</span>`, `<span class="add">+ new line</span>`, `<span class="">  keep</span>`,

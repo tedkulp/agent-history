@@ -64,7 +64,7 @@ type toolView struct {
 	ID         string // the Part id, as the row's anchor
 	Name       string
 	Summary    string // one line of input
-	Command    string // a second line under a description; "" when none
+	Target     string // what a described call acts on, under Summary; "" when none
 	Status     string
 	Input      string // pretty-printed JSON
 	Diff       *diffView
@@ -208,7 +208,7 @@ func newMarkerView(partID string, mp parser.MarkerPayload) *markerView {
 
 func newToolView(sessionID int64, partID string, tc parser.ToolCallPayload) toolView {
 	v := toolView{ID: partID, Name: tc.Name, Status: tc.Status, Input: prettyJSON(tc.Input)}
-	v.Summary, v.Command = inputSummary(tc.Input)
+	v.Summary, v.Target = inputSummary(tc.Input)
 	for _, n := range tc.Notifications {
 		v.NoteHrefs = append(v.NoteHrefs, "#p-"+n)
 	}
@@ -258,14 +258,14 @@ func clusterLabel(tools []toolView) string {
 // summaryKeys are input fields that make a good one-line summary of a call.
 var summaryKeys = []string{"command", "file_path", "path", "pattern", "url", "query", "description", "prompt"}
 
-// secondKeys are the fields shown under a call's description.
-var secondKeys = []string{"command", "file_path", "path", "pattern", "url", "query"}
+// targetKeys are input fields naming what a call acts on.
+var targetKeys = []string{"command", "file_path", "path", "pattern", "url", "query"}
 
 // inputSummary is one line describing a call's input: its most telling
 // string field, else its compact JSON, cut to 100 characters. When the input
-// has a description, that leads and the field it would otherwise have shown
-// comes back as second, the same way cut; second is "" when there is none.
-func inputSummary(in json.RawMessage) (summary, second string) {
+// has a description, summary is that and target is its first targetKeys
+// field, each cut on its own.
+func inputSummary(in json.RawMessage) (summary, target string) {
 	var obj map[string]any
 	if json.Unmarshal(in, &obj) == nil {
 		first := func(keys ...string) string {
@@ -277,7 +277,7 @@ func inputSummary(in json.RawMessage) (summary, second string) {
 			return ""
 		}
 		if d := first("description"); d != "" {
-			return d, first(secondKeys...)
+			return d, first(targetKeys...)
 		}
 		if s := first(summaryKeys...); s != "" {
 			return s, ""

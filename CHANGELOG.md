@@ -11,7 +11,7 @@ One version covers the Collector and the Hub together (see
 
 ### Added
 
-- A Tool call with a description (Claude Code, opencode) shows the description on its row, with the command or path it ran in monospace beneath it.
+- A Tool call with a description (Claude Code, opencode) shows the description on its row, with what it acts on (its command, file, pattern or URL) in monospace beneath it.
 
 ## [0.3.0] - 2026-09-28
 

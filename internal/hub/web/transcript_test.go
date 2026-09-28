@@ -5,11 +5,11 @@ import (
 	"testing"
 )
 
-// A call's description, when it has one, leads its row; the field that would
-// otherwise summarise it goes on a second line (#60).
+// A call's description, when it has one, leads its row; what it acts on goes on
+// a second line (#60).
 func TestInputSummary(t *testing.T) {
 	long := func(c string) string { return strings.Repeat(c, 120) }
-	for _, c := range []struct{ in, summary, second string }{
+	for _, c := range []struct{ in, summary, target string }{
 		{`{"command":"go test ./...","description":"Run the tests"}`, "Run the tests", "go test ./..."},
 		{`{"file_path":"a.go"}`, "a.go", ""},
 		{`{"description":"Explore the code","prompt":"Look around"}`, "Explore the code", ""},
@@ -20,9 +20,9 @@ func TestInputSummary(t *testing.T) {
 		{`{"x":1}`, `{"x":1}`, ""},
 		{`{}`, "", ""},
 	} {
-		summary, second := inputSummary([]byte(c.in))
-		if summary != c.summary || second != c.second {
-			t.Errorf("inputSummary(%s) = %q, %q; want %q, %q", c.in, summary, second, c.summary, c.second)
+		summary, target := inputSummary([]byte(c.in))
+		if summary != c.summary || target != c.target {
+			t.Errorf("inputSummary(%s) = %q, %q; want %q, %q", c.in, summary, target, c.summary, c.target)
 		}
 	}
 }
