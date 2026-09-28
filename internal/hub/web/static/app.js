@@ -176,3 +176,35 @@
   // browser's connection limit while the next page loads.
   pill.addEventListener("click", function () { es.close(); });
 })();
+
+// Back to top: the "↑ Top" link shows once the Transcript header has scrolled
+// out of view. It scrolls up without a history entry and focuses the heading.
+(function () {
+  "use strict";
+  var link = document.querySelector(".to-top");
+  var main = document.querySelector(".tr-main");
+  if (!link || !main) return;
+  var queued = false;
+
+  // The live Transcript swaps the header in place, so look it up each time.
+  function showOrHide() {
+    queued = false;
+    var head = main.querySelector(".head");
+    link.hidden = !head || head.getBoundingClientRect().bottom > 0;
+  }
+  function schedule() {
+    if (!queued) { queued = true; requestAnimationFrame(showOrHide); }
+  }
+  window.addEventListener("scroll", schedule, { passive: true });
+  window.addEventListener("resize", schedule);
+  showOrHide();
+
+  link.addEventListener("click", function (e) {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    var reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    window.scrollTo({ top: 0, behavior: reduceMotion ? "auto" : "smooth" });
+    var h = document.getElementById("top");
+    if (h) h.focus({ preventScroll: true });
+  });
+})();

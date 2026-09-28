@@ -13,6 +13,7 @@ One version covers the Collector and the Hub together (see
 
 - Codex support: the Collector ships Codex history from `~/.codex` (or `CODEX_HOME`, written by re-running `agent-history init`), and the Hub shows it as Transcripts with Child Sessions.
 - A forked Session shows "forked from …" in its Transcript header, linking to the Session it came from.
+- A Transcript shows a "↑ Top" link once you scroll past its header; it returns to the top and focuses the heading without adding a browser history entry.
 - Background task and sub-agent notifications (`<task-notification>`) show in the Transcript as a compact marker with status, summary and usage, linked to the tool call that started the task, instead of raw text in a user bubble. Existing Sessions pick this up when they re-parse.
 
 ### Changed

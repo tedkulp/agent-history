@@ -119,3 +119,13 @@ mark{background:var(--mark);color:inherit;border-radius:2px;padding:0 1px}
 /* Live feed: the "Sessions updated" pill above the rows. */
 .pill-updated{position:sticky;top:8px;z-index:5;display:block;width:max-content;margin:0 auto 8px;padding:4px 14px;border-radius:999px;background:var(--panel);border:1px solid var(--acc);color:var(--acc);font-size:13px;box-shadow:0 2px 8px #0002}
 .pill-updated[hidden]{display:none}
+
+/* Transcript: "↑ Top" floats in the right gutter once the header scrolls away.
+   Below 1200px (.wrap's 1100px, the 52px link each side, a scrollbar)
+   the margin can't hold it, so user Messages keep clear of it. */
+.to-top{position:fixed;right:8px;bottom:16px;z-index:10;display:flex;flex-direction:column;align-items:center;justify-content:center;width:44px;height:44px;border-radius:12px;background:var(--panel);border:1px solid var(--line);color:var(--acc);font-size:11px;line-height:1.1;box-shadow:0 2px 8px #0002}
+.to-top span{font-size:16px}
+.to-top:hover{border-color:var(--acc);text-decoration:none}
+.to-top:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.to-top[hidden]{display:none}
+@media (max-width:1200px){.tr .msg.user{padding-right:40px}}

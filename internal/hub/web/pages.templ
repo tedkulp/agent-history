@@ -207,6 +207,8 @@ templ transcriptPage(st liveState, v transcriptView) {
 				</div>
 			</div>
 		</div>
+		// app.js shows this once the reader scrolls past the header.
+		<a class="to-top" href="#top" hidden><span aria-hidden="true">↑</span> Top</a>
 	}
 }
 
@@ -247,7 +249,7 @@ templ childSessions(children []childEntry) {
 
 templ transcriptHead(h headerView) {
 	<div class="head">
-		<h1>{ h.Title }</h1>
+		<h1 id="top" tabindex="-1">{ h.Title }</h1>
 		<div class="m">
 			@sourceBadge(h.Source)
 			<a href={ templ.SafeURL(h.MachineHref) }>{ h.Machine }</a>

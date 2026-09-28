@@ -518,6 +518,8 @@ func TestTranscriptMarkersWarningsAndOutline(t *testing.T) {
 		`<div class="marker slash_command">/review 42</div>`,
 		`⚠ unknown <code>brand_new</code>`, "&lt;i&gt;x&lt;/i&gt;",
 		"📎 spec.pdf",
+		// Back to top: app.js reveals the link once scrolled and focuses the heading.
+		`<h1 id="top" tabindex="-1">`, `<a class="to-top" href="#top" hidden>`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("transcript lacks %q", want)
