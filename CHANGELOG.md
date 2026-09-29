@@ -9,6 +9,8 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-29
+
 ### Added
 
 - A Tool call with a description (Claude Code, opencode) shows the description on its row, with what it acts on (its command, file, pattern or URL) in monospace beneath it.
@@ -82,7 +84,8 @@ One version covers the Collector and the Hub together (see
 - Release pipeline: CI, GoReleaser archives for the Collector and a
   multi-arch Hub image, published from a version tag.
 
-[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/tedkulp/agent-history/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/tedkulp/agent-history/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/tedkulp/agent-history/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/tedkulp/agent-history/releases/tag/v0.1.0
