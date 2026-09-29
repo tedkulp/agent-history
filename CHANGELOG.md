@@ -13,6 +13,10 @@ One version covers the Collector and the Hub together (see
 
 - A Tool call with a description (Claude Code, opencode) shows the description on its row, with what it acts on (its command, file, pattern or URL) in monospace beneath it.
 
+### Fixed
+
+- Claude Code's Remote Control status line ("/remote-control is active") no longer raises an unknown-type Parse warning.
+
 ## [0.3.0] - 2026-09-28
 
 ### Added
