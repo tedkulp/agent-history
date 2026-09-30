@@ -9,6 +9,8 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-30
+
 ### Fixed
 
 - Claude Code's `continued-in` line (a Session carrying on in another one) no longer raises an unknown-type Parse warning or shows an unknown Part.
@@ -96,7 +98,8 @@ One version covers the Collector and the Hub together (see
 - Release pipeline: CI, GoReleaser archives for the Collector and a
   multi-arch Hub image, published from a version tag.
 
-[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/tedkulp/agent-history/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/tedkulp/agent-history/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/tedkulp/agent-history/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/tedkulp/agent-history/compare/v0.2.0...v0.3.0
