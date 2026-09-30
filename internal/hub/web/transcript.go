@@ -208,7 +208,7 @@ func newMarkerView(partID string, mp parser.MarkerPayload) *markerView {
 
 func newToolView(sessionID int64, partID string, tc parser.ToolCallPayload) toolView {
 	v := toolView{ID: partID, Name: tc.Name, Status: tc.Status, Input: prettyJSON(tc.Input)}
-	v.Summary, v.Target = inputSummary(tc.Input)
+	v.Summary, v.Target = inputSummary(tc.Description, tc.Input)
 	for _, n := range tc.Notifications {
 		v.NoteHrefs = append(v.NoteHrefs, "#p-"+n)
 	}
@@ -261,27 +261,30 @@ var summaryKeys = []string{"command", "file_path", "path", "pattern", "url", "qu
 // targetKeys are input fields naming what a call acts on.
 var targetKeys = []string{"command", "file_path", "path", "pattern", "url", "query"}
 
-// inputSummary is one line describing a call's input: its most telling
-// string field, else its compact JSON, cut to 100 characters. When the input
-// has a description, summary is that and target is its first targetKeys
-// field, each cut on its own.
-func inputSummary(in json.RawMessage) (summary, target string) {
+// inputSummary is one line describing a call: its description (the payload's,
+// else its input's) with its input's first targetKeys field as target, else
+// the input's most telling string field, else its compact JSON. Each is cut
+// to 100 characters.
+func inputSummary(desc string, in json.RawMessage) (summary, target string) {
 	var obj map[string]any
-	if json.Unmarshal(in, &obj) == nil {
-		first := func(keys ...string) string {
-			for _, k := range keys {
-				if v, ok := obj[k].(string); ok && v != "" {
-					return cut(oneLine(v), 100)
-				}
+	_ = json.Unmarshal(in, &obj) // not an object: obj stays nil
+	first := func(keys ...string) string {
+		for _, k := range keys {
+			if v, ok := obj[k].(string); ok && v != "" {
+				return v
 			}
-			return ""
 		}
-		if d := first("description"); d != "" {
-			return d, first(targetKeys...)
-		}
-		if s := first(summaryKeys...); s != "" {
-			return s, ""
-		}
+		return ""
+	}
+	line := func(s string) string { return cut(oneLine(s), 100) }
+	if desc == "" {
+		desc = first("description")
+	}
+	if desc != "" {
+		return line(desc), line(first(targetKeys...))
+	}
+	if s := first(summaryKeys...); s != "" {
+		return line(s), ""
 	}
 	var buf bytes.Buffer
 	if json.Compact(&buf, in) != nil {

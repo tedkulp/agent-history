@@ -189,8 +189,11 @@ func NewUnknown(sourceType string, raw []byte) UnknownPayload {
 // the full output (nil while pending); the Hub sets OutputSize and
 // OutputPreview, and moves large output to tool_outputs (hub.md §3.5).
 type ToolCallPayload struct {
-	CallID        string          `json:"call_id"`
-	Name          string          `json:"name"`
+	CallID string `json:"call_id"`
+	Name   string `json:"name"`
+	// Description is a short human statement of what the call is for, where
+	// the Source records one apart from the input.
+	Description   string          `json:"description,omitempty"`
 	Input         json.RawMessage `json:"input"`
 	Status        string          `json:"status"`
 	Output        *string         `json:"output"`

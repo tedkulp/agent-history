@@ -20,7 +20,7 @@ import (
 
 // version is the parser_version. Bump it whenever output changes for
 // existing data (hub.md §4.5).
-const version = 2
+const version = 3
 
 const (
 	layout     = "jsonl"
@@ -133,6 +133,7 @@ type block struct {
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
+	Intent    string          `json:"intent"`
 	Data      string          `json:"data"`
 	MimeType  string          `json:"mimeType"`
 
@@ -482,6 +483,7 @@ func (b *builder) toolCall(m *parser.Message, bl block) {
 	tc := parser.ToolCallPayload{
 		CallID:        bl.ID,
 		Name:          bl.Name,
+		Description:   bl.Intent,
 		Input:         input,
 		Status:        parser.StatusPending,
 		ChildSessions: []string{},

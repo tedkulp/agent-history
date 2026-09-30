@@ -26,6 +26,8 @@ const ompMain = `{"type":"session","version":3,"id":"01a0b085-1516-7000-9081-e59
 {"type":"message","id":"a0000001","parentId":null,"timestamp":"2026-09-17T17:58:40.000Z","message":{"role":"user","content":"Research the switch"}}
 {"type":"message","id":"a0000002","parentId":"a0000001","timestamp":"2026-09-17T17:58:50.000Z","message":{"role":"assistant","model":"gpt-5.6-sol","provider":"openai-codex","content":[{"type":"toolCall","id":"call_task|fc_1","name":"task","arguments":{"tasks":[{"name":"Alpha"},{"name":"Beta"}]}}]}}
 {"type":"message","id":"a0000003","parentId":"a0000002","timestamp":"2026-09-17T17:58:51.000Z","message":{"role":"toolResult","toolCallId":"call_task|fc_1","toolName":"task","content":[{"type":"text","text":"Spawned 2 background agents"}],"details":{"results":[],"progress":[{"id":"Alpha"},{"id":"Beta"}]},"isError":false}}
+{"type":"message","id":"a0000004","parentId":"a0000003","timestamp":"2026-09-17T17:59:00.000Z","message":{"role":"assistant","model":"gpt-5.6-sol","provider":"openai-codex","content":[{"type":"toolCall","id":"call_bash|fc_2","name":"bash","arguments":{"i":"Running the tests","command":"go test ./..."},"intent":"Running the tests"}]}}
+{"type":"message","id":"a0000005","parentId":"a0000004","timestamp":"2026-09-17T17:59:01.000Z","message":{"role":"toolResult","toolCallId":"call_bash|fc_2","toolName":"bash","content":[{"type":"text","text":"ok"}],"isError":false}}
 `
 
 func ompChild(task string) string {
@@ -75,6 +77,10 @@ func TestOhMyPiSessions(t *testing.T) {
 	row := strings.Split(feed, `<a class="row" href="`)[1]
 	parentURL, _, _ := strings.Cut(row, `"`)
 	_, parent := get(t, srv.URL+parentURL)
+	// A call's intent leads its row, its command beneath it (#61).
+	if want := `<summary><b>bash</b> <span class="dim">Running the tests</span> <span class="st ok">✓</span> <code class="target">go test ./...</code></summary>`; !strings.Contains(parent, want) {
+		t.Errorf("parent lacks %q", want)
+	}
 	for _, name := range []string{"Alpha", "Beta"} {
 		c := regexp.MustCompile(`<a href="(/sessions/\d+)">↳ explore: ` + name + `</a>`).FindStringSubmatch(parent)
 		if c == nil {

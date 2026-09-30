@@ -2,6 +2,7 @@ package ohmypi
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -191,6 +192,23 @@ func TestParseSession(t *testing.T) {
 	}
 	if eval := call(t, res, "eval"); *eval.Output != "ZeroDivisionError" || eval.ChildSessions == nil || len(eval.ChildSessions) != 0 {
 		t.Errorf("eval call %+v", eval)
+	}
+	// A call's intent is its description, with or without an "i" copy in its
+	// arguments; a call without one stores no description.
+	if d := read.Description; d != "Reading the spec" {
+		t.Errorf("read description %q", d)
+	}
+	if d := call(t, res, "eval").Description; d != "Checking the error" {
+		t.Errorf("eval description %q", d)
+	}
+	for _, m := range res.Messages {
+		for _, p := range m.Parts {
+			if tc, ok := p.Payload.(parser.ToolCallPayload); ok && tc.CallID == "call_shot|fc_4" {
+				if b, _ := json.Marshal(tc); strings.Contains(string(b), `"description"`) {
+					t.Errorf("shot payload %s", b)
+				}
+			}
+		}
 	}
 	if len(res.Images) != 1 || res.Images[0].MIME != "image/png" || len(res.Images[0].Bytes) == 0 {
 		t.Errorf("images %+v", res.Images)

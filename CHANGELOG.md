@@ -9,6 +9,10 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+### Added
+
+- An oh-my-pi Tool call shows its intent on its row ("Reading the spec"), with what it acts on beneath it, like a described Claude Code or opencode call.
+
 ### Fixed
 
 - Claude Code's scheduled-task line ("Claude resuming /loop wakeup") no longer raises an unknown-type Parse warning.
