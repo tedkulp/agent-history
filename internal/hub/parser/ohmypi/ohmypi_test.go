@@ -116,11 +116,12 @@ func ms(s string) int64 {
 	return t.UnixMilli()
 }
 
+// call is the first tool call with the given name or call id.
 func call(t *testing.T, res parser.Result, name string) parser.ToolCallPayload {
 	t.Helper()
 	for _, m := range res.Messages {
 		for _, p := range m.Parts {
-			if tc, ok := p.Payload.(parser.ToolCallPayload); ok && tc.Name == name {
+			if tc, ok := p.Payload.(parser.ToolCallPayload); ok && (tc.Name == name || tc.CallID == name) {
 				return tc
 			}
 		}
@@ -201,14 +202,8 @@ func TestParseSession(t *testing.T) {
 	if d := call(t, res, "eval").Description; d != "Checking the error" {
 		t.Errorf("eval description %q", d)
 	}
-	for _, m := range res.Messages {
-		for _, p := range m.Parts {
-			if tc, ok := p.Payload.(parser.ToolCallPayload); ok && tc.CallID == "call_shot|fc_4" {
-				if b, _ := json.Marshal(tc); strings.Contains(string(b), `"description"`) {
-					t.Errorf("shot payload %s", b)
-				}
-			}
-		}
+	if b, _ := json.Marshal(call(t, res, "call_shot|fc_4")); strings.Contains(string(b), `"description"`) {
+		t.Errorf("shot payload %s", b)
 	}
 	if len(res.Images) != 1 || res.Images[0].MIME != "image/png" || len(res.Images[0].Bytes) == 0 {
 		t.Errorf("images %+v", res.Images)

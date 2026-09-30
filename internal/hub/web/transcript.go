@@ -208,7 +208,7 @@ func newMarkerView(partID string, mp parser.MarkerPayload) *markerView {
 
 func newToolView(sessionID int64, partID string, tc parser.ToolCallPayload) toolView {
 	v := toolView{ID: partID, Name: tc.Name, Status: tc.Status, Input: prettyJSON(tc.Input)}
-	v.Summary, v.Target = inputSummary(tc.Description, tc.Input)
+	v.Summary, v.Target = callSummary(tc.Description, tc.Input)
 	for _, n := range tc.Notifications {
 		v.NoteHrefs = append(v.NoteHrefs, "#p-"+n)
 	}
@@ -261,30 +261,30 @@ var summaryKeys = []string{"command", "file_path", "path", "pattern", "url", "qu
 // targetKeys are input fields naming what a call acts on.
 var targetKeys = []string{"command", "file_path", "path", "pattern", "url", "query"}
 
-// inputSummary is one line describing a call: its description (the payload's,
+// callSummary is one line describing a call: its description (the payload's,
 // else its input's) with its input's first targetKeys field as target, else
 // the input's most telling string field, else its compact JSON. Each is cut
 // to 100 characters.
-func inputSummary(desc string, in json.RawMessage) (summary, target string) {
+func callSummary(desc string, in json.RawMessage) (summary, target string) {
 	var obj map[string]any
 	_ = json.Unmarshal(in, &obj) // not an object: obj stays nil
+	clip := func(s string) string { return cut(oneLine(s), 100) }
 	first := func(keys ...string) string {
 		for _, k := range keys {
-			if v, ok := obj[k].(string); ok && v != "" {
-				return v
+			if v, ok := obj[k].(string); ok && clip(v) != "" {
+				return clip(v)
 			}
 		}
 		return ""
 	}
-	line := func(s string) string { return cut(oneLine(s), 100) }
-	if desc == "" {
-		desc = first("description")
+	if d := clip(desc); d != "" {
+		return d, first(targetKeys...)
 	}
-	if desc != "" {
-		return line(desc), line(first(targetKeys...))
+	if d := first("description"); d != "" {
+		return d, first(targetKeys...)
 	}
 	if s := first(summaryKeys...); s != "" {
-		return line(s), ""
+		return s, ""
 	}
 	var buf bytes.Buffer
 	if json.Compact(&buf, in) != nil {

@@ -186,13 +186,12 @@ func NewUnknown(sourceType string, raw []byte) UnknownPayload {
 }
 
 // ToolCallPayload is the payload of a tool_call Part. Parsers set Output to
-// the full output (nil while pending); the Hub sets OutputSize and
-// OutputPreview, and moves large output to tool_outputs (hub.md §3.5).
+// the full output (nil while pending), and Description where the Source
+// records what the call is for apart from its input; the Hub sets OutputSize
+// and OutputPreview, and moves large output to tool_outputs (hub.md §3.5).
 type ToolCallPayload struct {
-	CallID string `json:"call_id"`
-	Name   string `json:"name"`
-	// Description is a short human statement of what the call is for, where
-	// the Source records one apart from the input.
+	CallID        string          `json:"call_id"`
+	Name          string          `json:"name"`
 	Description   string          `json:"description,omitempty"`
 	Input         json.RawMessage `json:"input"`
 	Status        string          `json:"status"`

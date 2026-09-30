@@ -223,7 +223,7 @@ Source: [Normalized Transcript model](https://github.com/tedkulp/agent-history/i
 - **Full rewrites** (compaction, pruning, image dropping) replace the whole file atomically. They also ship as a `replace`, and the old content is kept.
 - **`omp gc`** gzips old Sessions into `archive/sessions/` and moves their artifacts directories alongside. Keys don't change, so nothing is shipped. omp never deletes Session files on its own.
 - **Directory-name churn.** omp 17.2.5–17.2.8 used hashed `<cwd-dir>` names, and later versions migrate them back. A migrated Session file gets a new key and is shipped again as a new record with the same native id, attaching to the same Session. Both records are `main` in the same Layout; the Hub parses the one attached most recently. Accepted for v1.
-- **`parser_version`** starts at `1`. `3` added the tool call `description`.
+- **`parser_version`** starts at `1`. `2` titled Sessions by their first slash command; `3` added the tool call `description`.
 
 Source: [oh-my-pi on-disk history format](https://github.com/tedkulp/agent-history/issues/4), [Collector → Hub ingestion protocol](https://github.com/tedkulp/agent-history/issues/10)
 

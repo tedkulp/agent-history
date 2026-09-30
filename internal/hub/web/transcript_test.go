@@ -14,6 +14,9 @@ func TestInputSummary(t *testing.T) {
 		{"", `{"file_path":"a.go"}`, "a.go", ""},
 		{"", `{"description":"Explore the code","prompt":"Look around"}`, "Explore the code", ""},
 		{"", `{"description":"","command":"ls"}`, "ls", ""},
+		{"", `{"description":" ","command":"ls"}`, "ls", ""},
+		{"", `{"description":"List","command":"\n","path":"/src"}`, "List", "/src"},
+		{" ", `{"command":"ls"}`, "ls", ""},
 		{"", `{"description":"List\nfiles","path":"/src"}`, "List files", "/src"},
 		{"", `{"description":"` + long("d") + `","command":"` + long("c") + `"}`, long("d")[:100] + "…", long("c")[:100] + "…"},
 		{"", `{"prompt":"Look around"}`, "Look around", ""},
@@ -24,9 +27,9 @@ func TestInputSummary(t *testing.T) {
 		{"Checking\nthe error", `{"code":"1/0"}`, "Checking the error", ""},
 		{"Looking", `null`, "Looking", ""},
 	} {
-		summary, target := inputSummary(c.desc, []byte(c.in))
+		summary, target := callSummary(c.desc, []byte(c.in))
 		if summary != c.summary || target != c.target {
-			t.Errorf("inputSummary(%q, %s) = %q, %q; want %q, %q", c.desc, c.in, summary, target, c.summary, c.target)
+			t.Errorf("callSummary(%q, %s) = %q, %q; want %q, %q", c.desc, c.in, summary, target, c.summary, c.target)
 		}
 	}
 }
