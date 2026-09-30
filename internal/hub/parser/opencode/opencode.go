@@ -80,7 +80,7 @@ func isFile(s, prefix string) bool {
 type sessionInfo struct {
 	title, version, dir, parent string
 	created, updated            int64
-	hasDir                      bool
+	noRecord                    bool   // no readable session record, already warned
 	revert                      string // revert.messageID
 	raw                         []byte
 }
@@ -166,18 +166,11 @@ func (*Parser) Parse(in parser.Input) (parser.Result, error) {
 		s, msgs, prts = loadLegacy(in, &warn)
 	}
 
-	// Parts attach to their Message; both are in id order (opencode.md §3.2).
+	// Messages and parts are in id order (opencode.md §3.2).
 	slices.SortFunc(msgs, func(a, b *message) int { return strings.Compare(a.id, b.id) })
 
-	if !s.hasDir {
-		// The oldest sessions have no directory; their assistant Messages
-		// carry it as path.cwd (opencode.md §3.7).
-		for _, m := range msgs {
-			if p := m.data.Path; p != nil && p.Cwd != "" {
-				s.dir, s.hasDir = p.Cwd, true
-				break
-			}
-		}
+	if s.dir == "" {
+		s.dir = cwdFromMessages(msgs)
 	}
 	res.Session = parser.Session{
 		Title:          s.title,
@@ -187,10 +180,11 @@ func (*Parser) Parse(in parser.Input) (parser.Result, error) {
 		SourceVersion:  s.version,
 		ParentNativeID: s.parent,
 	}
-	if !s.hasDir {
+	if s.dir == "" && !s.noRecord {
 		warn.Add(parser.WarnMissingField, "directory", string(s.raw))
 	}
 
+	// Parts attach to their Message.
 	byID := map[string]*message{}
 	for _, m := range msgs {
 		byID[m.id] = m
@@ -253,7 +247,7 @@ func loadExport(b []byte, warn *parser.Warnings) (sessionInfo, []*message, []*pa
 			}
 			s = sessionInfo{title: r.Title, version: r.Version, created: r.TimeCreated, updated: r.TimeUpdated, raw: raw}
 			if r.Directory != nil && *r.Directory != "" {
-				s.dir, s.hasDir = *r.Directory, true
+				s.dir = *r.Directory
 			}
 			if r.ParentID != nil {
 				s.parent = *r.ParentID
@@ -283,7 +277,7 @@ func loadExport(b []byte, warn *parser.Warnings) (sessionInfo, []*message, []*pa
 		}
 	}
 	if s.raw == nil {
-		s.hasDir = true
+		s.noRecord = true
 		warn.Add(parser.WarnMissingField, "session", "")
 	}
 	return s, msgs, prts
@@ -303,12 +297,12 @@ func loadLegacy(in parser.Input, warn *parser.Warnings) (sessionInfo, []*message
 			Updated int64 `json:"updated"`
 		} `json:"time"`
 	}
-	s := sessionInfo{raw: in.Main, hasDir: true}
+	s := sessionInfo{raw: in.Main, noRecord: true}
 	if err := json.Unmarshal(in.Main, &r); err != nil {
 		warn.Add(parser.WarnBadLine, "session", string(in.Main))
 	} else {
 		s = sessionInfo{title: r.Title, version: r.Version, dir: r.Directory, parent: r.ParentID,
-			created: r.Time.Created, updated: r.Time.Updated, hasDir: r.Directory != "", raw: in.Main}
+			created: r.Time.Created, updated: r.Time.Updated, raw: in.Main}
 		s.revert = revertFrom(r.Revert)
 	}
 
@@ -335,6 +329,18 @@ func loadLegacy(in parser.Input, warn *parser.Warnings) (sessionInfo, []*message
 		}
 	}
 	return s, msgs, prts
+}
+
+// cwdFromMessages is the first non-empty path.cwd among msgs, in id order.
+// The oldest Sessions have no directory, but their Messages carry it
+// (opencode.md §3.7).
+func cwdFromMessages(msgs []*message) string {
+	for _, m := range msgs {
+		if p := m.data.Path; p != nil && p.Cwd != "" {
+			return p.Cwd
+		}
+	}
+	return ""
 }
 
 // revertFrom is revert.messageID from a Session's revert JSON, else empty.

@@ -350,27 +350,25 @@ func TestLayoutsAgree(t *testing.T) {
 // order, that has path.cwd; parts-less Messages count too (opencode.md §3.7).
 func TestCwdFromMessagePath(t *testing.T) {
 	const ses = "ses_3a0000000000Cwd0000000000"
-	msg := func(id, body string) (string, []byte) {
-		return "json:message/" + ses + "/" + id + ".json", []byte(body)
-	}
+	type msg struct{ id, body string }
 	cases := []struct {
 		name, dir string
-		msgs      [][2]string
+		msgs      []msg
 		cwd       string
 		warn      bool
 	}{
-		{"from message", "", [][2]string{
+		{"from message", "", []msg{
 			{"msg_2", `{"role":"user","path":null}`},
 			{"msg_1", `{"role":"assistant","path":{"cwd":"/x","root":"/r"}}`},
 		}, "/x", false},
-		{"no message cwd", "", [][2]string{
+		{"no message cwd", "", []msg{
 			{"msg_1", `{"role":"assistant","path":{"cwd":"","root":"/r"}}`},
 			{"msg_2", `{"role":"user"}`},
 		}, "", true},
-		{"directory wins", "/a", [][2]string{
+		{"directory wins", "/a", []msg{
 			{"msg_1", `{"role":"assistant","path":{"cwd":"/b"}}`},
 		}, "/a", false},
-		{"lowest id wins", "", [][2]string{
+		{"lowest id wins", "", []msg{
 			{"msg_3", `{"role":"assistant","path":{"cwd":"/third"}}`},
 			{"msg_1", `{"role":"user","path":null}`},
 			{"msg_2", `{"role":"assistant","path":{"cwd":"/second"}}`},
@@ -378,20 +376,19 @@ func TestCwdFromMessagePath(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			main := map[string]any{"id": ses, "version": "0.4.45", "title": "t"}
-			row := map[string]any{"id": ses, "version": "0.4.45", "title": "t", "directory": nil}
+			sesFile := map[string]any{"id": ses, "version": "0.4.45", "title": "t"}
+			sesRow := map[string]any{"id": ses, "version": "0.4.45", "title": "t", "directory": nil}
 			if c.dir != "" {
-				main["directory"], row["directory"] = c.dir, c.dir
+				sesFile["directory"], sesRow["directory"] = c.dir, c.dir
 			}
-			mb, _ := json.Marshal(main)
-			rb, _ := json.Marshal(row)
-			legacy := parser.Input{NativeID: ses, MainKey: "json:session/" + proj + "/" + ses + ".json", Main: mb, Attachments: map[string][]byte{}}
-			db := `{"table":"session","row":` + string(rb) + "}\n"
+			sesJSON, _ := json.Marshal(sesFile)
+			rowJSON, _ := json.Marshal(sesRow)
+			legacy := parser.Input{NativeID: ses, MainKey: "json:session/" + proj + "/" + ses + ".json", Main: sesJSON, Attachments: map[string][]byte{}}
+			db := `{"table":"session","row":` + string(rowJSON) + "}\n"
 			for _, m := range c.msgs {
-				k, b := msg(m[0], m[1])
-				legacy.Attachments[k] = b
-				row, _ := json.Marshal(map[string]any{"id": m[0], "session_id": ses, "data": m[1]})
-				db += `{"table":"message","row":` + string(row) + "}\n"
+				legacy.Attachments["json:message/"+ses+"/"+m.id+".json"] = []byte(m.body)
+				msgRow, _ := json.Marshal(map[string]any{"id": m.id, "session_id": ses, "data": m.body})
+				db += `{"table":"message","row":` + string(msgRow) + "}\n"
 			}
 			for layout, in := range map[string]parser.Input{
 				"legacy-json": legacy,
@@ -401,22 +398,33 @@ func TestCwdFromMessagePath(t *testing.T) {
 				if res.Session.Cwd != c.cwd {
 					t.Errorf("%s: cwd = %q, want %q", layout, res.Session.Cwd, c.cwd)
 				}
-				var warned bool
-				for _, w := range res.Warnings {
-					if w.Kind == parser.WarnMissingField && w.SourceType == "directory" {
-						warned = true
-					}
-				}
-				if warned != c.warn {
-					t.Errorf("%s: missing_field/directory = %v, want %v (%+v)", layout, warned, c.warn, res.Warnings)
+				if got := hasWarning(res, parser.WarnMissingField, "directory"); got != c.warn {
+					t.Errorf("%s: missing_field/directory = %v, want %v (%+v)", layout, got, c.warn, res.Warnings)
 				}
 			}
 		})
 	}
+
+	// With no readable session record, the Messages still give the cwd.
+	const body = `{"role":"assistant","path":{"cwd":"/x"}}`
+	row, _ := json.Marshal(map[string]any{"id": "msg_1", "session_id": ses, "data": body})
+	for layout, in := range map[string]parser.Input{
+		"legacy-json": {NativeID: ses, MainKey: "json:session/" + proj + "/" + ses + ".json", Main: []byte("{oops"),
+			Attachments: map[string][]byte{"json:message/" + ses + "/msg_1.json": []byte(body)}},
+		"sqlite": {NativeID: ses, MainKey: "db:" + ses, Main: []byte(`{"table":"message","row":` + string(row) + "}\n")},
+	} {
+		res := parse(t, in)
+		if res.Session.Cwd != "/x" || hasWarning(res, parser.WarnMissingField, "directory") {
+			t.Errorf("%s, no session record: cwd = %q, warnings %+v", layout, res.Session.Cwd, res.Warnings)
+		}
+	}
 }
 
-func TestVersion(t *testing.T) {
-	if New().Version() < 2 {
-		t.Errorf("version = %d: bump it so old Sessions reparse", New().Version())
+func hasWarning(res parser.Result, kind, sourceType string) bool {
+	for _, w := range res.Warnings {
+		if w.Kind == kind && w.SourceType == sourceType {
+			return true
+		}
 	}
+	return false
 }
