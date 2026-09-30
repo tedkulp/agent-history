@@ -9,6 +9,8 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-30
+
 ### Added
 
 - An oh-my-pi Tool call shows its intent on its row ("Reading the spec"), with what it acts on beneath it, like a described Claude Code or opencode call.
@@ -89,7 +91,8 @@ One version covers the Collector and the Hub together (see
 - Release pipeline: CI, GoReleaser archives for the Collector and a
   multi-arch Hub image, published from a version tag.
 
-[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/tedkulp/agent-history/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/tedkulp/agent-history/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/tedkulp/agent-history/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/tedkulp/agent-history/compare/v0.1.0...v0.2.0
