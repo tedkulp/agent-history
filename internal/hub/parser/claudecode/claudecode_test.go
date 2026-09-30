@@ -383,6 +383,22 @@ func TestParseUnknownLineTypes(t *testing.T) {
 	}
 }
 
+func TestParseContinuedIn(t *testing.T) {
+	// A continued-in line as Claude Code writes it: no uuid, off the path.
+	res := parse(t, jsonl(t,
+		userLine("u1", "", "2026-09-01T10:00:00.000Z", "go"),
+		map[string]any{"type": "continued-in", "timestamp": "2026-09-01T10:00:01.000Z",
+			"sessionId": "71e7e271-738c-4ed7-a501-c616922c590e", "continuedInSessionId": "b9994964-3a03-42bc-9591-b1b2c0e0176d"},
+	), nil)
+	want := []flat{{ID: "u1", Role: "user", Texts: []string{"go"}}}
+	if got := flatten(res.Messages); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v", got)
+	}
+	if len(res.Warnings) != 0 {
+		t.Errorf("warnings = %+v", res.Warnings)
+	}
+}
+
 func TestParseUserContent(t *testing.T) {
 	// The user-content table of claude-code.md §3.3.
 	const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
