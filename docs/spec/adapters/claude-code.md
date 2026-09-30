@@ -93,7 +93,7 @@ Every line is a JSON object with a `type`. Conversation lines also carry `uuid`,
 | `type` | Handling |
 |---|---|
 | `user`, `assistant` | Messages (§3.3) |
-| `system` | By `subtype`: `compact_boundary` → `marker` (`compaction`). `turn_duration`, `local_command`, `away_summary`, `stop_hook_summary`, `informational`, `api_error`, `bridge_status` → Raw only. Any other subtype → `unknown`. |
+| `system` | By `subtype`: `compact_boundary` → `marker` (`compaction`). `turn_duration`, `local_command`, `away_summary`, `stop_hook_summary`, `informational`, `api_error`, `bridge_status`, `scheduled_task_fire` → Raw only. Any other subtype → `unknown`. |
 | `attachment` | Raw only (context Claude Code injects: reminders, tool listings, environment), with one exception: subtype `queued_command` whose `attachment.isMeta` is not `true` becomes a user Message with `attachment.prompt` as its text (a block list gives its `text` and `image` blocks), or a `task_notification` marker (§3.3) when its `commandMode` is `task-notification` or its prompt is a string starting with `<task-notification>` |
 | `summary` | Raw only; used for the title fallback (§3.6) |
 | `custom-title`, `ai-title` | Raw only; used for the title (§3.6) |

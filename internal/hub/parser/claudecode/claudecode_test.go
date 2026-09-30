@@ -314,7 +314,7 @@ func TestParseLineTypes(t *testing.T) {
 		"agent-name", "pr-link", "frame-link", "artifact-autoreact-ledger", "artifact-comment-monitor",
 		"attachment",
 	}
-	subtypes := []string{"turn_duration", "local_command", "away_summary", "stop_hook_summary", "informational", "api_error", "bridge_status"}
+	subtypes := []string{"turn_duration", "local_command", "away_summary", "stop_hook_summary", "informational", "api_error", "bridge_status", "scheduled_task_fire"}
 	lines := []map[string]any{
 		userLine("u1", "", "2026-09-01T10:00:00.000Z", "go"),
 		asstLine("a1", "u1", "2026-09-01T10:00:01.000Z", "msg_1", text("one"), nil),

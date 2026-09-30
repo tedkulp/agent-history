@@ -9,6 +9,10 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+### Fixed
+
+- Claude Code's scheduled-task line ("Claude resuming /loop wakeup") no longer raises an unknown-type Parse warning.
+
 ## [0.4.0] - 2026-09-29
 
 ### Added
