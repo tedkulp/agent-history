@@ -192,7 +192,7 @@ func newMarkerView(partID string, mp parser.MarkerPayload) *markerView {
 	}
 	switch mp.Marker {
 	case parser.MarkerShellCommand, parser.MarkerTaskNotification, parser.MarkerScheduledTask:
-		// A command and its output are never Markdown.
+		// Output is never Markdown.
 		v.Output = parser.CutBytes(mp.Output, stubOver)
 		if n := len(mp.Output) - len(v.Output); n > 0 {
 			v.More = "… " + byteSize(n) + " more"

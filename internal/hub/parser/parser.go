@@ -147,8 +147,7 @@ type AttachmentPayload struct {
 
 // MarkerPayload is the payload of a marker Part. Output is a shell_command's
 // output, a task_notification's event or a scheduled_task's prompt, "" when
-// it has none. Task is set on
-// a task_notification only.
+// it has none. Task is set on a task_notification only.
 type MarkerPayload struct {
 	Marker string       `json:"marker"`
 	Text   string       `json:"text"`

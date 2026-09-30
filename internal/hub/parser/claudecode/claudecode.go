@@ -467,7 +467,9 @@ func buildMessages(in parser.Input, path []*line, warn *parser.Warnings) ([]pars
 				// The isMeta line after it repeats the prompt and stays Raw only.
 				flush()
 				var text string
-				json.Unmarshal(l.Content, &text)
+				if json.Unmarshal(l.Content, &text) != nil {
+					text = ""
+				}
 				marker(l, parser.MessageUser, parser.MarkerPayload{Marker: parser.MarkerScheduledTask, Text: text, Output: l.Prompt})
 				continue
 			}
