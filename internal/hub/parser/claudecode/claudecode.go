@@ -20,7 +20,7 @@ import (
 
 // version is the parser_version. Bump it whenever output changes for
 // existing data (hub.md §4.5).
-const version = 12
+const version = 13
 
 const (
 	layout     = "jsonl"
@@ -123,7 +123,7 @@ var rawOnly = map[string]bool{
 	"file-history-snapshot": true, "file-history-delta": true, "last-prompt": true, "mode": true,
 	"permission-mode": true, "queue-operation": true, "progress": true, "atis-latch": true,
 	"bridge-session": true, "cost-state": true, "agent-name": true, "pr-link": true, "frame-link": true,
-	"artifact-autoreact-ledger": true, "artifact-comment-monitor": true,
+	"artifact-autoreact-ledger": true, "artifact-comment-monitor": true, "continued-in": true,
 }
 
 // rawOnlySystem are the system subtypes kept in the Raw record only.

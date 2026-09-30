@@ -311,7 +311,7 @@ func TestParseLineTypes(t *testing.T) {
 	types := []string{
 		"summary", "custom-title", "ai-title", "file-history-snapshot", "file-history-delta", "last-prompt",
 		"mode", "permission-mode", "queue-operation", "progress", "atis-latch", "bridge-session", "cost-state",
-		"agent-name", "pr-link", "frame-link", "artifact-autoreact-ledger", "artifact-comment-monitor",
+		"agent-name", "pr-link", "frame-link", "artifact-autoreact-ledger", "artifact-comment-monitor", "continued-in",
 		"attachment",
 	}
 	subtypes := []string{"turn_duration", "local_command", "away_summary", "stop_hook_summary", "informational", "api_error", "bridge_status"}

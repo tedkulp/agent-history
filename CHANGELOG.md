@@ -9,6 +9,10 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+### Fixed
+
+- Claude Code's `continued-in` line (a Session carrying on in another one) no longer raises an unknown-type Parse warning or shows an unknown Part.
+
 ## [0.5.0] - 2026-09-30
 
 ### Added
