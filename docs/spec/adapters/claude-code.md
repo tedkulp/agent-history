@@ -97,7 +97,7 @@ Every line is a JSON object with a `type`. Conversation lines also carry `uuid`,
 | `attachment` | Raw only (context Claude Code injects: reminders, tool listings, environment), with one exception: subtype `queued_command` whose `attachment.isMeta` is not `true` becomes a user Message with `attachment.prompt` as its text (a block list gives its `text` and `image` blocks), or a `task_notification` marker (§3.3) when its `commandMode` is `task-notification` or its prompt is a string starting with `<task-notification>` |
 | `summary` | Raw only; used for the title fallback (§3.6) |
 | `custom-title`, `ai-title` | Raw only; used for the title (§3.6) |
-| `file-history-snapshot`, `file-history-delta`, `last-prompt`, `mode`, `permission-mode`, `queue-operation`, `progress`, `atis-latch`, `bridge-session`, `cost-state`, `agent-name`, `pr-link`, `frame-link`, `artifact-autoreact-ledger`, `artifact-comment-monitor` | Raw only (bookkeeping) |
+| `file-history-snapshot`, `file-history-delta`, `last-prompt`, `mode`, `permission-mode`, `queue-operation`, `progress`, `atis-latch`, `bridge-session`, `cost-state`, `agent-name`, `pr-link`, `frame-link`, `artifact-autoreact-ledger`, `artifact-comment-monitor`, `continued-in` | Raw only (bookkeeping) |
 | anything else | `unknown_type` Parse warning. If the line has a `uuid` and sits on the Transcript path, it also becomes an `unknown` Part in its own Message (role `assistant`). |
 
 - An unknown `system` subtype's `source_type` is `system:<subtype>`, so drift in subtypes is told apart from new line types.
