@@ -21,6 +21,9 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./...
       - run: go test ./...
+      # Generated code is committed as go generate writes it; running templ
+      # from the repo root instead changes every FileName path.
+      - run: go generate ./... && git diff --exit-code
       # QEMU runs the arm64 image's RUN step on the amd64 runner.
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
