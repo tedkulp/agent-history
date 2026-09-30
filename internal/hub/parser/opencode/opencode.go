@@ -18,7 +18,7 @@ import (
 
 // version is the parser_version. Bump it whenever output changes for
 // existing data (hub.md §4.5).
-const version = 1
+const version = 2
 
 const (
 	layoutSqlite = "sqlite"
@@ -116,6 +116,9 @@ type msgData struct {
 			Message string `json:"message"`
 		} `json:"data"`
 	} `json:"error"`
+	Path *struct {
+		Cwd string `json:"cwd"`
+	} `json:"path"`
 }
 
 // part is one part's data with its ids.
@@ -163,6 +166,19 @@ func (*Parser) Parse(in parser.Input) (parser.Result, error) {
 		s, msgs, prts = loadLegacy(in, &warn)
 	}
 
+	// Parts attach to their Message; both are in id order (opencode.md §3.2).
+	slices.SortFunc(msgs, func(a, b *message) int { return strings.Compare(a.id, b.id) })
+
+	if !s.hasDir {
+		// The oldest sessions have no directory; their assistant Messages
+		// carry it as path.cwd (opencode.md §3.7).
+		for _, m := range msgs {
+			if p := m.data.Path; p != nil && p.Cwd != "" {
+				s.dir, s.hasDir = p.Cwd, true
+				break
+			}
+		}
+	}
 	res.Session = parser.Session{
 		Title:          s.title,
 		StartedAt:      s.created,
@@ -175,8 +191,6 @@ func (*Parser) Parse(in parser.Input) (parser.Result, error) {
 		warn.Add(parser.WarnMissingField, "directory", string(s.raw))
 	}
 
-	// Parts attach to their Message; both are in id order (opencode.md §3.2).
-	slices.SortFunc(msgs, func(a, b *message) int { return strings.Compare(a.id, b.id) })
 	byID := map[string]*message{}
 	for _, m := range msgs {
 		byID[m.id] = m

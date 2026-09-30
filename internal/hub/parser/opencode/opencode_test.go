@@ -345,3 +345,78 @@ func TestLayoutsAgree(t *testing.T) {
 		t.Errorf("sqlite:\n%+v\nlegacy-json:\n%+v", db, legacy)
 	}
 }
+
+// A Session with no directory takes its cwd from the first Message, in id
+// order, that has path.cwd; parts-less Messages count too (opencode.md §3.7).
+func TestCwdFromMessagePath(t *testing.T) {
+	const ses = "ses_3a0000000000Cwd0000000000"
+	msg := func(id, body string) (string, []byte) {
+		return "json:message/" + ses + "/" + id + ".json", []byte(body)
+	}
+	cases := []struct {
+		name, dir string
+		msgs      [][2]string
+		cwd       string
+		warn      bool
+	}{
+		{"from message", "", [][2]string{
+			{"msg_2", `{"role":"user","path":null}`},
+			{"msg_1", `{"role":"assistant","path":{"cwd":"/x","root":"/r"}}`},
+		}, "/x", false},
+		{"no message cwd", "", [][2]string{
+			{"msg_1", `{"role":"assistant","path":{"cwd":"","root":"/r"}}`},
+			{"msg_2", `{"role":"user"}`},
+		}, "", true},
+		{"directory wins", "/a", [][2]string{
+			{"msg_1", `{"role":"assistant","path":{"cwd":"/b"}}`},
+		}, "/a", false},
+		{"lowest id wins", "", [][2]string{
+			{"msg_3", `{"role":"assistant","path":{"cwd":"/third"}}`},
+			{"msg_1", `{"role":"user","path":null}`},
+			{"msg_2", `{"role":"assistant","path":{"cwd":"/second"}}`},
+		}, "/second", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			main := map[string]any{"id": ses, "version": "0.4.45", "title": "t"}
+			row := map[string]any{"id": ses, "version": "0.4.45", "title": "t", "directory": nil}
+			if c.dir != "" {
+				main["directory"], row["directory"] = c.dir, c.dir
+			}
+			mb, _ := json.Marshal(main)
+			rb, _ := json.Marshal(row)
+			legacy := parser.Input{NativeID: ses, MainKey: "json:session/" + proj + "/" + ses + ".json", Main: mb, Attachments: map[string][]byte{}}
+			db := `{"table":"session","row":` + string(rb) + "}\n"
+			for _, m := range c.msgs {
+				k, b := msg(m[0], m[1])
+				legacy.Attachments[k] = b
+				row, _ := json.Marshal(map[string]any{"id": m[0], "session_id": ses, "data": m[1]})
+				db += `{"table":"message","row":` + string(row) + "}\n"
+			}
+			for layout, in := range map[string]parser.Input{
+				"legacy-json": legacy,
+				"sqlite":      {NativeID: ses, MainKey: "db:" + ses, Main: []byte(db)},
+			} {
+				res := parse(t, in)
+				if res.Session.Cwd != c.cwd {
+					t.Errorf("%s: cwd = %q, want %q", layout, res.Session.Cwd, c.cwd)
+				}
+				var warned bool
+				for _, w := range res.Warnings {
+					if w.Kind == parser.WarnMissingField && w.SourceType == "directory" {
+						warned = true
+					}
+				}
+				if warned != c.warn {
+					t.Errorf("%s: missing_field/directory = %v, want %v (%+v)", layout, warned, c.warn, res.Warnings)
+				}
+			}
+		})
+	}
+}
+
+func TestVersion(t *testing.T) {
+	if New().Version() < 2 {
+		t.Errorf("version = %d: bump it so old Sessions reparse", New().Version())
+	}
+}

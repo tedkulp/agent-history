@@ -202,11 +202,13 @@ Source: [Normalized Transcript model](https://github.com/tedkulp/agent-history/i
 | `title` | `title` | `title` |
 | `started_at` | `time_created` | `time.created` |
 | `last_activity_at` | `time_updated` | `time.updated` |
-| `cwd` | `directory` | `directory` (absent in the oldest files: `missing_field` warning, Session goes to "No project") |
+| `cwd` | `directory` | `directory` |
 | `git_branch` | `null` | `null` |
 | `source_version` | `version` | `version` |
 | `parent_native_id` | `parent_id` | `parentID` |
 | `forked_from_native_id` | `null` | `null` |
+
+When `directory` is absent or empty (the oldest legacy files), `cwd` is the `path.cwd` of the first Message, in id order, that has a non-empty one. Every Message counts, including ones with no parts and ones the Transcript doesn't show. Only when no Message has one either is there a `missing_field` warning, and the Session goes to "No project". This holds in both Layouts.
 
 opencode generates titles for sub-agent runs such as `Synthesize design tickets (@explore subagent)`; they're used as-is.
 

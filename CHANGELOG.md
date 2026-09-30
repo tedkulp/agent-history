@@ -12,6 +12,7 @@ One version covers the Collector and the Hub together (see
 ### Fixed
 
 - Claude Code's `continued-in` line (a Session carrying on in another one) no longer raises an unknown-type Parse warning or shows an unknown Part.
+- The oldest opencode Sessions, whose session file has no directory, take their project from their Messages' working directory instead of going to "No project" with a `missing_field` warning.
 
 ## [0.5.0] - 2026-09-30
 
