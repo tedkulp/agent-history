@@ -12,10 +12,7 @@ One version covers the Collector and the Hub together (see
 ### Added
 
 - An oh-my-pi Tool call shows its intent on its row ("Reading the spec"), with what it acts on beneath it, like a described Claude Code or opencode call.
-
-### Fixed
-
-- Claude Code's scheduled-task line ("Claude resuming /loop wakeup") no longer raises an unknown-type Parse warning.
+- A Claude Code `/loop` wakeup or scheduled task firing shows in the Transcript as a pill ("⏰ Claude resuming /loop wakeup"), with the prompt it resumed with behind a toggle.
 
 ## [0.4.0] - 2026-09-29
 

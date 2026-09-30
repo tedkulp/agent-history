@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -168,9 +169,13 @@ const compactionSummaryLabel = "Compaction summary"
 // shell_command pill shows its whole command, and its output, cut to 4 KB,
 // opens below it as preformatted text. A task_notification pill shows its
 // summary, and its result opens below it as Markdown, or its event as
-// preformatted text.
+// preformatted text. A scheduled_task pill shows a clock and its text, and
+// its prompt opens below it as preformatted text.
 func newMarkerView(partID string, mp parser.MarkerPayload) *markerView {
 	v := &markerView{Kind: mp.Marker, Label: mp.Text}
+	if mp.Marker == parser.MarkerScheduledTask {
+		v.Label = "⏰ " + cut(cmp.Or(mp.Text, mp.Marker), markerLabelMax)
+	}
 	if mp.Marker == parser.MarkerTaskNotification {
 		var task parser.TaskPayload
 		if mp.Task != nil {
@@ -185,7 +190,8 @@ func newMarkerView(partID string, mp parser.MarkerPayload) *markerView {
 			v.Body = renderMarkdown(task.Result)
 		}
 	}
-	if mp.Marker == parser.MarkerShellCommand || mp.Marker == parser.MarkerTaskNotification {
+	switch mp.Marker {
+	case parser.MarkerShellCommand, parser.MarkerTaskNotification, parser.MarkerScheduledTask:
 		// A command and its output are never Markdown.
 		v.Output = parser.CutBytes(mp.Output, stubOver)
 		if n := len(mp.Output) - len(v.Output); n > 0 {

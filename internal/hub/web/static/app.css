@@ -74,7 +74,7 @@ a.img{display:block;max-width:78%;margin:3px 0} a.img img{max-width:100%;max-hei
 details.marker{border-radius:12px} details.marker>summary{cursor:pointer;text-align:center}
 details.marker .bubble{max-width:none;margin:6px 0 4px;color:var(--ink);font-size:13px}
 .marker.shell_command{font-family:var(--mono);white-space:pre-wrap;border-radius:8px;text-align:left} details.marker.shell_command>summary{text-align:left} details.marker pre.out{text-align:left;color:var(--ink);margin:6px 0 4px}
-.marker.task_notification a.call{margin-left:4px} .marker .st.completed{color:var(--add-ink)} .marker .st.failed{color:var(--bad)} details.marker.task_notification pre.out{white-space:pre-wrap}
+.marker.task_notification a.call{margin-left:4px} .marker .st.completed{color:var(--add-ink)} .marker .st.failed{color:var(--bad)} details.marker.task_notification pre.out,details.marker.scheduled_task pre.out{white-space:pre-wrap}
 .bubble.unknown{background:var(--warn);font-size:12.5px} .msg.user .bubble.unknown{background:var(--warn);color:var(--ink);border-color:var(--line)}
 .bubble.unknown pre{margin:4px 0 0}
 details.think{max-width:78%;font-size:12.5px;color:var(--dim);margin:3px 0} details.think>summary{cursor:pointer}

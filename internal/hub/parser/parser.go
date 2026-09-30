@@ -45,6 +45,9 @@ const (
 	// MarkerTaskNotification is a background task or sub-agent reporting
 	// back: its text is the task's summary.
 	MarkerTaskNotification = "task_notification"
+	// MarkerScheduledTask is a /loop wakeup or scheduled task firing; its
+	// Output is the prompt it resumes with.
+	MarkerScheduledTask = "scheduled_task"
 )
 
 // CompactionText is a compaction marker's text when the Source gives no
@@ -143,7 +146,8 @@ type AttachmentPayload struct {
 }
 
 // MarkerPayload is the payload of a marker Part. Output is a shell_command's
-// output or a task_notification's event, "" when it has none. Task is set on
+// output, a task_notification's event or a scheduled_task's prompt, "" when
+// it has none. Task is set on
 // a task_notification only.
 type MarkerPayload struct {
 	Marker string       `json:"marker"`

@@ -20,7 +20,7 @@ import (
 
 // version is the parser_version. Bump it whenever output changes for
 // existing data (hub.md §4.5).
-const version = 11
+const version = 12
 
 const (
 	layout     = "jsonl"
@@ -94,6 +94,7 @@ type line struct {
 	IsMeta            bool            `json:"isMeta"`
 	IsCompactSummary  bool            `json:"isCompactSummary"`
 	Content           json.RawMessage `json:"content"` // system lines
+	Prompt            string          `json:"prompt"`  // scheduled_task_fire
 	Attachment        json.RawMessage `json:"attachment"`
 	Timestamp         string          `json:"timestamp"`
 	Cwd               string          `json:"cwd"`
@@ -129,10 +130,12 @@ var rawOnly = map[string]bool{
 var rawOnlySystem = map[string]bool{
 	"turn_duration": true, "local_command": true, "away_summary": true,
 	"stop_hook_summary": true, "informational": true, "api_error": true, "bridge_status": true,
-	"scheduled_task_fire": true,
 }
 
-const compactBoundary = "compact_boundary"
+const (
+	compactBoundary   = "compact_boundary"
+	scheduledTaskFire = "scheduled_task_fire"
+)
 
 // unknownType returns the Source type of a line the parser doesn't know
 // (claude-code.md §3.1): its type, or system:<subtype> for an unknown system
@@ -142,7 +145,7 @@ func unknownType(l *line) string {
 	case l.Type == "user", l.Type == "assistant", l.Type == "attachment", rawOnly[l.Type]:
 		return ""
 	case l.Type == "system":
-		if l.Subtype == compactBoundary || rawOnlySystem[l.Subtype] {
+		if l.Subtype == compactBoundary || l.Subtype == scheduledTaskFire || rawOnlySystem[l.Subtype] {
 			return ""
 		}
 		return "system:" + l.Subtype
@@ -460,6 +463,14 @@ func buildMessages(in parser.Input, path []*line, warn *parser.Warnings) ([]pars
 		}
 		switch l.Type {
 		case "system":
+			if l.Subtype == scheduledTaskFire {
+				// The isMeta line after it repeats the prompt and stays Raw only.
+				flush()
+				var text string
+				json.Unmarshal(l.Content, &text)
+				marker(l, parser.MessageUser, parser.MarkerPayload{Marker: parser.MarkerScheduledTask, Text: text, Output: l.Prompt})
+				continue
+			}
 			if l.Subtype != compactBoundary {
 				continue
 			}

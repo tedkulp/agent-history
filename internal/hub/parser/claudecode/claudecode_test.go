@@ -314,7 +314,7 @@ func TestParseLineTypes(t *testing.T) {
 		"agent-name", "pr-link", "frame-link", "artifact-autoreact-ledger", "artifact-comment-monitor",
 		"attachment",
 	}
-	subtypes := []string{"turn_duration", "local_command", "away_summary", "stop_hook_summary", "informational", "api_error", "bridge_status", "scheduled_task_fire"}
+	subtypes := []string{"turn_duration", "local_command", "away_summary", "stop_hook_summary", "informational", "api_error", "bridge_status"}
 	lines := []map[string]any{
 		userLine("u1", "", "2026-09-01T10:00:00.000Z", "go"),
 		asstLine("a1", "u1", "2026-09-01T10:00:01.000Z", "msg_1", text("one"), nil),
@@ -977,5 +977,55 @@ func TestParseTaskNotificationResultQuotingTags(t *testing.T) {
 	want := parser.TaskPayload{Status: "completed", ToolUseID: "t_1", Result: quoted, Tokens: 10, ToolUses: 2, DurationMS: 3000}
 	if mp.Task == nil || *mp.Task != want {
 		t.Errorf("task = %+v\nwant   %+v", mp.Task, want)
+	}
+}
+
+// TestScheduledTaskFire: a fire line is a scheduled_task marker with its
+// prompt as the output, and the isMeta prompt line after it stays Raw only
+// (claude-code.md §3.1).
+func TestScheduledTaskFire(t *testing.T) {
+	fire := func(id, parent, ts, prompt string) map[string]any {
+		l := map[string]any{
+			"type": "system", "subtype": "scheduled_task_fire", "uuid": id, "parentUuid": parent, "timestamp": ts,
+			"content": "Claude resuming /loop wakeup (Sep 28 4:20pm)", "taskId": "b6438d94", "cron": "20 16 * * *",
+			"taskKind": "loop", "cronKind": "loop",
+		}
+		if prompt != "" {
+			l["prompt"] = prompt
+		}
+		return l
+	}
+	meta := userLine("m1", "f1", "2026-09-28T20:20:00.780Z", "Check the renders.")
+	meta["isMeta"] = true
+	lines := []map[string]any{
+		userLine("u1", "", "2026-09-28T20:00:00.000Z", "go"),
+		asstLine("a1", "u1", "2026-09-28T20:00:01.000Z", "msg_1", text("one"), nil),
+		fire("f1", "a1", "2026-09-28T20:20:00.770Z", "Check the renders."),
+		meta,
+		asstLine("a2", "m1", "2026-09-28T20:20:01.000Z", "msg_2", text("two"), nil),
+		fire("f2", "a2", "2026-09-28T20:41:00.000Z", ""),
+	}
+	res := parse(t, jsonl(t, lines...), nil)
+	want := []flat{
+		{ID: "u1", Role: "user", Texts: []string{"go"}},
+		{ID: "a1", Role: "assistant", Texts: []string{"one"}},
+		{ID: "f1", Role: "user", Texts: []string{"[scheduled_task Claude resuming /loop wakeup (Sep 28 4:20pm)]"}},
+		{ID: "a2", Role: "assistant", Texts: []string{"two"}},
+		{ID: "f2", Role: "user", Texts: []string{"[scheduled_task Claude resuming /loop wakeup (Sep 28 4:20pm)]"}},
+	}
+	if got := flatten(res.Messages); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v", got)
+	}
+	if out := res.Messages[2].Parts[0].Payload.(parser.MarkerPayload).Output; out != "Check the renders." {
+		t.Errorf("output = %q", out)
+	}
+	if out := res.Messages[4].Parts[0].Payload.(parser.MarkerPayload).Output; out != "" {
+		t.Errorf("output without prompt = %q", out)
+	}
+	if len(res.Warnings) != 0 {
+		t.Errorf("warnings = %+v", res.Warnings)
+	}
+	if got := parser.TitleCandidate(res.Messages); got != "go" {
+		t.Errorf("title candidate = %q", got)
 	}
 }

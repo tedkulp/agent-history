@@ -557,6 +557,60 @@ func TestTranscriptMarkersWarningsAndOutline(t *testing.T) {
 	}
 }
 
+func TestTranscriptScheduledTask(t *testing.T) {
+	now := time.Now().UTC()
+	ts := func(s int) string {
+		return now.Add(time.Duration(s-100) * time.Second).Format("2006-01-02T15:04:05.000Z")
+	}
+	fire := func(uuid string, parent any, s int, prompt string) map[string]any {
+		l := map[string]any{"type": "system", "subtype": "scheduled_task_fire", "uuid": uuid, "parentUuid": parent, "timestamp": ts(s),
+			"content": "Claude resuming /loop wakeup (Sep 28 4:20pm)", "taskId": "b6438d94", "cron": "20 16 * * *", "taskKind": "loop"}
+		if prompt != "" {
+			l["prompt"] = prompt
+		}
+		return l
+	}
+	lines := []map[string]any{
+		fire("f1", nil, 0, "Check the <b>renders</b>\nand review stills."),
+		{"type": "user", "isMeta": true, "uuid": "m1", "parentUuid": "f1", "timestamp": ts(1), "cwd": "/Users/ted/src/app",
+			"message": map[string]any{"role": "user", "content": "Check the <b>renders</b>\nand review stills."}},
+		{"type": "user", "uuid": "u1", "parentUuid": "m1", "timestamp": ts(2), "cwd": "/Users/ted/src/app",
+			"message": map[string]any{"role": "user", "content": "Real prompt"}},
+		fire("f2", "u1", 3, ""),
+	}
+	var main strings.Builder
+	enc := json.NewEncoder(&main)
+	enc.SetEscapeHTML(false)
+	for _, l := range lines {
+		if err := enc.Encode(l); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srv := newSiteRecords(t, []record{{"m1", "-Users-ted-src-app/" + sess + ".jsonl", main.String()}})
+
+	_, feed := get(t, srv.URL+"/")
+	if !strings.Contains(feed, "Real prompt") || strings.Contains(feed, "resuming") {
+		t.Error("the feed row's title is not the first real prompt")
+	}
+	i := strings.Index(feed, `href="/sessions/`)
+	link := feed[i+len(`href="`):]
+	_, page := get(t, srv.URL+link[:strings.Index(link, `"`)])
+	for _, want := range []string{
+		`<div class="msg user marker-row" id="m-f1">`,
+		`<details class="marker scheduled_task"><summary>⏰ Claude resuming /loop wakeup (Sep 28 4:20pm)</summary><pre class="out">Check the &lt;b&gt;renders&lt;/b&gt;` + "\n" + `and review stills.</pre></details>`,
+		`<div class="marker scheduled_task">⏰ Claude resuming /loop wakeup (Sep 28 4:20pm)</div>`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("transcript lacks %q", want)
+		}
+	}
+	for _, bad := range []string{"<b>renders</b>", `href="#m-f1"`, `href="#m-f2"`, `href="#m-m1"`, "b6438d94"} {
+		if strings.Contains(page, bad) {
+			t.Errorf("transcript shows %q", bad)
+		}
+	}
+}
+
 func TestTranscriptShellCommands(t *testing.T) {
 	now := time.Now().UTC()
 	ts := func(s int) string {
