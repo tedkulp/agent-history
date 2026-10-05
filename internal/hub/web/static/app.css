@@ -129,3 +129,11 @@ mark{background:var(--mark);color:inherit;border-radius:2px;padding:0 1px}
 .to-top:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 .to-top[hidden]{display:none}
 @media (max-width:1200px){.tr .msg.user{padding-right:40px}}
+
+/* Hidden Tool calls (#65): html.hide-tools drops every cluster and tools-only
+   Message, except one a link or search hit revealed. */
+.tools-toggle{font:inherit;color:var(--acc);background:none;border:0;padding:0;cursor:pointer;margin-left:auto}
+.tools-toggle:hover{text-decoration:underline}
+.tools-toggle .when-hidden,html.hide-tools .tools-toggle .when-shown{display:none}
+html.hide-tools .tools-toggle .when-hidden{display:inline}
+html.hide-tools details.cluster:not(.revealed),html.hide-tools .msg.tools-only:not(.revealed){display:none}

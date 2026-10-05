@@ -9,6 +9,10 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+### Added
+
+- A "Hide tool calls" toggle in the Transcript header hides every Tool call, and Messages holding only Tool calls. The choice is remembered in the browser for every Session; a link or search hit to a hidden Tool call still shows just that one.
+
 ## [0.5.1] - 2026-09-30
 
 ### Fixed

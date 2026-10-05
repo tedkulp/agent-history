@@ -543,11 +543,12 @@ type childEntry struct {
 }
 
 type messageView struct {
-	ID     string
-	Role   string
-	Time   string
-	Chunks []chunkView
-	Marker bool // only marker Parts: a centred pill, no time
+	ID        string
+	Role      string
+	Time      string
+	Chunks    []chunkView
+	Marker    bool // only marker Parts: a centred pill, no time
+	ToolsOnly bool // only tool_call Parts: hidden whole with Tool calls
 }
 
 // outlineEntry is one user prompt in the Transcript's outline.
@@ -820,9 +821,10 @@ func (s *server) transcriptView(h store.SessionHeader, msgs []store.TranscriptMe
 		if len(v.Chunks) == 0 {
 			continue
 		}
-		v.Marker = true
+		v.Marker, v.ToolsOnly = true, true
 		for _, c := range v.Chunks {
 			v.Marker = v.Marker && c.Marker != nil
+			v.ToolsOnly = v.ToolsOnly && c.Tools != nil
 		}
 		views = append(views, v)
 		if m.Role == parser.MessageUser {

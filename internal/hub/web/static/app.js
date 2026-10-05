@@ -1,3 +1,16 @@
+// Hidden Tool calls (#65): while html.hide-tools hides them, revealTools shows
+// just the cluster holding el, and its Message when that holds only Tool
+// calls (or every cluster of el when el is such a Message). The saved choice
+// is left alone.
+function revealTools(el) {
+  "use strict";
+  if (!document.documentElement.classList.contains("hide-tools")) return;
+  var cluster = el.closest("details.cluster"), msg = el.closest(".msg.tools-only");
+  if (cluster) cluster.classList.add("revealed");
+  if (msg) msg.classList.add("revealed");
+  if (el.matches(".msg.tools-only")) el.querySelectorAll("details.cluster").forEach(function (c) { c.classList.add("revealed"); });
+}
+
 // Arriving from search (hub.md §4.7): wrap each hl term in <mark> in the
 // Transcript's text nodes, never tags or attributes, and open the collapsed
 // rows of the target Message that hold a match. The target flashes by CSS.
@@ -56,6 +69,7 @@
   var target = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));
   if (!target) return;
   target.querySelectorAll("mark").forEach(function (mk) {
+    revealTools(mk);
     for (var d = mk.closest("details"); d && target.contains(d); d = d.parentElement.closest("details")) d.open = true;
   });
   target.scrollIntoView({ block: "center" });
@@ -85,6 +99,7 @@
   }
 
   function openAncestors(el) {
+    revealTools(el);
     for (var d = el.parentElement && el.parentElement.closest("details"); d; d = d.parentElement && d.parentElement.closest("details")) d.open = true;
   }
 
@@ -180,13 +195,18 @@
   }
 
   // swap replaces old with its re-rendered copy, keeping which <details> are
-  // open (a tool row by its id, any other by its place among the id-less
-  // ones) and which element is the in-page target.
+  // open or revealed (a tool row by its id, any other by its place among the
+  // id-less ones) and which element is the in-page target.
   function swap(old, fresh) {
     if (!old || !fresh) return;
     var open = {};
-    keyed(old).forEach(function (e) { open[e.k] = e.d.open; });
-    keyed(fresh).forEach(function (e) { if (e.k in open) e.d.open = open[e.k]; });
+    keyed(old).forEach(function (e) { open[e.k] = { open: e.d.open, revealed: e.d.classList.contains("revealed") }; });
+    keyed(fresh).forEach(function (e) {
+      if (!(e.k in open)) return;
+      e.d.open = open[e.k].open;
+      e.d.classList.toggle("revealed", open[e.k].revealed);
+    });
+    if (old.classList.contains("revealed")) fresh.classList.add("revealed");
     var t = old.classList.contains("is-target") ? old : old.querySelector(".is-target");
     old.replaceWith(fresh);
     if (t && t.id) {
@@ -357,5 +377,22 @@
     window.scrollTo({ top: 0, behavior: reduceMotion ? "auto" : "smooth" });
     var h = document.getElementById("top");
     if (h) h.focus({ preventScroll: true });
+  });
+})();
+
+// Hide/show Tool calls (#65): the header's toggle flips html.hide-tools and
+// saves the choice for every Session. The live Transcript swaps the header,
+// so listen on the document. Clusters revealed by a link hide again.
+(function () {
+  "use strict";
+  var key = "agent-history.hide-tools";
+  document.addEventListener("click", function (e) {
+    if (!e.target.closest(".tools-toggle")) return;
+    var hide = document.documentElement.classList.toggle("hide-tools");
+    document.querySelectorAll(".revealed").forEach(function (r) { r.classList.remove("revealed"); });
+    try {
+      if (hide) localStorage.setItem(key, "1");
+      else localStorage.removeItem(key);
+    } catch (err) { /* storage blocked: the choice lasts for this page only */ }
   });
 })();
