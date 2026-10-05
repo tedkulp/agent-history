@@ -13,6 +13,8 @@ templ layout(title string) {
 			<meta charset="utf-8"/>
 			<meta name="viewport" content="width=device-width,initial-scale=1"/>
 			<title>{ title }</title>
+			// Hide Tool calls before first paint when the reader chose to (hub.md §4.7).
+			<script>try{if(localStorage.getItem("agent-history.hide-tools")==="1")document.documentElement.classList.add("hide-tools")}catch(e){}</script>
 			<link rel="stylesheet" href="/static/app.css"/>
 			<link rel="stylesheet" href="/static/chroma.css"/>
 			<script src="/static/htmx.min.js" defer></script>
@@ -286,6 +288,8 @@ templ transcriptHead(h headerView) {
 			} else if h.ForkLabel != "" {
 				<span class="fork">{ h.ForkLabel }</span>
 			}
+			// app.js flips html.hide-tools; CSS shows the label that matches.
+			<button type="button" class="tools-toggle"><span class="when-shown">Hide tool calls</span><span class="when-hidden">Show tool calls</span></button>
 		</div>
 		if h.ParseError != "" {
 			@failureNote(h)
@@ -297,7 +301,7 @@ templ transcriptHead(h headerView) {
 }
 
 templ message(m messageView) {
-	<div class={ "msg", m.Role, templ.KV("marker-row", m.Marker) } id={ "m-" + m.ID }>
+	<div class={ "msg", m.Role, templ.KV("marker-row", m.Marker), templ.KV("tools-only", m.ToolsOnly) } id={ "m-" + m.ID }>
 		for _, c := range m.Chunks {
 			@chunk(c)
 		}
