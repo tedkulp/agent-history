@@ -1,4 +1,4 @@
-// Hidden Tool calls (#65): while html.hide-tools hides them, revealTools shows
+// Hidden Tool calls (hub.md §4.7): while html.hide-tools hides them, revealTools shows
 // just the cluster holding el, and its Message when that holds only Tool
 // calls (or every cluster of el when el is such a Message). The saved choice
 // is left alone.
@@ -112,7 +112,15 @@ function revealTools(el) {
     if (hidden) initial.scrollIntoView({ block: "center" });
   }
   setTarget(initial);
-  window.addEventListener("hashchange", function () { setTarget(byHash(location.hash)); });
+  // Back, Forward or an edited hash may land in a collapsed or hidden row.
+  window.addEventListener("hashchange", function () {
+    var el = byHash(location.hash);
+    if (el && !el.getClientRects().length) {
+      openAncestors(el);
+      el.scrollIntoView({ block: "center" });
+    }
+    setTarget(el);
+  });
 
   document.addEventListener("click", function (e) {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
@@ -195,16 +203,16 @@ function revealTools(el) {
   }
 
   // swap replaces old with its re-rendered copy, keeping which <details> are
-  // open or revealed (a tool row by its id, any other by its place among the
-  // id-less ones) and which element is the in-page target.
+  // open or revealed (a tool row by its id, a cluster by its first row's, any
+  // other by its place among the rest) and which element is the in-page target.
   function swap(old, fresh) {
     if (!old || !fresh) return;
-    var open = {};
-    keyed(old).forEach(function (e) { open[e.k] = { open: e.d.open, revealed: e.d.classList.contains("revealed") }; });
+    var was = {};
+    keyed(old).forEach(function (e) { was[e.k] = { open: e.d.open, revealed: e.d.classList.contains("revealed") }; });
     keyed(fresh).forEach(function (e) {
-      if (!(e.k in open)) return;
-      e.d.open = open[e.k].open;
-      e.d.classList.toggle("revealed", open[e.k].revealed);
+      if (!(e.k in was)) return;
+      e.d.open = was[e.k].open;
+      e.d.classList.toggle("revealed", was[e.k].revealed);
     });
     if (old.classList.contains("revealed")) fresh.classList.add("revealed");
     var t = old.classList.contains("is-target") ? old : old.querySelector(".is-target");
@@ -219,7 +227,8 @@ function revealTools(el) {
   function keyed(root) {
     var n = 0;
     return Array.prototype.map.call(root.querySelectorAll("details"), function (d) {
-      return { d: d, k: d.id ? "#" + d.id : String(n++) };
+      var first = d.matches(".cluster") && d.querySelector("details.tool[id]");
+      return { d: d, k: d.id ? "#" + d.id : first ? "c#" + first.id : String(n++) };
     });
   }
 
@@ -380,7 +389,7 @@ function revealTools(el) {
   });
 })();
 
-// Hide/show Tool calls (#65): the header's toggle flips html.hide-tools and
+// Hide/show Tool calls (hub.md §4.7): the header's toggle flips html.hide-tools and
 // saves the choice for every Session. The live Transcript swaps the header,
 // so listen on the document. Clusters revealed by a link hide again.
 (function () {

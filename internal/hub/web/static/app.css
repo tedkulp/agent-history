@@ -130,7 +130,7 @@ mark{background:var(--mark);color:inherit;border-radius:2px;padding:0 1px}
 .to-top[hidden]{display:none}
 @media (max-width:1200px){.tr .msg.user{padding-right:40px}}
 
-/* Hidden Tool calls (#65): html.hide-tools drops every cluster and tools-only
+/* Hidden Tool calls (hub.md §4.7): html.hide-tools drops every cluster and tools-only
    Message, except one a link or search hit revealed. */
 .tools-toggle{font:inherit;color:var(--acc);background:none;border:0;padding:0;cursor:pointer;margin-left:auto}
 .tools-toggle:hover{text-decoration:underline}

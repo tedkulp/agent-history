@@ -13,7 +13,7 @@ templ layout(title string) {
 			<meta charset="utf-8"/>
 			<meta name="viewport" content="width=device-width,initial-scale=1"/>
 			<title>{ title }</title>
-			// Hide Tool calls before first paint when the reader chose to (#65).
+			// Hide Tool calls before first paint when the reader chose to (hub.md §4.7).
 			<script>try{if(localStorage.getItem("agent-history.hide-tools")==="1")document.documentElement.classList.add("hide-tools")}catch(e){}</script>
 			<link rel="stylesheet" href="/static/app.css"/>
 			<link rel="stylesheet" href="/static/chroma.css"/>
