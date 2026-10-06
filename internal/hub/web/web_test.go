@@ -846,3 +846,46 @@ func TestTranscriptChildOfStub(t *testing.T) {
 		t.Errorf("stub status %d", code)
 	}
 }
+
+// A Message holding only Tool calls is marked tools-only, so hiding Tool calls
+// hides it whole; one with text beside its calls is not (#65).
+func TestTranscriptToolsOnlyMessages(t *testing.T) {
+	use := func(id string) map[string]any {
+		return map[string]any{"type": "tool_use", "id": id, "name": "Bash", "input": map[string]any{"command": "ls"}}
+	}
+	result := func(uuid, parent, id string) map[string]any {
+		return map[string]any{"type": "user", "uuid": uuid, "parentUuid": parent, "timestamp": "2026-09-01T10:00:02.000Z",
+			"message": map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": id, "content": "ok"}}}}
+	}
+	lines := []map[string]any{
+		{"type": "user", "uuid": "u1", "parentUuid": nil, "timestamp": "2026-09-01T10:00:00.000Z", "cwd": "/Users/ted/src/app",
+			"message": map[string]any{"role": "user", "content": "go"}},
+		{"type": "assistant", "uuid": "a1", "parentUuid": "u1", "timestamp": "2026-09-01T10:00:01.000Z",
+			"message": map[string]any{"id": "msg_1", "model": "m", "content": []any{map[string]any{"type": "text", "text": "Looking."}, use("t1")}}},
+		result("r1", "a1", "t1"),
+		{"type": "assistant", "uuid": "a2", "parentUuid": "r1", "timestamp": "2026-09-01T10:00:03.000Z",
+			"message": map[string]any{"id": "msg_2", "model": "m", "content": []any{use("t2")}}},
+		result("r2", "a2", "t2"),
+	}
+	var main strings.Builder
+	for _, l := range lines {
+		b, _ := json.Marshal(l)
+		main.Write(b)
+		main.WriteByte('\n')
+	}
+	srv := newSite(t, map[string]string{"-Users-ted-src-app/" + sess + ".jsonl": main.String()})
+
+	_, feed := get(t, srv.URL+"/")
+	i := strings.Index(feed, `href="/sessions/`)
+	link := feed[i+len(`href="`):]
+	_, page := get(t, srv.URL+link[:strings.Index(link, `"`)])
+	for _, want := range []string{
+		`<div class="msg assistant" id="m-a1">`,
+		`<div class="msg assistant tools-only" id="m-a2">`,
+		`<div class="msg user" id="m-u1">`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("transcript lacks %q", want)
+		}
+	}
+}
