@@ -21,7 +21,7 @@ Source: [Spec assembly: fold decisions into the handoff spec](https://github.com
 
 | # | Document | Covers |
 |---|---|---|
-| 0 | [`CONTEXT.md`](../../CONTEXT.md) | The vocabulary: Hub, Collector, Machine, Source, Session, Project, Child Session, Transcript, Message, Part, Tool call, Raw record, Record key, Layout, Parse warning. Every spec uses these terms. |
+| 0 | [`GLOSSARY.md`](../../GLOSSARY.md) | The vocabulary: Hub, Collector, Machine, Source, Session, Project, Child Session, Transcript, Message, Part, Tool call, Raw record, Record key, Layout, Parse warning. Every spec uses these terms. |
 | 1 | [`protocol.md`](protocol.md) | The Collector → Hub ingestion protocol: the Raw record and its Record key, the four `/api/v1` endpoints, append / replace, manifest reconcile, versioning and the minimum Collector version, response codes |
 | 2 | [`collector.md`](collector.md) | The `agent-history` binary: CLI, config, state dir and control socket, the Collector-side adapter interface, run loop, exclusions, Layout drift, launchd / systemd service, self-restart, Collector release |
 | 3 | [`hub.md`](hub.md) | The `agent-history-hub` binary: CLI, env config, HTTP routes, the Hub-side parser interface, SQLite schema, parse queue and Re-parse flow, Project assignment, Parse warnings, search, Web UI, backups, migrations, image and Hub release |

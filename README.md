@@ -180,7 +180,7 @@ just build    # build both binaries into bin/
 
 `just` lists every recipe. The build-ready design lives in
 [docs/spec/](docs/spec/README.md), with the vocabulary in
-[CONTEXT.md](CONTEXT.md). Releases are cut by pushing a tag; see
+[GLOSSARY.md](GLOSSARY.md). Releases are cut by pushing a tag; see
 [docs/releasing.md](docs/releasing.md).
 
 ## License
