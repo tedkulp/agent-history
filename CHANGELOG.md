@@ -9,6 +9,8 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-07
+
 ### Added
 
 - A "Hide tool calls" toggle in the Transcript header hides every Tool call, and Messages holding only Tool calls. The choice is remembered in the browser for every Session; a link or search hit to a hidden Tool call still shows just that one.
@@ -102,7 +104,8 @@ One version covers the Collector and the Hub together (see
 - Release pipeline: CI, GoReleaser archives for the Collector and a
   multi-arch Hub image, published from a version tag.
 
-[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/tedkulp/agent-history/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/tedkulp/agent-history/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/tedkulp/agent-history/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/tedkulp/agent-history/compare/v0.3.0...v0.4.0
