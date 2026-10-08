@@ -11,6 +11,13 @@ function revealTools(el) {
   if (el.matches(".msg.tools-only")) el.querySelectorAll("details.cluster").forEach(function (c) { c.classList.add("revealed"); });
 }
 
+// A click no handler has claimed yet, made with the primary button and no
+// modifier keys: anything else keeps the browser's default (new tab and so on).
+function plainClick(e) {
+  "use strict";
+  return !e.defaultPrevented && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
+}
+
 // Arriving from search (hub.md §4.7): wrap each hl term in <mark> in the
 // Transcript's text nodes, never tags or attributes, and open the collapsed
 // rows of the target Message that hold a match. The target flashes by CSS.
@@ -123,7 +130,7 @@ function revealTools(el) {
   });
 
   document.addEventListener("click", function (e) {
-    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (!plainClick(e)) return;
     var a = e.target.closest('a[href^="#"]');
     if (!a) return;
     var hash = a.getAttribute("href"), el = byHash(hash);
@@ -380,7 +387,7 @@ function revealTools(el) {
   showOrHide();
 
   link.addEventListener("click", function (e) {
-    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (!plainClick(e)) return;
     e.preventDefault();
     var reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     window.scrollTo({ top: 0, behavior: reduceMotion ? "auto" : "smooth" });
@@ -439,7 +446,7 @@ function revealTools(el) {
   }
 
   document.addEventListener("click", function (e) {
-    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (!plainClick(e)) return;
     var a = e.target.closest("a.img");
     var thumb = a && a.querySelector("img");
     if (!thumb || typeof HTMLDialogElement !== "function") return;
