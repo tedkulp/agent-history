@@ -352,7 +352,7 @@ templ chunk(c chunkView) {
 	if c.Tools != nil {
 		@toolCluster(c)
 	} else if c.Image != nil {
-		<a class="img" href={ templ.SafeURL(c.Image.Src) } target="_blank">
+		<a class="img" href={ templ.SafeURL(c.Image.Src) }>
 			<img src={ c.Image.Src } alt={ c.Image.Alt } loading="lazy"/>
 		</a>
 	} else if c.Marker != nil && c.Marker.Task != nil {

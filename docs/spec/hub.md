@@ -568,7 +568,7 @@ These apply wherever Transcript content is shown.
 - Fenced code blocks are highlighted with chroma using CSS classes (not inline styles), with one light and one dark stylesheet selected by `prefers-color-scheme`.
 - Tool input renders as pretty-printed JSON. Tool output renders as preformatted text, not Markdown.
 - A `diff` payload renders as a line-level unified diff (`github.com/sergi/go-diff` line mode), with the file path as its heading.
-- `image` Parts render inline from `/blobs/{sha256}`, scaled down to the column width, opening full size on click.
+- `image` Parts render inline from `/blobs/{sha256}`, scaled down to the column width. A plain click opens the image full size in an in-page overlay (a modal `<dialog>`), scaled down only to fit the viewport; Esc, a click outside the image or ✕ closes it, and "Open original" opens the blob in a new tab. Modified clicks keep the browser's default, and without JavaScript the click opens the blob in the same tab.
 - Times show in the container's `TZ`.
 
 Source: [Hub language and web UI stack](https://github.com/tedkulp/agent-history/issues/7), [Web UI: browse and search screens](https://github.com/tedkulp/agent-history/issues/13); HTML escaping, chroma classes and the diff library filled in while writing this spec

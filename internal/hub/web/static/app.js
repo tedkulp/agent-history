@@ -405,3 +405,49 @@ function revealTools(el) {
     } catch (err) { /* storage blocked: the choice lasts for this page only */ }
   });
 })();
+
+// Image overlay (hub.md §4.6): an unmodified primary click on an inline image
+// opens it full size in a modal <dialog>, scaled down only to fit the
+// viewport. Esc, a click outside the image or ✕ closes it; "Open original"
+// opens the blob in a new tab. The live Transcript swaps Messages in, so
+// listen on the document. Modified clicks keep the browser's own behaviour.
+(function () {
+  "use strict";
+  var dlg = null, img, orig;
+
+  function build() {
+    dlg = document.createElement("dialog");
+    dlg.className = "img-view";
+    var close = document.createElement("button");
+    close.type = "button";
+    close.className = "close";
+    close.setAttribute("aria-label", "Close");
+    close.textContent = "\u2715";
+    img = document.createElement("img");
+    orig = document.createElement("a");
+    orig.className = "orig";
+    orig.target = "_blank";
+    orig.rel = "noopener";
+    orig.textContent = "Open original";
+    dlg.append(close, img, orig);
+    // Anything but the image and the link is backdrop or the ✕.
+    dlg.addEventListener("click", function (e) {
+      if (e.target !== img && e.target !== orig) dlg.close();
+    });
+    dlg.addEventListener("close", function () { img.removeAttribute("src"); });
+    document.body.appendChild(dlg);
+  }
+
+  document.addEventListener("click", function (e) {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    var a = e.target.closest("a.img");
+    var thumb = a && a.querySelector("img");
+    if (!thumb || typeof HTMLDialogElement !== "function") return;
+    e.preventDefault();
+    if (!dlg) build();
+    img.src = thumb.currentSrc || thumb.src;
+    img.alt = thumb.alt;
+    orig.href = a.href;
+    dlg.showModal();
+  });
+})();

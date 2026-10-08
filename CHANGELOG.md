@@ -9,6 +9,10 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+### Changed
+
+- Clicking an image in a Transcript opens it full size in an overlay on the page instead of a new tab. Ctrl/Cmd-click or middle-click still opens a new tab.
+
 ## [0.6.0] - 2026-10-07
 
 ### Added

@@ -447,6 +447,10 @@ func TestTranscriptToolCallsAndImages(t *testing.T) {
 	}
 	src := page[j+len(`<img src="`):]
 	src = src[:strings.Index(src, `"`)]
+	// The link opens the overlay (app.js), or the blob in this tab without script.
+	if !strings.Contains(page, `<a class="img" href="`+src+`">`) {
+		t.Errorf("image link: %.200q", page[strings.LastIndex(page[:j], "<a"):j])
+	}
 	resp, err := http.Get(srv.URL + src)
 	if err != nil {
 		t.Fatal(err)
