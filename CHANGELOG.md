@@ -9,6 +9,8 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-08
+
 ### Changed
 
 - Clicking an image in a Transcript opens it full size in an overlay on the page instead of a new tab. Ctrl/Cmd-click or middle-click still opens a new tab.
@@ -108,7 +110,8 @@ One version covers the Collector and the Hub together (see
 - Release pipeline: CI, GoReleaser archives for the Collector and a
   multi-arch Hub image, published from a version tag.
 
-[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/tedkulp/agent-history/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/tedkulp/agent-history/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/tedkulp/agent-history/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/tedkulp/agent-history/compare/v0.4.0...v0.5.0
