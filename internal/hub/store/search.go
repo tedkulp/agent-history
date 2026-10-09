@@ -137,6 +137,7 @@ type Hit struct {
 	MessageID   string // "" for a title hit
 	Role        string // the Message's role; "" for a title hit
 	Snippet     string // raw text, each match between SnippetOpen and SnippetClose
+	Timestamp   int64  // the Message's time, or the Session's last activity for a title hit; Unix ms, 0 when unknown
 	ParentID    int64  // set for a hit in a Child Session
 	ParentTitle string
 }
@@ -177,7 +178,7 @@ func (s *Store) Search(ctx context.Context, terms []string, f FeedFilter, offset
 	rows, err := s.read.QueryContext(ctx, `
 		SELECT s.id, s.source, s.native_id, coalesce(s.title, ''), m.id, `+machineLabel+`, coalesce(s.project_cwd, ''),
 			coalesce(search.message_id, ''), coalesce(msg.role, ''),
-			snippet(search, 0, ?, ?, '…', ?),
+			snippet(search, 0, ?, ?, '…', ?), coalesce(msg.timestamp, s.last_activity_at, 0),
 			coalesce(p.id, 0), coalesce(p.title, p.native_id, '')
 		FROM `+searchFrom+`
 		LEFT JOIN messages msg ON msg.session_id = s.id AND msg.id = search.message_id
@@ -194,7 +195,7 @@ func (s *Store) Search(ctx context.Context, terms []string, f FeedFilter, offset
 	for rows.Next() {
 		var h Hit
 		if err := rows.Scan(&h.SessionID, &h.Source, &h.NativeID, &h.Title, &h.MachineID, &h.Machine, &h.ProjectCwd,
-			&h.MessageID, &h.Role, &h.Snippet, &h.ParentID, &h.ParentTitle); err != nil {
+			&h.MessageID, &h.Role, &h.Snippet, &h.Timestamp, &h.ParentID, &h.ParentTitle); err != nil {
 			return nil, err
 		}
 		out = append(out, h)

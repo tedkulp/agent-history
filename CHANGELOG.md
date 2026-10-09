@@ -9,6 +9,10 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+### Added
+
+- A read-only MCP endpoint at `/mcp` on the Hub lets coding agents such as Claude Code and Codex search past Sessions, list recent ones and read their Transcripts. `AGENT_HISTORY_PUBLIC_URL` sets the base of the web links it returns.
+
 ## [0.7.0] - 2026-10-08
 
 ### Changed

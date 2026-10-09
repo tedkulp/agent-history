@@ -269,3 +269,64 @@ func TestSearchPages(t *testing.T) {
 		t.Errorf("paged hits = %d, want 14", len(seen))
 	}
 }
+
+func TestSearchSinceUntilAndHitTimes(t *testing.T) {
+	s := seedSearch(t,
+		searchSession("ibis early", "ok", "", "x", ""),
+		strings.ReplaceAll(searchSession("ibis late", "ok", "", "x", ""), "2026-09-01", "2026-09-20"),
+	)
+	sep10 := int64(1_789_000_000_000) // 2026-09-10
+	late := search(t, s, "ibis", FeedFilter{Since: sep10})
+	early := search(t, s, "ibis", FeedFilter{Until: sep10})
+	if len(late) != 2 || len(early) != 2 || late[0].SessionID == early[0].SessionID {
+		t.Fatalf("late = %+v, early = %+v", late, early)
+	}
+	for _, h := range late {
+		// A Message hit is dated by its Message, a title hit by the Session's last activity.
+		want := int64(1_789_898_400_000) // 2026-09-20T10:00:00Z, u1
+		if h.MessageID == "" {
+			want = 1_789_898_403_000 // r1, the last Message
+		}
+		if h.Timestamp != want {
+			t.Errorf("hit %q at %d, want %d", h.MessageID, h.Timestamp, want)
+		}
+	}
+	fs, err := s.SearchFacets(context.Background(), ParseQuery("ibis"), FeedFilter{Since: sep10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fs.Sources) != 1 || fs.Sources[0].Hits != 2 {
+		t.Errorf("facets with since = %+v", fs.Sources)
+	}
+}
+
+func TestTranscriptRangeAndMessageOrdinal(t *testing.T) {
+	s := seedSearch(t, searchSession("stork", "reply", "", "x", "out"))
+	ctx := context.Background()
+	id := sessionIDOf(t, s, uuid(1))
+	_, all, _, err := s.Transcript(ctx, id)
+	if err != nil || len(all) < 3 {
+		t.Fatalf("Transcript = %d Messages, %v", len(all), err)
+	}
+	h, msgs, total, ok, err := s.TranscriptRange(ctx, id, 1, 2)
+	if err != nil || !ok || h.ID != id {
+		t.Fatalf("TranscriptRange = %+v, %v, %v", h, ok, err)
+	}
+	if total != len(all) || len(msgs) != 2 || msgs[0].ID != all[1].ID || msgs[1].ID != all[2].ID {
+		t.Errorf("range(1, 2) = %+v of %d, want %v of %d", msgs, total, all[1:3], len(all))
+	}
+	if _, msgs, _, _, _ := s.TranscriptRange(ctx, id, len(all), 5); len(msgs) != 0 {
+		t.Errorf("range past the end = %+v", msgs)
+	}
+	if _, _, _, ok, _ := s.TranscriptRange(ctx, 999, 0, 5); ok {
+		t.Error("range of an unknown Session is ok")
+	}
+
+	n, ok, err := s.MessageOrdinal(ctx, id, all[2].ID)
+	if err != nil || !ok || n != 2 {
+		t.Errorf("MessageOrdinal(%s) = %d, %v, %v", all[2].ID, n, ok, err)
+	}
+	if _, ok, _ := s.MessageOrdinal(ctx, id, "nope"); ok {
+		t.Error("MessageOrdinal of an unknown Message is ok")
+	}
+}

@@ -67,6 +67,7 @@ Env vars only, each with a matching CLI flag. There is no config file.
 | `AGENT_HISTORY_BACKUP_KEEP` | `7` | Number of scheduled backups kept |
 | `AGENT_HISTORY_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`. `slog` text to stdout. |
 | `AGENT_HISTORY_MIN_COLLECTOR_VERSION` | unset | Raises the minimum Collector version. It can never lower the compiled-in floor (`protocol.md` §4.6). |
+| `AGENT_HISTORY_PUBLIC_URL` | unset | Base URL for the web links `/mcp` returns. Unset, each request's scheme and `Host` are used. |
 
 An invalid value (unparseable time, negative keep, bad semver) makes `serve` exit `1` with the reason.
 
@@ -99,6 +100,12 @@ All on one listener, plain HTTP.
 | `GET /blobs/{sha256}` | An image blob with its stored MIME type and `Cache-Control: public, max-age=31536000, immutable`. Only PNG, JPEG, GIF and WebP are served as themselves; any other type (SVG included) is served as `application/octet-stream` with `X-Content-Type-Options: nosniff`, so a blob can't run script. |
 | `GET /static/…` | Embedded CSS and JS |
 | `GET /healthz` | `200 ok` once migrations are done and the database answers `SELECT 1`; `503` otherwise |
+
+**MCP** ([#69](https://github.com/tedkulp/agent-history/issues/69)):
+
+| Route | Serves |
+|---|---|
+| `POST /mcp` | A stateless, read-only MCP server over Streamable HTTP, with no auth like the UI. Tools: `search` (hits with snippets and Machine / Source / Project facets), `list_sessions` (the feed: newest first, no Child Sessions, `before` cursor) and `get_transcript` (Messages around a `message_id`, or paged by position; Tool call output and thinking only on request, output cut to 2 KB). Filters: `machine` (name or id), `source`, `cwd` (that path on any Machine), `since` and `until` (Sessions active in the range). `limit` is at most 100, `around` at most ±50. Every result carries a note that it is quoted history, and a web link per Session. |
 
 - The UI routes have no JSON API. htmx requests get HTML fragments.
 - Server timeouts: `ReadHeaderTimeout` 10 s, `IdleTimeout` 120 s. No write timeout, since a large Transcript page can take a while to stream and an events stream stays open.

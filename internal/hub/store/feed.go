@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"math"
 	"strings"
 	"time"
 
@@ -46,6 +47,10 @@ type FeedFilter struct {
 	Warnings bool    // only Sessions with Parse warnings or a failed parse
 	Before   *Cursor // only rows older than this one (later in feed order)
 	IDs      []int64 // non-nil: only these Sessions, for a live feed page
+	// Since and Until keep Sessions active in [Since, Until): last active at
+	// or after Since, started before Until. Unix ms; 0 doesn't bound. A
+	// Session with no start time counts from its last activity.
+	Since, Until int64
 }
 
 // hasWarnings selects Sessions with any Parse warning or a failed parse: the
@@ -100,8 +105,9 @@ func (s *Store) Feed(ctx context.Context, f FeedFilter, limit int) ([]FeedRow, e
 	return out, rows.Err()
 }
 
-// chipWhere is the WHERE conditions and args for f's chips, on sessions s. The
-// web package's feedParams.shows matches live Sessions the same way.
+// chipWhere is the WHERE conditions and args for f's chips and date range, on
+// sessions s. The web package's feedParams.shows matches live Sessions the
+// same way; the Web UI sets no date range.
 func chipWhere(f FeedFilter) ([]string, []any) {
 	var (
 		where []string
@@ -125,6 +131,14 @@ func chipWhere(f FeedFilter) ([]string, []any) {
 	}
 	if f.Warnings {
 		where = append(where, hasWarnings)
+	}
+	if f.Since != 0 {
+		where = append(where, `coalesce(s.last_activity_at, 0) >= ?`)
+		args = append(args, f.Since)
+	}
+	if f.Until != 0 {
+		where = append(where, `coalesce(s.started_at, s.last_activity_at, 0) < ?`)
+		args = append(args, f.Until)
 	}
 	return where, args
 }
@@ -328,6 +342,30 @@ func (s *Store) Transcript(ctx context.Context, id int64) (h SessionHeader, msgs
 	return h, msgs, err == nil, err
 }
 
+// TranscriptRange returns a Session's header, at most limit of its Messages
+// from ordinal from on, and how many Messages it has in all. ok is false like
+// Transcript.
+func (s *Store) TranscriptRange(ctx context.Context, id int64, from, limit int) (h SessionHeader, msgs []TranscriptMessage, total int, ok bool, err error) {
+	if h, ok, err = s.sessionHeader(ctx, id); !ok || err != nil {
+		return h, nil, 0, ok, err
+	}
+	if err = s.read.QueryRowContext(ctx, `SELECT count(*) FROM messages WHERE session_id = ?`, id).Scan(&total); err != nil {
+		return h, nil, 0, false, err
+	}
+	msgs, err = s.messagesBetween(ctx, id, from, from+limit)
+	return h, msgs, total, err == nil, err
+}
+
+// MessageOrdinal returns a Message's position in its Session's Transcript,
+// with ok false when the Session has no such Message.
+func (s *Store) MessageOrdinal(ctx context.Context, sessionID int64, messageID string) (n int, ok bool, err error) {
+	err = s.read.QueryRowContext(ctx, `SELECT ordinal FROM messages WHERE session_id = ? AND id = ?`, sessionID, messageID).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	return n, err == nil, err
+}
+
 // ErrTranscriptChanged is returned by TranscriptTail when the Messages before
 // the page's last one moved: a rewind, a new branch or a compaction.
 var ErrTranscriptChanged = errors.New("transcript changed")
@@ -446,11 +484,17 @@ func (s *Store) sessionHeader(ctx context.Context, id int64) (h SessionHeader, o
 // messagesFrom loads a Session's Messages from ordinal from on, with their
 // Parts, in order.
 func (s *Store) messagesFrom(ctx context.Context, id int64, from int) ([]TranscriptMessage, error) {
+	return s.messagesBetween(ctx, id, from, math.MaxInt)
+}
+
+// messagesBetween loads a Session's Messages with ordinals in [from, to),
+// with their Parts, in order.
+func (s *Store) messagesBetween(ctx context.Context, id int64, from, to int) ([]TranscriptMessage, error) {
 	rows, err := s.read.QueryContext(ctx, `
 		SELECT m.id, m.role, coalesce(m.timestamp, 0), p.id, p.kind, p.payload_json
 		FROM messages m LEFT JOIN parts p ON p.session_id = m.session_id AND p.message_id = m.id
-		WHERE m.session_id = ? AND m.ordinal >= ?
-		ORDER BY m.ordinal, p.ordinal`, id, from)
+		WHERE m.session_id = ? AND m.ordinal >= ? AND m.ordinal < ?
+		ORDER BY m.ordinal, p.ordinal`, id, from, to)
 	if err != nil {
 		return nil, err
 	}

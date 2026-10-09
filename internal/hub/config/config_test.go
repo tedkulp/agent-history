@@ -48,13 +48,14 @@ func TestEnvSetsEveryValue(t *testing.T) {
 		"AGENT_HISTORY_BACKUP_KEEP":           "0",
 		"AGENT_HISTORY_LOG_LEVEL":             "debug",
 		"AGENT_HISTORY_MIN_COLLECTOR_VERSION": "99.0.0",
+		"AGENT_HISTORY_PUBLIC_URL":            "https://history.example.com/",
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.Listen != "127.0.0.1:9000" || c.Data != "/srv/data" || c.BackupDir != "/srv/backups" ||
 		*c.BackupAt != (TimeOfDay{23, 45}) || c.BackupKeep != 0 || c.LogLevel != slog.LevelDebug ||
-		c.MinCollectorVersion != "99.0.0" {
+		c.MinCollectorVersion != "99.0.0" || c.PublicURL != "https://history.example.com" {
 		t.Errorf("got %+v (BackupAt %v)", c, c.BackupAt)
 	}
 }
@@ -109,6 +110,8 @@ func TestInvalidValuesNameTheSetting(t *testing.T) {
 		{"listen", nil, map[string]string{"AGENT_HISTORY_LISTEN": "8080"}, `AGENT_HISTORY_LISTEN: "8080"`},
 		{"listen port", []string{"--listen", ":http"}, nil, `--listen: ":http"`},
 		{"empty data", nil, map[string]string{"AGENT_HISTORY_DATA": ""}, `AGENT_HISTORY_DATA: must not be empty`},
+		{"public url", nil, map[string]string{"AGENT_HISTORY_PUBLIC_URL": "history.example.com"}, `AGENT_HISTORY_PUBLIC_URL: "history.example.com"`},
+		{"public url scheme", []string{"--public-url", "ftp://h"}, nil, `--public-url: "ftp://h"`},
 		{"stray arg", []string{"extra"}, nil, `unexpected argument "extra"`},
 	}
 	for _, tc := range cases {

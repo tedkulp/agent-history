@@ -214,7 +214,7 @@ func newMarkerView(partID string, mp parser.MarkerPayload) *markerView {
 
 func newToolView(sessionID int64, partID string, tc parser.ToolCallPayload) toolView {
 	v := toolView{ID: partID, Name: tc.Name, Status: tc.Status, Input: prettyJSON(tc.Input)}
-	v.Summary, v.Target = callSummary(tc.Description, tc.Input)
+	v.Summary, v.Target = CallSummary(tc.Description, tc.Input)
 	for _, n := range tc.Notifications {
 		v.NoteHrefs = append(v.NoteHrefs, "#p-"+n)
 	}
@@ -267,11 +267,11 @@ var summaryKeys = []string{"command", "file_path", "path", "pattern", "url", "qu
 // targetKeys are input fields naming what a call acts on.
 var targetKeys = []string{"command", "file_path", "path", "pattern", "url", "query"}
 
-// callSummary is one line describing a call: its description (the payload's,
+// CallSummary is one line describing a call: its description (the payload's,
 // else its input's) with its input's first targetKeys field as target, else
 // the input's most telling string field, else its compact JSON. Each is cut
 // to 100 characters.
-func callSummary(desc string, in json.RawMessage) (summary, target string) {
+func CallSummary(desc string, in json.RawMessage) (summary, target string) {
 	var obj map[string]any
 	_ = json.Unmarshal(in, &obj) // not an object: obj stays nil
 	clip := func(s string) string { return cut(oneLine(s), 100) }
