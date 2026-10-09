@@ -25,8 +25,16 @@ type Session struct {
 	Source    string `json:"source"`
 	Machine   string `json:"machine"`
 	Project   string `json:"project,omitempty" jsonschema:"the working directory it started in; empty for no Project"`
-	Date      string `json:"date,omitempty" jsonschema:"its last activity"`
+	Date      string `json:"date,omitempty" jsonschema:"its last activity; for a search hit, when the Message was written"`
 	URL       string `json:"url" jsonschema:"its Transcript in the Hub's web UI"`
+}
+
+// session quotes a Session; an untitled one goes by its native id.
+func session(base string, id int64, native, title, source, machine, project string, at int64) Session {
+	return Session{
+		SessionID: id, NativeID: native, Title: cmp.Or(title, native), Source: source,
+		Machine: machine, Project: project, Date: date(at), URL: sessionURL(base, id),
+	}
 }
 
 // SessionLink names another Session.
@@ -46,9 +54,8 @@ type Hit struct {
 	Session
 	MessageID string       `json:"message_id,omitempty" jsonschema:"the Message hit; empty when the title matched"`
 	Role      string       `json:"role,omitempty"`
-	Date      string       `json:"date,omitempty" jsonschema:"when the Message was written"`
 	Snippet   string       `json:"snippet" jsonschema:"the matching text, each match between ** marks"`
-	Parent    *SessionLink `json:"parent,omitempty" jsonschema:"the Session whose tool call spawned this Child Session"`
+	Parent    *SessionLink `json:"parent,omitempty" jsonschema:"the Session whose Tool call spawned this Child Session"`
 }
 
 // Facet is one filter value with its hit count.
@@ -94,11 +101,8 @@ func (t *tools) search(ctx context.Context, req *gomcp.CallToolRequest, in Searc
 	snippet := strings.NewReplacer(store.SnippetOpen, "**", store.SnippetClose, "**")
 	for _, h := range hits {
 		hit := Hit{
-			Session: Session{
-				SessionID: h.SessionID, NativeID: h.NativeID, Title: h.Title, Source: h.Source,
-				Machine: h.Machine, Project: h.ProjectCwd, URL: sessionURL(base, h.SessionID),
-			},
-			MessageID: h.MessageID, Role: h.Role, Date: date(h.Timestamp), Snippet: snippet.Replace(h.Snippet),
+			Session:   session(base, h.SessionID, h.NativeID, h.Title, h.Source, h.Machine, h.ProjectCwd, h.Timestamp),
+			MessageID: h.MessageID, Role: h.Role, Snippet: snippet.Replace(h.Snippet),
 		}
 		if h.MessageID != "" {
 			hit.URL += "#m-" + url.PathEscape(h.MessageID)
@@ -159,10 +163,7 @@ func (t *tools) listSessions(ctx context.Context, req *gomcp.CallToolRequest, in
 	}
 	base := baseURL(req)
 	for _, r := range rows {
-		out.Sessions = append(out.Sessions, Session{
-			SessionID: r.ID, NativeID: r.NativeID, Title: cmp.Or(r.Title, r.NativeID), Source: r.Source,
-			Machine: r.Machine, Project: r.ProjectCwd, Date: date(r.LastActivityAt), URL: sessionURL(base, r.ID),
-		})
+		out.Sessions = append(out.Sessions, session(base, r.ID, r.NativeID, r.Title, r.Source, r.Machine, r.ProjectCwd, r.LastActivityAt))
 	}
 	if len(rows) == n {
 		last := rows[len(rows)-1]
@@ -177,8 +178,8 @@ type TranscriptInput struct {
 	Around            string `json:"around,omitempty" jsonschema:"a message_id: return the Messages around it; not with from"`
 	Context           int    `json:"context,omitempty" jsonschema:"with around, how many Messages before and after it: default 10, at most 50"`
 	From              *int   `json:"from,omitempty" jsonschema:"the position of the first Message to return, 0 for the start, or a previous next"`
-	Limit             int    `json:"limit,omitempty" jsonschema:"with from, most Messages to return: default 50, at most 100"`
-	IncludeToolOutput bool   `json:"include_tool_output,omitempty" jsonschema:"include each tool call's output, cut to about 2 KB"`
+	Limit             int    `json:"limit,omitempty" jsonschema:"without around, most Messages to return: default 50, at most 100"`
+	IncludeToolOutput bool   `json:"include_tool_output,omitempty" jsonschema:"include each Tool call's output, cut to about 2 KB"`
 	IncludeThinking   bool   `json:"include_thinking,omitempty" jsonschema:"include the assistant's thinking"`
 }
 
@@ -186,7 +187,7 @@ type TranscriptInput struct {
 type TranscriptOutput struct {
 	Note       string       `json:"note"`
 	Session    Session      `json:"session"`
-	Parent     *SessionLink `json:"parent,omitempty" jsonschema:"the Session whose tool call spawned this Child Session"`
+	Parent     *SessionLink `json:"parent,omitempty" jsonschema:"the Session whose Tool call spawned this Child Session"`
 	ParseError string       `json:"parse_error,omitempty" jsonschema:"set when the Hub couldn't parse the Session's latest data"`
 	Total      int          `json:"total_messages"`
 	Messages   []Message    `json:"messages"`
@@ -211,9 +212,9 @@ func (t *tools) getTranscript(ctx context.Context, req *gomcp.CallToolRequest, i
 	if in.Around != "" && in.From != nil {
 		return nil, out, errors.New("pass around or from, not both")
 	}
-	from, n := 0, defaultPage
+	from, n := 0, limit(in.Limit, defaultPage, maxLimit)
 	if in.From != nil {
-		from, n = max(*in.From, 0), limit(in.Limit, defaultPage, maxLimit)
+		from = max(*in.From, 0)
 	}
 	if in.Around != "" {
 		at, ok, err := t.store.MessageOrdinal(ctx, in.SessionID, in.Around)
@@ -234,10 +235,7 @@ func (t *tools) getTranscript(ctx context.Context, req *gomcp.CallToolRequest, i
 		return nil, out, fmt.Errorf("no Session %d", in.SessionID)
 	}
 	base := baseURL(req)
-	out.Session = Session{
-		SessionID: h.ID, NativeID: h.NativeID, Title: cmp.Or(h.Title, h.NativeID), Source: h.Source,
-		Machine: h.Machine, Project: h.ProjectCwd, Date: date(h.StartedAt), URL: sessionURL(base, h.ID),
-	}
+	out.Session = session(base, h.ID, h.NativeID, h.Title, h.Source, h.Machine, h.ProjectCwd, h.StartedAt)
 	if h.Parent != nil {
 		out.Parent = &SessionLink{SessionID: h.Parent.ID, Title: cmp.Or(h.Parent.Title, h.Parent.NativeID)}
 	}
@@ -270,17 +268,17 @@ func (t *tools) render(ctx context.Context, h store.SessionHeader, parts []store
 		switch p.Kind {
 		case parser.KindText:
 			var tp parser.TextPayload
-			if json.Unmarshal([]byte(p.Payload), &tp) == nil {
+			if t.decode(h.ID, p, &tp) {
 				line("%s", tp.Text)
 			}
 		case parser.KindThinking:
 			var tp parser.ThinkingPayload
-			if in.IncludeThinking && json.Unmarshal([]byte(p.Payload), &tp) == nil {
+			if in.IncludeThinking && t.decode(h.ID, p, &tp) {
 				line("[thinking]\n%s\n[/thinking]", tp.Text)
 			}
 		case parser.KindToolCall:
 			var tc parser.ToolCallPayload
-			if json.Unmarshal([]byte(p.Payload), &tc) != nil {
+			if !t.decode(h.ID, p, &tc) {
 				continue
 			}
 			summary, target := web.CallSummary(tc.Description, tc.Input)
@@ -311,25 +309,34 @@ func (t *tools) render(ctx context.Context, h store.SessionHeader, parts []store
 			}
 		case parser.KindMarker:
 			var mp parser.MarkerPayload
-			if json.Unmarshal([]byte(p.Payload), &mp) == nil {
+			if t.decode(h.ID, p, &mp) {
 				line("[%s] %s", mp.Marker, mp.Text)
 			}
 		case parser.KindImage:
 			line("[image]")
 		case parser.KindAttachment:
 			var ap parser.AttachmentPayload
-			_ = json.Unmarshal([]byte(p.Payload), &ap)
+			t.decode(h.ID, p, &ap)
 			line("[attachment: %s]", ap.Label)
 		case parser.KindUnknown:
 			var up parser.UnknownPayload
-			_ = json.Unmarshal([]byte(p.Payload), &up)
+			t.decode(h.ID, p, &up)
 			line("[unrecognised %s]", up.SourceType)
 		}
 	}
 	return b.String(), nil
 }
 
-// toolOutput is a tool call's output cut to toolOutputMax, saying how much
+// decode decodes a Part's payload into v, logging a bad one.
+func (t *tools) decode(sessionID int64, p store.TranscriptPart, v any) bool {
+	if err := json.Unmarshal([]byte(p.Payload), v); err != nil {
+		t.log.Warn("bad "+p.Kind+" payload", "session", sessionID, "part", p.ID, "err", err)
+		return false
+	}
+	return true
+}
+
+// toolOutput is a Tool call's output cut to toolOutputMax, saying how much
 // was left out.
 func (t *tools) toolOutput(ctx context.Context, sessionID int64, partID string, tc parser.ToolCallPayload) (string, error) {
 	var o string

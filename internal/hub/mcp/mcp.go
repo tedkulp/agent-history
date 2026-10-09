@@ -62,7 +62,7 @@ func New(st *store.Store, publicURL string, log *slog.Logger) http.Handler {
 	}, t.search)
 	gomcp.AddTool(srv, &gomcp.Tool{
 		Name:        "list_sessions",
-		Description: "List past Sessions newest activity first, without the Child Sessions that tool calls spawned. Page with before, from the previous page's next.",
+		Description: "List past Sessions newest activity first, without the Child Sessions that Tool calls spawned. Page with before, from the previous page's next.",
 		Annotations: readOnly,
 	}, t.listSessions)
 	gomcp.AddTool(srv, &gomcp.Tool{

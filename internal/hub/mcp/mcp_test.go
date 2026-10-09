@@ -74,7 +74,8 @@ var bigOutput = strings.Repeat("0123456789abcdef", 1200) + "THE END"
 //     sqlite lock, a reply with thinking, an Agent call spawning Child
 //     Session "a", and a Bash call with output too big for its payload.
 //   - B on desk, 2026-09-20, also in /Users/ted/src/app: one short exchange.
-//   - C on laptop, 2026-09-10, in /Users/ted/src/lib: 30 Messages.
+//   - C on laptop, 2026-09-10, in /Users/ted/src/lib: 220 Messages, more
+//     than any one call returns.
 func fixture() map[string][2]string {
 	a := jsonLines(
 		userLine("u1", "", "2026-09-01T10:00:00.000Z", "how do I fix the sqlite lock?"),
@@ -90,15 +91,21 @@ func fixture() map[string][2]string {
 	child := jsonLines(map[string]any{"type": "user", "uuid": "c1", "parentUuid": nil, "isSidechain": true,
 		"timestamp": "2026-09-01T10:00:02.500Z", "cwd": "/Users/ted/src/app",
 		"message": map[string]any{"role": "user", "content": "explore the sqlite store"}})
+	shot := userLine("u2", "a1", "2026-09-20T09:00:02.000Z", "")
+	shot["message"] = map[string]any{"role": "user", "content": []any{
+		map[string]any{"type": "text", "text": "see the screenshot"},
+		map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}},
+	}}
 	b := jsonLines(
 		userLine("u1", "", "2026-09-20T09:00:00.000Z", "sqlite vacuum on desk"),
 		assistantLine("a1", "u1", "2026-09-20T09:00:01.000Z", map[string]any{"type": "text", "text": "Run VACUUM."}),
+		shot,
 	)
 	var c []map[string]any
 	parent := ""
-	for i := range 30 {
+	for i := range 220 {
 		id := fmt.Sprintf("m%02d", i)
-		at := fmt.Sprintf("2026-09-10T08:%02d:00.000Z", i)
+		at := fmt.Sprintf("2026-09-10T%02d:%02d:00.000Z", 8+i/60, i%60)
 		if i%2 == 0 {
 			c = append(c, userLine(id, parent, at, fmt.Sprintf("question %d", i)))
 		} else {
@@ -277,8 +284,12 @@ func TestSearchFilters(t *testing.T) {
 	if n := len(search(t, tl, SearchInput{Query: "question", Filters: Filters{Limit: 3}}).Hits); n != 3 {
 		t.Errorf("limit 3: %d hits", n)
 	}
-	if n := len(search(t, tl, SearchInput{Query: "question", Filters: Filters{Limit: 500}}).Hits); n != 16 {
-		t.Errorf("limit 500: %d hits, want all 16", n)
+	// 110 questions and C's title match, but one call returns at most 100.
+	if n := len(search(t, tl, SearchInput{Query: "question", Filters: Filters{Limit: 500}}).Hits); n != 100 {
+		t.Errorf("limit 500: %d hits, want the cap of 100", n)
+	}
+	if n := len(search(t, tl, SearchInput{Query: "question"}).Hits); n != 20 {
+		t.Errorf("default limit: %d hits, want 20", n)
 	}
 
 	for _, bad := range []SearchInput{
@@ -358,15 +369,29 @@ func TestGetTranscriptAroundAHit(t *testing.T) {
 	if out.Messages[2].Position != 10 || out.Messages[2].Content != "question 10" || out.Messages[2].Role != "user" {
 		t.Errorf("m10 = %+v", out.Messages[2])
 	}
-	if out.Total != 30 || out.Next == nil || *out.Next != 13 {
+	if out.Total != 220 || out.Next == nil || *out.Next != 13 {
 		t.Errorf("total %d, next %v", out.Total, out.Next)
 	}
 	if out.Session.Title != "question 0" || out.Session.Machine != "laptop" || out.Note != quoted {
 		t.Errorf("session = %+v", out.Session)
 	}
 	// Near the start, the window is cut, not shifted; context is capped at 50.
-	if out := transcript(t, tl, TranscriptInput{SessionID: c, Around: "m01", Context: 80}); len(out.Messages) != 30 || out.Next != nil {
-		t.Errorf("around m01 ±50 = %d Messages, next %v", len(out.Messages), out.Next)
+	if out := transcript(t, tl, TranscriptInput{SessionID: c, Around: "m01", Context: 80}); len(out.Messages) != 52 || out.Next == nil || *out.Next != 52 {
+		t.Errorf("around m01 ±50 = %d Messages, next %v; want m00 to m51", len(out.Messages), out.Next)
+	}
+	if out := transcript(t, tl, TranscriptInput{SessionID: c, Around: "m100", Context: 80}); len(out.Messages) != 101 || out.Messages[0].MessageID != "m50" {
+		t.Errorf("around m100 ±50 = %d Messages from %s", len(out.Messages), out.Messages[0].MessageID)
+	}
+
+	// Images are a placeholder line.
+	var b int64
+	for _, s := range list(t, tl, ListInput{}).Sessions {
+		if s.NativeID == sessB {
+			b = s.SessionID
+		}
+	}
+	if got := contents(transcript(t, tl, TranscriptInput{SessionID: b})); !strings.HasSuffix(got, "see the screenshot\n[image]") {
+		t.Errorf("B = %q, want the image as a placeholder", got)
 	}
 
 	// A's Transcript: thinking and output are left out unless asked for.
@@ -419,7 +444,7 @@ func TestGetTranscriptPages(t *testing.T) {
 	tl := newTools(t)
 	c := list(t, tl, ListInput{Filters: Filters{Cwd: "/Users/ted/src/lib"}}).Sessions[0].SessionID
 	var ids []string
-	in := TranscriptInput{SessionID: c, From: new(0), Limit: 12}
+	in := TranscriptInput{SessionID: c, From: new(0), Limit: 90}
 	for range 5 {
 		out := transcript(t, tl, in)
 		for _, m := range out.Messages {
@@ -430,14 +455,17 @@ func TestGetTranscriptPages(t *testing.T) {
 		}
 		in.From = out.Next
 	}
-	if len(ids) != 30 || ids[0] != "m00" || ids[29] != "m29" {
-		t.Errorf("paged ids = %v", ids)
+	if len(ids) != 220 || ids[0] != "m00" || ids[219] != "m219" {
+		t.Errorf("paged %d ids: %v … %v", len(ids), ids[:3], ids[len(ids)-3:])
 	}
-	if out := transcript(t, tl, TranscriptInput{SessionID: c}); len(out.Messages) != 30 {
+	if out := transcript(t, tl, TranscriptInput{SessionID: c}); len(out.Messages) != 50 || *out.Next != 50 {
 		t.Errorf("default page = %d Messages", len(out.Messages))
 	}
-	if out := transcript(t, tl, TranscriptInput{SessionID: c, From: new(0), Limit: 1000}); len(out.Messages) != 30 {
-		t.Errorf("limit 1000 = %d Messages", len(out.Messages))
+	if out := transcript(t, tl, TranscriptInput{SessionID: c, Limit: 7}); len(out.Messages) != 7 {
+		t.Errorf("limit 7 without from = %d Messages", len(out.Messages))
+	}
+	if out := transcript(t, tl, TranscriptInput{SessionID: c, From: new(0), Limit: 1000}); len(out.Messages) != 100 {
+		t.Errorf("limit 1000 = %d Messages, want the cap of 100", len(out.Messages))
 	}
 
 	for _, bad := range []TranscriptInput{
