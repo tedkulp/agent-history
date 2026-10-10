@@ -9,6 +9,8 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-09
+
 ### Changed
 
 - Slash commands other than Housekeeping ones (`/clear`, `/model`, …) show in the Transcript as user Messages: the command name as a chip, its arguments as Markdown. Markers that wrap over several lines are rounded rectangles instead of stretched pills.
@@ -120,7 +122,8 @@ One version covers the Collector and the Hub together (see
 - Release pipeline: CI, GoReleaser archives for the Collector and a
   multi-arch Hub image, published from a version tag.
 
-[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/tedkulp/agent-history/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/tedkulp/agent-history/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/tedkulp/agent-history/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/tedkulp/agent-history/compare/v0.5.1...v0.6.0
