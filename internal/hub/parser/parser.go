@@ -384,7 +384,7 @@ func TitleCandidate(msgs []Message) string {
 					return t
 				}
 			case MarkerPayload:
-				if isTitleMarker(pl) {
+				if IsTitleMarker(pl) {
 					return pl.Text
 				}
 			}
@@ -408,9 +408,9 @@ func userText(m Message) string {
 	return strings.Join(texts, "\n")
 }
 
-// isTitleMarker reports whether a marker is a slash command that isn't a
+// IsTitleMarker reports whether a marker is a slash command that isn't a
 // Housekeeping command. oh-my-pi extension markers have no leading slash.
-func isTitleMarker(mp MarkerPayload) bool {
+func IsTitleMarker(mp MarkerPayload) bool {
 	if mp.Marker != MarkerSlashCommand {
 		return false
 	}

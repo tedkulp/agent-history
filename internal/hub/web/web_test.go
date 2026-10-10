@@ -538,7 +538,7 @@ func TestTranscriptMarkersWarningsAndOutline(t *testing.T) {
 		`<details class="think"><summary>💭 thinking</summary><p><em>pondering</em></p>`,
 		`<div class="marker compaction">Conversation compacted</div>`,
 		`<details class="marker compaction"><summary>Compaction summary</summary>`, "Summary of &lt;b&gt;earlier&lt;/b&gt; work",
-		`<div class="marker slash_command">/review 42</div>`,
+		`<div class="msg user" id="m-c1"><div class="bubble command"><code class="cmd">/review</code><p>42</p>`,
 		`⚠ unknown <code>brand_new</code>`, "&lt;i&gt;x&lt;/i&gt;",
 		"📎 spec.pdf",
 		// Back to top: app.js reveals the link once scrolled and focuses the heading.
@@ -558,6 +558,54 @@ func TestTranscriptMarkersWarningsAndOutline(t *testing.T) {
 		if a, b := strings.Index(page, order[k-1]), strings.Index(page, order[k]); a < 0 || b < a {
 			t.Errorf("%s not before %s", order[k-1], order[k])
 		}
+	}
+}
+
+// A slash command that isn't Housekeeping is a user Message bubble: its name
+// as a chip, its arguments as Markdown. Housekeeping commands stay markers (#71).
+func TestTranscriptSlashCommandBubbles(t *testing.T) {
+	now := time.Now().UTC()
+	ts := func(s int) string {
+		return now.Add(time.Duration(s-100) * time.Second).Format("2006-01-02T15:04:05.000Z")
+	}
+	cmd := func(uuid string, parent any, s int, content string) map[string]any {
+		return map[string]any{"type": "user", "uuid": uuid, "parentUuid": parent, "timestamp": ts(s), "cwd": "/Users/ted/src/app",
+			"message": map[string]any{"role": "user", "content": content}}
+	}
+	lines := []map[string]any{
+		cmd("c1", nil, 0, "<command-name>/clear</command-name>\n<command-args></command-args>"),
+		cmd("c2", "c1", 1, "<command-name>/mattpocock-skills:wayfinder</command-name>\n<command-args>I currently have **two** plans:\n\n- one\n- two</command-args>"),
+		cmd("c3", "c2", 2, "<command-name>/implement-next</command-name>\n<command-args></command-args>"),
+	}
+	var main strings.Builder
+	enc := json.NewEncoder(&main)
+	enc.SetEscapeHTML(false)
+	for _, l := range lines {
+		if err := enc.Encode(l); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srv := newSiteRecords(t, []record{{"m1", "-Users-ted-src-app/" + sess + ".jsonl", main.String()}})
+
+	_, feed := get(t, srv.URL+"/")
+	if !strings.Contains(feed, "/mattpocock-skills:wayfinder I currently have") {
+		t.Error("the Session is not titled by its first non-Housekeeping command")
+	}
+	i := strings.Index(feed, `href="/sessions/`)
+	link := feed[i+len(`href="`):]
+	_, page := get(t, srv.URL+link[:strings.Index(link, `"`)])
+	for _, want := range []string{
+		`<div class="msg user marker-row" id="m-c1"><div class="marker slash_command">/clear</div>`,
+		`<div class="msg user" id="m-c2"><div class="bubble command"><code class="cmd">/mattpocock-skills:wayfinder</code><p>I currently have <strong>two</strong> plans:</p>`,
+		"<li>one</li>",
+		`<div class="msg user" id="m-c3"><div class="bubble command"><code class="cmd">/implement-next</code></div>`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("transcript lacks %q", want)
+		}
+	}
+	if strings.Contains(page, `marker slash_command">/mattpocock`) || strings.Contains(page, `marker slash_command">/implement-next`) {
+		t.Error("a non-Housekeeping command is still a marker")
 	}
 }
 

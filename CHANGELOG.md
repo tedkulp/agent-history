@@ -9,6 +9,10 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+### Changed
+
+- Slash commands other than Housekeeping ones (`/clear`, `/model`, …) show in the Transcript as user Messages: the command name as a chip, its arguments as Markdown. Markers that wrap over several lines are rounded rectangles instead of stretched pills.
+
 ## [0.8.0] - 2026-10-09
 
 ### Added
