@@ -34,6 +34,7 @@ import (
 	"github.com/tedkulp/agent-history/internal/collector/source"
 	"github.com/tedkulp/agent-history/internal/collector/source/claudecode"
 	"github.com/tedkulp/agent-history/internal/collector/source/codex"
+	"github.com/tedkulp/agent-history/internal/collector/source/hermes"
 	"github.com/tedkulp/agent-history/internal/collector/source/ohmypi"
 	"github.com/tedkulp/agent-history/internal/collector/source/opencode"
 	"github.com/tedkulp/agent-history/internal/collector/state"
@@ -58,7 +59,7 @@ commands:
 `
 
 // adapters are the Sources this Collector can read.
-var adapters = []source.Adapter{claudecode.Adapter{}, codex.Adapter{}, ohmypi.Adapter{}, opencode.Adapter{}}
+var adapters = []source.Adapter{claudecode.Adapter{}, codex.Adapter{}, ohmypi.Adapter{}, opencode.Adapter{}, hermes.Adapter{}}
 
 func main() {
 	if len(os.Args) < 2 {

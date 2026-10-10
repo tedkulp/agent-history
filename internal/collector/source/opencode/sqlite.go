@@ -4,18 +4,12 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io/fs"
-	"net/url"
-	"path/filepath"
-	"strings"
 	"time"
 
-	_ "modernc.org/sqlite" // opencode's database, read without CGO
-
 	"github.com/tedkulp/agent-history/internal/collector/source"
+	"github.com/tedkulp/agent-history/internal/collector/source/dbexport"
 )
 
 // sqliteLayout is opencode's database (adapter spec §2.2). Each Session row
@@ -35,7 +29,7 @@ func (sqliteLayout) IsDatabase()  {}
 func (l sqliteLayout) path(root string) string { return Adapter{DB: l.db}.dbPath(root) }
 
 // Present is true when the database file exists.
-func (l sqliteLayout) Present(root string) bool { return isFile(l.path(root)) }
+func (l sqliteLayout) Present(root string) bool { return dbexport.IsFile(l.path(root)) }
 
 // WatchPaths are the database and its WAL: a change to either means some
 // Session changed.
@@ -62,7 +56,7 @@ type sessionExport struct {
 // Export is the Session's rows as JSONL (adapter spec §2.2). Its errors
 // are fs.PathErrors, so that a busy database is retried on the next rescan.
 func (s sessionExport) Export() ([]byte, error) {
-	b, err := withDB(s.db, func(ctx context.Context, tx *sql.Tx) ([]byte, error) {
+	b, err := dbexport.Read(s.db, func(ctx context.Context, tx *sql.Tx) ([]byte, error) {
 		return exportSession(ctx, tx, s.id)
 	})
 	if err != nil {
@@ -76,7 +70,7 @@ func (s sessionExport) Export() ([]byte, error) {
 func (l sqliteLayout) Discover(root string) ([]source.Record, error) {
 	path := l.path(root)
 	var recs []source.Record
-	_, err := withDB(path, func(ctx context.Context, tx *sql.Tx) ([]byte, error) {
+	_, err := dbexport.Read(path, func(ctx context.Context, tx *sql.Tx) ([]byte, error) {
 		tables, err := tableSet(ctx, tx)
 		if err != nil {
 			return nil, err
@@ -141,7 +135,7 @@ func (sqliteLayout) Parent(_ string, rec source.Record) (source.Record, bool) {
 		return source.Record{}, false
 	}
 	p := sessionExport{db: s.db, id: s.parent}
-	_, err := withDB(s.db, func(ctx context.Context, tx *sql.Tx) ([]byte, error) {
+	_, err := dbexport.Read(s.db, func(ctx context.Context, tx *sql.Tx) ([]byte, error) {
 		return nil, tx.QueryRowContext(ctx, `SELECT directory, COALESCE(parent_id, '') FROM session WHERE id = ?`, p.id).Scan(&p.dir, &p.parent)
 	})
 	if err != nil {
@@ -177,61 +171,11 @@ func exportSession(ctx context.Context, tx *sql.Tx, id string) ([]byte, error) {
 		if t.order != "" {
 			q += ` ORDER BY ` + t.order
 		}
-		if err := exportRows(ctx, tx, &b, t.name, q, id); err != nil {
+		if err := dbexport.Rows(ctx, tx, &b, t.name, q, id); err != nil {
 			return nil, fmt.Errorf("exporting %s rows: %w", t.name, err)
 		}
 	}
 	return b.Bytes(), nil
-}
-
-func exportRows(ctx context.Context, tx *sql.Tx, b *bytes.Buffer, table, q, id string) error {
-	rows, err := tx.QueryContext(ctx, q, id)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	cols, err := rows.Columns()
-	if err != nil {
-		return err
-	}
-	vals := make([]any, len(cols))
-	dest := make([]any, len(cols))
-	for i := range vals {
-		dest[i] = &vals[i]
-	}
-	for rows.Next() {
-		if err := rows.Scan(dest...); err != nil {
-			return err
-		}
-		b.WriteString(`{"table":`)
-		writeJSON(b, table)
-		b.WriteString(`,"row":{`)
-		for i, c := range cols {
-			if i > 0 {
-				b.WriteByte(',')
-			}
-			writeJSON(b, c)
-			b.WriteByte(':')
-			switch v := vals[i].(type) {
-			case []byte:
-				b.WriteString(`{"$base64":`)
-				writeJSON(b, base64.StdEncoding.EncodeToString(v))
-				b.WriteByte('}')
-			default:
-				writeJSON(b, v)
-			}
-		}
-		b.WriteString("}}\n")
-	}
-	return rows.Err()
-}
-
-// writeJSON writes v as JSON without HTML escaping, so text reads as stored.
-func writeJSON(b *bytes.Buffer, v any) {
-	e := json.NewEncoder(b)
-	e.SetEscapeHTML(false)
-	e.Encode(v)
-	b.Truncate(b.Len() - 1) // Encode's newline
 }
 
 // requiredTables must exist for the database to be read.
@@ -239,77 +183,17 @@ var requiredTables = []string{"session", "message", "part"}
 
 // tableSet is the database's tables, checked for the required ones.
 func tableSet(ctx context.Context, tx *sql.Tx) (map[string]bool, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type = 'table'`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	set := map[string]bool{}
-	for rows.Next() {
-		var n string
-		if err := rows.Scan(&n); err != nil {
-			return nil, err
-		}
-		set[n] = true
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	var missing []string
-	for _, t := range requiredTables {
-		if !set[t] {
-			missing = append(missing, t)
-		}
-	}
-	if len(missing) > 0 {
-		return nil, fmt.Errorf("opencode database has no %s table", strings.Join(missing, ", "))
-	}
-	return set, nil
+	return dbexport.Require(ctx, tx, "opencode", requiredTables...)
 }
 
 // dbVersion is session.version of the most recently updated Session, else empty.
 func dbVersion(path string) string {
 	var v string
-	_, err := withDB(path, func(ctx context.Context, tx *sql.Tx) ([]byte, error) {
+	_, err := dbexport.Read(path, func(ctx context.Context, tx *sql.Tx) ([]byte, error) {
 		return nil, tx.QueryRowContext(ctx, `SELECT version FROM session ORDER BY time_updated DESC LIMIT 1`).Scan(&v)
 	})
 	if err != nil {
 		return ""
 	}
 	return v
-}
-
-// queryTimeout bounds one read of the database, busy waits included.
-const queryTimeout = time.Minute
-
-// withDB runs fn in one read transaction on the database at path, opened
-// read-only so that opencode is never blocked and its WAL is never created
-// or checkpointed (adapter spec §2.2). A read-only connection still creates
-// a missing WAL, so when there is none, which means no one has the
-// database open for writing, it is read as immutable. A WAL left without
-// its shared memory is read through mode=ro, which recreates only the latter.
-func withDB[T any](path string, fn func(context.Context, *sql.Tx) (T, error)) (T, error) {
-	var zero T
-	if !isFile(path) {
-		return zero, fs.ErrNotExist
-	}
-	q := "mode=ro&_pragma=busy_timeout(5000)&_pragma=query_only(1)"
-	if !isFile(path + "-wal") {
-		q = "immutable=1&_pragma=query_only(1)"
-	}
-	u := url.URL{Path: filepath.ToSlash(path)}
-	db, err := sql.Open("sqlite", "file:"+u.EscapedPath()+"?"+q)
-	if err != nil {
-		return zero, err
-	}
-	defer db.Close()
-	db.SetMaxOpenConns(1)
-	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
-	defer cancel()
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return zero, err
-	}
-	defer tx.Rollback()
-	return fn(ctx, tx)
 }

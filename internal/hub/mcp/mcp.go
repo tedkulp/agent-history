@@ -104,7 +104,7 @@ func sessionURL(base string, id int64) string {
 // Filters are the filter arguments search and list_sessions share.
 type Filters struct {
 	Machine string `json:"machine,omitempty" jsonschema:"only Sessions on this Machine, by its name (hostname) or id"`
-	Source  string `json:"source,omitempty" jsonschema:"only Sessions of this Source: claude-code, codex, oh-my-pi or opencode"`
+	Source  string `json:"source,omitempty" jsonschema:"only Sessions of this Source: claude-code, codex, oh-my-pi, opencode or hermes"`
 	Cwd     string `json:"cwd,omitempty" jsonschema:"only Sessions started in this working directory, on any Machine"`
 	Since   string `json:"since,omitempty" jsonschema:"only Sessions active at or after this time: a date (2026-10-01) or an RFC 3339 time"`
 	Until   string `json:"until,omitempty" jsonschema:"only Sessions active before this time: a date (2026-10-01, which includes that day) or an RFC 3339 time"`

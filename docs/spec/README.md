@@ -29,6 +29,7 @@ Source: [Spec assembly: fold decisions into the handoff spec](https://github.com
 | 5 | [`adapters/codex.md`](adapters/codex.md) | Codex |
 | 6 | [`adapters/oh-my-pi.md`](adapters/oh-my-pi.md) | oh-my-pi |
 | 7 | [`adapters/opencode.md`](adapters/opencode.md) | opencode, with its two Layouts |
+| 8 | [`adapters/hermes.md`](adapters/hermes.md) | Hermes Agent: one `sqlite` Layout, cli and desktop Sessions with their Child Sessions |
 
 Read the protocol first: it is the seam the other two documents meet at. Each adapter spec fills in both halves of one Source: the Collector adapter (roots, Layouts, Record keys, `StartCwd` / `Parent`) and the Hub parser (`MapKey`, mapping into the Normalized Transcript model).
 

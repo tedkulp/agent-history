@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/tedkulp/agent-history/internal/collector/source"
+	"github.com/tedkulp/agent-history/internal/collector/source/dbexport"
 	"github.com/tedkulp/agent-history/protocol"
 )
 
@@ -65,7 +66,7 @@ func (a Adapter) dbPath(root string) string {
 
 // Detect is true when storage/ is a directory or the database exists.
 func (a Adapter) Detect(root string) bool {
-	return isDir(filepath.Join(root, storageDir)) || isFile(a.dbPath(root))
+	return isDir(filepath.Join(root, storageDir)) || dbexport.IsFile(a.dbPath(root))
 }
 
 // Version is the version of the most recently updated Session in the
@@ -107,9 +108,4 @@ func (Adapter) ScanPaths(root string) []string {
 func isDir(p string) bool {
 	fi, err := os.Stat(p)
 	return err == nil && fi.IsDir()
-}
-
-func isFile(p string) bool {
-	fi, err := os.Stat(p)
-	return err == nil && fi.Mode().IsRegular()
 }

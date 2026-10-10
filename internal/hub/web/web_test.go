@@ -20,6 +20,7 @@ import (
 	"github.com/tedkulp/agent-history/internal/hub/parser"
 	"github.com/tedkulp/agent-history/internal/hub/parser/claudecode"
 	"github.com/tedkulp/agent-history/internal/hub/parser/codex"
+	"github.com/tedkulp/agent-history/internal/hub/parser/hermes"
 	"github.com/tedkulp/agent-history/internal/hub/parser/ohmypi"
 	"github.com/tedkulp/agent-history/internal/hub/parser/opencode"
 	"github.com/tedkulp/agent-history/internal/hub/store"
@@ -90,7 +91,7 @@ func newSiteSource(t *testing.T, source string, recs []record) *httptest.Server 
 func newHubSource(t *testing.T, source string, recs []record) (*store.Store, func()) {
 	t.Helper()
 	ctx := context.Background()
-	reg := parser.NewRegistry(claudecode.New(), codex.New(), ohmypi.New(), opencode.New())
+	reg := parser.NewRegistry(claudecode.New(), codex.New(), ohmypi.New(), opencode.New(), hermes.New())
 	s, err := store.Open(ctx, t.TempDir(), reg)
 	if err != nil {
 		t.Fatal(err)

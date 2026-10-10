@@ -17,7 +17,7 @@ A desktop running a Collector, identified by a stable ID and labelled by its hos
 _Avoid_: host, device, client
 
 **Source**:
-A supported coding tool whose history is collected: Claude Code, Codex, oh-my-pi, or opencode.
+A supported coding tool whose history is collected: Claude Code, Codex, oh-my-pi, opencode, or Hermes Agent.
 _Avoid_: agent, tool, provider
 
 **Session**:
@@ -88,3 +88,4 @@ _Avoid_: rebuild, reindex
 - "agent" was used for the coding tool, a running session, and the desktop program. Resolved: **Source**, **Session**, and **Collector** respectively.
 - "client" could mean the desktop program or the browser. Resolved: **Collector**.
 - Sources call sub-agent runs "sidechains", "sub-agents", or child sessions. Resolved: **Child Session**.
+- Hermes Agent's `sessions.source` column names where a Session was started (`cli`, `desktop`, `telegram`, `subagent`, …), not a **Source**. Resolved: call it the **Hermes entry point**.

@@ -9,6 +9,10 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+### Added
+
+- Hermes Agent is a Source: the Collector ships its `cli` and `desktop` Sessions, with their Child Sessions, from `~/.hermes/state.db` (or `$HERMES_HOME`), and the Hub shows them like any other Source.
+
 ## [0.9.0] - 2026-10-09
 
 ### Changed

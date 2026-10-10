@@ -38,6 +38,7 @@ const (
 	SourceCodex      = "codex"
 	SourceOhMyPi     = "oh-my-pi"
 	SourceOpencode   = "opencode"
+	SourceHermes     = "hermes"
 )
 
 // Size limits on a record body, in decompressed bytes (protocol.md §2.3).

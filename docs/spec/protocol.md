@@ -149,6 +149,7 @@ Source: [Collector → Hub ingestion protocol](https://github.com/tedkulp/agent-
 | Codex | `codex` |
 | oh-my-pi | `oh-my-pi` |
 | opencode | `opencode` |
+| Hermes Agent | `hermes` |
 
 ### 3.2 Raw record
 
@@ -156,8 +157,9 @@ A Raw record is identified by **(Machine, Source, Record key)**. Its content is 
 
 - **File Layouts** (Claude Code, Codex, oh-my-pi, opencode `legacy-json`): the bytes of one Source file. Compressed files (`.jsonl.zst`, `.gz`) are shipped **decompressed**, so the Hub always stores what the Source originally wrote.
 - **opencode `sqlite` Layout**: one Session's rows from the `session`, `message`, `part` and `session_message` tables, exported verbatim as JSONL. Each line is one row, tagged with its table name. This is an export, not a parse, so ADR 0001 holds. The exact line shape is in `adapters/opencode.md`.
+- **Hermes Agent `sqlite` Layout**: one Session's rows from the `sessions` and `messages` tables, exported the same way (`adapters/hermes.md`).
 
-**JSONL content** is a record whose Record key ends in `.jsonl`, plus every opencode `db:` export. For JSONL content, the Collector ships only up to the **last complete `\n`**. A half-written line is never sent. Chunk boundaries also fall on line boundaries (§4.3). Any other file (e.g. Claude Code `tool-results/*.txt`, images, `.meta.json`, opencode legacy `.json`) is shipped whole, as it is on disk, and its chunks split at 8 MiB.
+**JSONL content** is a record whose Record key ends in `.jsonl`, plus every database export (opencode `db:` records and Hermes Agent records). For JSONL content, the Collector ships only up to the **last complete `\n`**. A half-written line is never sent. Chunk boundaries also fall on line boundaries (§4.3). Any other file (e.g. Claude Code `tool-results/*.txt`, images, `.meta.json`, opencode legacy `.json`) is shipped whole, as it is on disk, and its chunks split at 8 MiB.
 
 Source: [Collector → Hub ingestion protocol](https://github.com/tedkulp/agent-history/issues/10)
 

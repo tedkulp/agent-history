@@ -16,6 +16,7 @@ import (
 
 	"github.com/tedkulp/agent-history/internal/collector/drift"
 	"github.com/tedkulp/agent-history/internal/collector/source"
+	"github.com/tedkulp/agent-history/internal/collector/source/dbexport"
 )
 
 // schema is opencode 1.18.31's tables, as far as the export reads them.
@@ -190,7 +191,7 @@ func TestReadOnly(t *testing.T) {
 	l := sqliteLayout{}
 
 	// With opencode running: a write lands while the export's read is open.
-	_, err := withDB(db, func(_ context.Context, tx *sql.Tx) ([]byte, error) {
+	_, err := dbexport.Read(db, func(_ context.Context, tx *sql.Tx) ([]byte, error) {
 		var n int
 		if err := tx.QueryRow(`SELECT count(*) FROM message`).Scan(&n); err != nil {
 			return nil, err
