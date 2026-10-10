@@ -132,7 +132,7 @@ A `subagent` Session is its own record with `parent_native_id` = `parent_session
 | `title` | `title` when set; else the Hub's first-user-message rule (Hermes leaves Child Sessions untitled) |
 | `started_at` | `started_at` |
 | `last_activity_at` | the latest of `started_at`, `ended_at`, `last_activity_at` and every message's `timestamp` |
-| `cwd` | `cwd`, else `git_repo_root`; with neither, a `missing_field` warning and the Session goes to "No project" (desktop Sessions often have no `cwd`) |
+| `cwd` | `cwd`, else `git_repo_root`; with neither, the Session goes to "No project". A Session with Hermes entry point `desktop` gets no warning: Hermes Desktop sets `cwd` only when the person picks a workspace with a `project_*` tool, so most have none by design. Any other entry point gets a `missing_field` warning |
 | `git_branch` | `git_branch` |
 | `source_version` | `null` |
 | `parent_native_id` | `parent_session_id` for a `subagent` Session; else `null` |

@@ -20,12 +20,16 @@ import (
 
 // version is the parser_version. Bump it whenever output changes for
 // existing data (hub.md §4.5).
-const version = 1
+const version = 2
 
 const layoutSqlite = "sqlite"
 
 // subagentEntryPoint is the Hermes entry point of a Child Session.
 const subagentEntryPoint = "subagent"
+
+// desktopEntryPoint is the Hermes entry point of a Hermes Desktop
+// Session, which has a cwd only once the person picks a workspace.
+const desktopEntryPoint = "desktop"
 
 // Parser is the Hermes Agent parser.
 type Parser struct{}
@@ -155,7 +159,9 @@ func (*Parser) Parse(in parser.Input) (parser.Result, error) {
 	if res.Session.Cwd == "" {
 		res.Session.Cwd = str(s.GitRepoRoot)
 	}
-	if res.Session.Cwd == "" && sraw != nil {
+	if res.Session.Cwd == "" && sraw != nil && s.EntryPoint != desktopEntryPoint {
+		// A desktop Session with no cwd has no project by design
+		// (hermes.md §3.6); anywhere else, a missing cwd is news.
 		warn.Add(parser.WarnMissingField, "cwd", string(sraw))
 	}
 	last := s.StartedAt

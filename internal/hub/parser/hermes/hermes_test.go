@@ -192,3 +192,20 @@ func TestDisplayOrder(t *testing.T) {
 		t.Errorf("warnings = %+v", res.Warnings)
 	}
 }
+
+// A Session with neither cwd nor git_repo_root goes to "No project". Only
+// a desktop Session goes there silently: Hermes Desktop sets cwd only when
+// the person picks a workspace.
+func TestMissingCwd(t *testing.T) {
+	for src, want := range map[string]int{"desktop": 0, "cli": 1, "subagent": 1} {
+		row, _ := json.Marshal(map[string]any{"table": "sessions", "row": map[string]any{
+			"id": "s", "source": src, "started_at": 1.0, "cwd": nil, "git_repo_root": nil}})
+		res := parse(t, "s", row)
+		if res.Session.Cwd != "" {
+			t.Errorf("%s Session's cwd = %q", src, res.Session.Cwd)
+		}
+		if len(res.Warnings) != want || want == 1 && (res.Warnings[0].Kind != parser.WarnMissingField || res.Warnings[0].SourceType != "cwd") {
+			t.Errorf("%s Session's warnings = %+v", src, res.Warnings)
+		}
+	}
+}
