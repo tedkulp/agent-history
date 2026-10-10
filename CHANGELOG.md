@@ -9,6 +9,8 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-10
+
 ### Added
 
 - Hermes Agent is a Source: the Collector ships its `cli` and `desktop` Sessions, with their Child Sessions, from `~/.hermes/state.db` (or `$HERMES_HOME`), and the Hub shows them like any other Source.
@@ -126,7 +128,8 @@ One version covers the Collector and the Hub together (see
 - Release pipeline: CI, GoReleaser archives for the Collector and a
   multi-arch Hub image, published from a version tag.
 
-[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/tedkulp/agent-history/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/tedkulp/agent-history/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/tedkulp/agent-history/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/tedkulp/agent-history/compare/v0.6.0...v0.7.0
