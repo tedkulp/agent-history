@@ -9,6 +9,8 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-09
+
 ### Added
 
 - A read-only MCP endpoint at `/mcp` on the Hub lets coding agents such as Claude Code and Codex search past Sessions, list recent ones and read their Transcripts. `AGENT_HISTORY_PUBLIC_URL` sets the base of the web links it returns.
@@ -114,7 +116,8 @@ One version covers the Collector and the Hub together (see
 - Release pipeline: CI, GoReleaser archives for the Collector and a
   multi-arch Hub image, published from a version tag.
 
-[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/tedkulp/agent-history/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/tedkulp/agent-history/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/tedkulp/agent-history/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/tedkulp/agent-history/compare/v0.5.0...v0.5.1
