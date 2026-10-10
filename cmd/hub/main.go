@@ -24,6 +24,7 @@ import (
 	"github.com/tedkulp/agent-history/internal/hub/backup"
 	"github.com/tedkulp/agent-history/internal/hub/config"
 	"github.com/tedkulp/agent-history/internal/hub/live"
+	"github.com/tedkulp/agent-history/internal/hub/mcp"
 	"github.com/tedkulp/agent-history/internal/hub/parser"
 	"github.com/tedkulp/agent-history/internal/hub/parser/claudecode"
 	"github.com/tedkulp/agent-history/internal/hub/parser/codex"
@@ -253,6 +254,7 @@ func serve(args []string) error {
 
 	mux := http.NewServeMux()
 	mux.Handle(protocol.APIPrefix+"/", api.New(st, log, api.Floor{HubVersion: buildinfo.Version, Min: cfg.MinCollectorVersion}))
+	mux.Handle(mcp.Path, mcp.New(st, cfg.PublicURL, log))
 	mux.Handle("/", web.New(st, changes, log))
 	srv := &http.Server{
 		Addr:              cfg.Listen,
@@ -270,7 +272,7 @@ func serve(args []string) error {
 		backupAt = cfg.BackupAt.String()
 	}
 	log.Info("hub listening", "addr", cfg.Listen, "data", cfg.Data, "version", buildinfo.Version,
-		"min_collector_version", cfg.MinCollectorVersion, "backup_dir", cfg.BackupDir, "backup_at", backupAt, "backup_keep", cfg.BackupKeep)
+		"min_collector_version", cfg.MinCollectorVersion, "backup_dir", cfg.BackupDir, "backup_at", backupAt, "backup_keep", cfg.BackupKeep, "public_url", cfg.PublicURL)
 
 	select {
 	case err := <-errc:

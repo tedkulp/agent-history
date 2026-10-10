@@ -13,7 +13,8 @@ Supported today: **Claude Code**, **Codex**, **oh-my-pi** and **opencode**.
 > [!WARNING]
 > The Hub has no authentication and no TLS. Run it on a private network
 > (a VPN such as Tailscale or WireGuard), or put your own reverse proxy in
-> front of it.
+> front of it. Its [MCP endpoint](#mcp-endpoint) at `/mcp` hands your whole
+> history, from every machine, to any agent that can reach the Hub.
 
 ## Run the Hub
 
@@ -117,6 +118,31 @@ To move to a new minor version, change the tag first. An upgrade that
 changes the database schema backs it up to `backups/pre-migrate-<n>.db`
 first; rolling back, backups and TLS are in
 [docs/hub-deploy.md](docs/hub-deploy.md).
+
+## MCP endpoint
+
+The Hub serves a read-only [MCP](https://modelcontextprotocol.io) endpoint
+at `/mcp`, so a coding agent can recall your past sessions mid-task: "how
+did I fix the sqlite lock last month?", "what did I work on this week?".
+Its tools are `search`, `list_sessions` and `get_transcript`; none of them
+change anything.
+
+Claude Code:
+
+```sh
+claude mcp add --transport http agent-history http://<hub>:8080/mcp
+```
+
+Codex, in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.agent-history]
+url = "http://<hub>:8080/mcp"
+```
+
+Results link to each session's page in the web UI, built from the address
+the agent used. Behind a reverse proxy, set `AGENT_HISTORY_PUBLIC_URL`
+(see [docs/hub-deploy.md](docs/hub-deploy.md)).
 
 ## Install the Collector
 

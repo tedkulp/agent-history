@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,9 @@ type Config struct {
 	// MinCollectorVersion is the effective floor: the env value when it
 	// raises the compiled-in one, else the compiled-in one.
 	MinCollectorVersion string
+	// PublicURL is the Hub's base URL for links it hands out, with no
+	// trailing slash; "" derives it from each request.
+	PublicURL string
 }
 
 // TimeOfDay is a container-local wall-clock time.
@@ -93,6 +97,17 @@ var settings = []setting{
 		var err error
 		c.MinCollectorVersion, err = protocol.EffectiveMinCollectorVersion(v)
 		return err
+	}},
+	{"AGENT_HISTORY_PUBLIC_URL", "public-url", "", "base URL for links the Hub hands out, such as https://history.example.com", func(v string, c *Config) error {
+		if v == "" {
+			return nil
+		}
+		u, err := url.Parse(v)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("%q is not an http or https URL", v)
+		}
+		c.PublicURL = strings.TrimRight(v, "/")
+		return nil
 	}},
 }
 

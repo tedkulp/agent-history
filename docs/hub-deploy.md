@@ -38,6 +38,7 @@ Everything is set with env vars. There is no config file. Each has a matching `s
 | `AGENT_HISTORY_BACKUP_KEEP` | `7` | Number of scheduled backups kept |
 | `AGENT_HISTORY_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
 | `AGENT_HISTORY_MIN_COLLECTOR_VERSION` | unset | Raises the minimum Collector version the Hub accepts |
+| `AGENT_HISTORY_PUBLIC_URL` | unset | Base URL of the web UI, such as `https://history.example.com`, for the links the MCP endpoint returns. Unset, links use the scheme and host each request arrived on. |
 | `TZ` | UTC | Time zone for the Web UI and the backup schedule |
 
 An invalid value stops `serve` with exit code 1 and names the setting, e.g. `agent-history-hub: AGENT_HISTORY_BACKUP_AT: "3am" is not a time like 03:00`.

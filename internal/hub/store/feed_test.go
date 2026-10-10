@@ -255,3 +255,37 @@ func TestLiveSessionSaysWhetherTheFeedListsIt(t *testing.T) {
 		t.Errorf("LiveSession(99) = %v, %v", ok, err)
 	}
 }
+
+func TestFeedSinceUntilKeepSessionsActiveInRange(t *testing.T) {
+	s := seedFeed(t, []feedSession{
+		{machine: "m1", source: "claude-code", last: 100}, // 1: started 50
+		{machine: "m1", source: "claude-code", last: 200}, // 2: started 150
+		{machine: "m1", source: "claude-code", last: 300}, // 3: start unknown
+		{machine: "m1", source: "claude-code", last: 400}, // 4: started 120, still going
+	})
+	ctx := context.Background()
+	if _, err := s.write.Exec(`UPDATE sessions SET started_at = CASE id WHEN 1 THEN 50 WHEN 2 THEN 150 WHEN 4 THEN 120 END`); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name string
+		f    FeedFilter
+		want []int64
+	}{
+		{"since", FeedFilter{Since: 200}, []int64{4, 3, 2}},
+		// Until is exclusive; a Session with no start counts from its last activity.
+		{"until", FeedFilter{Until: 150}, []int64{4, 1}},
+		// Session 4 started before the range and was still going after it.
+		{"both", FeedFilter{Since: 160, Until: 180}, []int64{4, 2}},
+		{"empty range", FeedFilter{Since: 500}, nil},
+	}
+	for _, c := range cases {
+		rows, err := s.Feed(ctx, c.f, 50)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := ids(rows); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: ids = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
