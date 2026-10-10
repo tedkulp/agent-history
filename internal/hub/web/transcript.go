@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/sergi/go-diff/diffmatchpatch"
 
@@ -29,6 +30,7 @@ type chunkView struct {
 	Thinking   string // thinking: rendered Markdown
 	Image      *imageView
 	Marker     *markerView
+	Command    *commandView
 	Unknown    *parser.UnknownPayload
 	Attachment string     // attachment: its label
 	Tools      []toolView // a cluster when non-empty
@@ -44,6 +46,13 @@ type markerView struct {
 	Output string // a shell_command's output or a task's event, preformatted
 	More   string // "… 2.0 KB more" when Output was cut
 	Task   *taskView
+}
+
+// commandView is a slash command shown as a user bubble: its name as a chip,
+// its arguments as Markdown.
+type commandView struct {
+	Name string
+	HTML string // rendered Markdown; "" when it has no arguments
 }
 
 // taskView is what a task_notification pill adds to its label.
@@ -105,7 +114,11 @@ func (s *server) chunks(sessionID int64, parts []store.TranscriptPart, childHref
 			}
 		case parser.KindMarker:
 			if mp, ok := decodePayload[parser.MarkerPayload](s, sessionID, p); ok {
-				out = append(out, chunkView{Marker: newMarkerView(p.ID, mp)})
+				if cv := newCommandView(mp); cv != nil {
+					out = append(out, chunkView{Command: cv})
+				} else {
+					out = append(out, chunkView{Marker: newMarkerView(p.ID, mp)})
+				}
 			}
 		case parser.KindUnknown:
 			if up, ok := decodePayload[parser.UnknownPayload](s, sessionID, p); ok {
@@ -158,6 +171,24 @@ func decodePayload[T any](s *server, sessionID int64, p store.TranscriptPart) (T
 		return v, false
 	}
 	return v, true
+}
+
+// newCommandView is the bubble of a slash command that isn't a Housekeeping
+// command, or nil for any other marker, which stays a pill (#71).
+func newCommandView(mp parser.MarkerPayload) *commandView {
+	if !parser.IsTitleMarker(mp) {
+		return nil
+	}
+	text := strings.TrimSpace(mp.Text)
+	name, args := text, ""
+	if i := strings.IndexFunc(text, unicode.IsSpace); i >= 0 {
+		name, args = text[:i], strings.TrimSpace(text[i:])
+	}
+	v := &commandView{Name: name}
+	if args != "" {
+		v.HTML = renderMarkdown(args)
+	}
+	return v
 }
 
 // compactionSummaryLabel is the pill of a compaction marker holding the

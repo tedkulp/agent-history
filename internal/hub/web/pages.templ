@@ -376,6 +376,11 @@ templ chunk(c chunkView) {
 		} else {
 			<div class={ "marker", c.Marker.Kind }>{ c.Marker.Label }</div>
 		}
+	} else if c.Command != nil {
+		<div class="bubble command">
+			<code class="cmd">{ c.Command.Name }</code>
+			@templ.Raw(c.Command.HTML)
+		</div>
 	} else if c.Unknown != nil {
 		<div class="bubble unknown">
 			⚠ unknown <code>{ c.Unknown.SourceType }</code>
