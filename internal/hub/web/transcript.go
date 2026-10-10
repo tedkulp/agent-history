@@ -174,7 +174,7 @@ func decodePayload[T any](s *server, sessionID int64, p store.TranscriptPart) (T
 }
 
 // newCommandView is the bubble of a slash command that isn't a Housekeeping
-// command, or nil for any other marker, which stays a pill (#71).
+// command, or nil for any other marker, which stays a marker (#71).
 func newCommandView(mp parser.MarkerPayload) *commandView {
 	if !parser.IsTitleMarker(mp) {
 		return nil
