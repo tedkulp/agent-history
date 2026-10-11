@@ -10,6 +10,10 @@ search. It never deletes anything.
 
 Supported today: **Claude Code**, **Codex**, **oh-my-pi**, **opencode** and **Hermes Agent**.
 
+![The feed: every session from every machine, newest first](docs/images/feed.png)
+
+![A transcript, with tool calls collapsed](docs/images/transcript.png)
+
 > [!WARNING]
 > The Hub has no authentication and no TLS. Run it on a private network
 > (a VPN such as Tailscale or WireGuard), or put your own reverse proxy in
@@ -202,6 +206,7 @@ just check    # gofmt, go vet, go test
 just hub      # run a Hub on :8080 with its data in .data/
 just collector # ship this Machine's history to that Hub, beside any installed Collector
 just build    # build both binaries into bin/
+just screenshots # redo the README screenshots from fake history (needs python3, firefox)
 ```
 
 `just` lists every recipe. The build-ready design lives in

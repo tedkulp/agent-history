@@ -71,6 +71,10 @@ collector cmd="run":
     fi
     go run ./cmd/collector {{cmd}}
 
+# Regenerate the README screenshots from fake history (needs python3 and firefox)
+screenshots: generate
+    sh scripts/screenshots/run.sh
+
 # Remove build output and local Hub data
 clean:
     rm -rf bin .data
