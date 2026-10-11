@@ -186,7 +186,11 @@ templ searchGroups(v searchView) {
 				}
 				<div class="m">
 					@sourceBadge(g.Source)
-					· { g.Machine } › <span title={ g.ProjectFull }>{ g.Project }</span> · { g.Time } · <span class="n">{ g.Count }</span>
+					· { g.Machine } › <span title={ g.ProjectFull }>{ g.Project }</span>
+					if g.Time != "" {
+						· { g.Time }
+					}
+					· <span class="n">{ g.Count }</span>
 				</div>
 			</a>
 			for _, h := range g.Hits {
@@ -205,7 +209,12 @@ templ searchGroups(v searchView) {
 // hitRow is one Message Hit of a group, linking to its anchor.
 templ hitRow(h hitView) {
 	<a class="hit" href={ templ.SafeURL(h.Href) }>
-		<div class="m"><span class="role">{ h.Role }</span> · { h.Time }</div>
+		<div class="m">
+			<span class="role">{ h.Role }</span>
+			if h.Time != "" {
+				· { h.Time }
+			}
+		</div>
 		<div class="snip">
 			@h.Snippet
 		</div>

@@ -229,6 +229,18 @@ func TestSearchGroupExpandsInTranscriptOrder(t *testing.T) {
 	}
 }
 
+func TestSearchOmitsUnknownTimes(t *testing.T) {
+	line := `{"type":"user","uuid":"u1","parentUuid":null,"cwd":"/Users/ted/src/app","message":{"role":"user","content":"timeless quokka"}}` + "\n"
+	srv := newSite(t, map[string]string{"-Users-ted-src-app/" + sess + ".jsonl": line})
+	_, body := get(t, srv.URL+"/?q=quokka")
+	if !strings.Contains(body, `class="group"`) {
+		t.Fatal("no group")
+	}
+	if strings.Contains(body, "·  ·") || strings.Contains(body, "</span> · </div>") {
+		t.Errorf("empty time shown: %s", body)
+	}
+}
+
 // getHX gets url as htmx does.
 func getHX(t *testing.T, url string) (int, string) {
 	t.Helper()
