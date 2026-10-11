@@ -10,6 +10,29 @@ search. It never deletes anything.
 
 Supported today: **Claude Code**, **Codex**, **oh-my-pi**, **opencode** and **Hermes Agent**.
 
+## Features
+
+- **One feed for every Machine.** Every session from every tool, newest
+  first, filtered by Machine, tool or project.
+- **Full-text search** across every transcript, with highlighted matches
+  and counts by Machine, tool and project.
+- **Readable transcripts.** Markdown and syntax-highlighted code, images,
+  tool calls folded into one line each (or hidden entirely), a list of your
+  own prompts to jump between, and sub-agent sessions linked from the
+  session that started them.
+- **Live.** Open pages update as sessions grow; the Collector ships new
+  history in the background as soon as it's written.
+- **Nothing is lost.** The Hub keeps every original record verbatim and
+  never deletes. When an upgrade improves a parser, existing history is
+  parsed again automatically.
+- **Recall from your agent.** A read-only [MCP endpoint](#mcp-endpoint)
+  lets Claude Code or Codex search your past sessions mid-task.
+- **Keep projects private.** Sessions from directories you
+  [exclude](#keep-a-project-off-the-hub) never leave the Machine.
+- **Small to run.** One Docker image with SQLite inside, daily backups,
+  and a backup before every schema change. The Collector is one binary
+  that runs as a launchd or systemd user service.
+
 ![The feed: every session from every machine, newest first](docs/images/feed.png)
 
 ![A transcript, with tool calls collapsed](docs/images/transcript.png)
@@ -196,6 +219,24 @@ running service restarts itself onto the new version.
 the binary you ran, so after moving from mise to a manual install, remove
 the shim (`mise uninstall github:tedkulp/agent-history`) before running
 `init` again. Pass `--exec <path>` to choose another path.
+
+### Keep a project off the Hub
+
+Add `exclude` globs to `~/.config/agent-history/collector.toml`. A session
+whose starting directory matches, and any sub-agent session it starts,
+never leaves the Machine:
+
+```toml
+exclude = [
+  "/Users/me/src/client-secret/**",
+]
+```
+
+The Collector reads its config only at start, so run
+`agent-history service restart` afterwards. Sessions already shipped stay
+on the Hub: exclude a project before its first sync. Every setting, including
+per-tool `root` and `enabled`, is in
+[docs/spec/collector.md](docs/spec/collector.md#23-config-file).
 
 ## Develop
 
