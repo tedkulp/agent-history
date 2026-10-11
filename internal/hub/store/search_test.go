@@ -218,7 +218,7 @@ func TestSearchFacetsMatchHitsAndFilter(t *testing.T) {
 	flat := func(fs []Facet) []fc {
 		var out []fc
 		for _, f := range fs {
-			out = append(out, fc{f.MachineID, f.Value, f.Hits})
+			out = append(out, fc{f.MachineID, f.Value, f.Count})
 		}
 		return out
 	}
@@ -235,8 +235,8 @@ func TestSearchFacetsMatchHitsAndFilter(t *testing.T) {
 	// Each facet's count is the number of hits its filter leaves.
 	for _, f := range fs.Projects {
 		cwd := f.Value
-		if n := len(search(t, s, "llama", FeedFilter{Machine: f.MachineID, Project: &cwd})); n != f.Hits {
-			t.Errorf("project %s/%q: %d hits, facet says %d", f.MachineID, cwd, n, f.Hits)
+		if n := len(search(t, s, "llama", FeedFilter{Machine: f.MachineID, Project: &cwd})); n != f.Count {
+			t.Errorf("project %s/%q: %d hits, facet says %d", f.MachineID, cwd, n, f.Count)
 		}
 	}
 	if n := len(search(t, s, "llama", FeedFilter{Machine: "m2"})); n != 2 {
@@ -295,7 +295,7 @@ func TestSearchSinceUntilAndHitTimes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fs.Sources) != 1 || fs.Sources[0].Hits != 2 {
+	if len(fs.Sources) != 1 || fs.Sources[0].Count != 2 {
 		t.Errorf("facets with since = %+v", fs.Sources)
 	}
 }
@@ -371,7 +371,7 @@ func TestSearchSessionsGroupsHitsBySession(t *testing.T) {
 		t.Fatalf("Sessions = %d, want 1", len(got))
 	}
 	g := got[0]
-	if g.Hits != 10 || g.TitleHit || g.Title != "Antlers" || len(g.Top) != SearchTopHits {
+	if g.Count != 10 || g.More != 7 || g.TitleHit || g.Title != "Antlers" || len(g.Top) != searchTopHits {
 		t.Fatalf("group = %+v", g)
 	}
 	// The top Hits are the Session's best-ranked Message Hits, as Search ranks them.
@@ -392,11 +392,11 @@ func TestSearchSessionsRankByBestHit(t *testing.T) {
 		t.Fatalf("groups = %+v, want the titled Session first", got)
 	}
 	// A title-only Hit is a group with no Message Hits.
-	if g := got[0]; !g.TitleHit || g.Hits != 1 || len(g.Top) != 0 {
+	if g := got[0]; !g.TitleHit || g.Count != 1 || g.More != 0 || len(g.Top) != 0 {
 		t.Errorf("title-only group = %+v", g)
 	}
 	// The other Session hits on its title (the prompt), the prompt and the reply.
-	if g := got[1]; !g.TitleHit || g.Hits != 3 || len(g.Top) != 2 {
+	if g := got[1]; !g.TitleHit || g.Count != 3 || g.More != 0 || len(g.Top) != 2 {
 		t.Errorf("body group = %+v", g)
 	}
 }
@@ -451,12 +451,12 @@ func TestSessionSearchHitsSkipTheTopInTranscriptOrder(t *testing.T) {
 	}
 	var got []string
 	for off := 0; off < 10; off += 4 {
-		hits, total, err := s.SessionSearchHits(ctx, g.SessionID, terms, off, 4)
+		hits, more, err := s.SessionSearchHits(ctx, g.SessionID, terms, off, 4)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if total != 10 {
-			t.Errorf("total = %d, want 10", total)
+		if want := max(len(rest)-off-len(hits), 0); more != want {
+			t.Errorf("more after %d = %d, want %d", off, more, want)
 		}
 		for _, h := range hits {
 			if !strings.Contains(h.Snippet, SnippetOpen) || h.Role != "user" {
@@ -504,7 +504,7 @@ func TestSearchSessionFacetsCountSessions(t *testing.T) {
 	flat := func(fs []Facet) []fc {
 		var out []fc
 		for _, f := range fs {
-			out = append(out, fc{f.MachineID, f.Value, f.Hits})
+			out = append(out, fc{f.MachineID, f.Value, f.Count})
 		}
 		return out
 	}
@@ -520,8 +520,8 @@ func TestSearchSessionFacetsCountSessions(t *testing.T) {
 	}
 	for _, f := range fs.Projects {
 		cwd := f.Value
-		if n := len(searchSessions(t, s, "llama", FeedFilter{Machine: f.MachineID, Project: &cwd}, 0, 20)); n != f.Hits {
-			t.Errorf("project %s/%q: %d Sessions, facet says %d", f.MachineID, cwd, n, f.Hits)
+		if n := len(searchSessions(t, s, "llama", FeedFilter{Machine: f.MachineID, Project: &cwd}, 0, 20)); n != f.Count {
+			t.Errorf("project %s/%q: %d Sessions, facet says %d", f.MachineID, cwd, n, f.Count)
 		}
 	}
 }

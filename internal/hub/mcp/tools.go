@@ -113,14 +113,14 @@ func (t *tools) search(ctx context.Context, req *gomcp.CallToolRequest, in Searc
 		out.Hits = append(out.Hits, hit)
 	}
 	for _, fc := range facets.Machines {
-		out.Facets.Machines = append(out.Facets.Machines, Facet{Value: fc.Machine, Hits: fc.Hits})
+		out.Facets.Machines = append(out.Facets.Machines, Facet{Value: fc.Machine, Hits: fc.Count})
 	}
 	for _, fc := range facets.Sources {
-		out.Facets.Sources = append(out.Facets.Sources, Facet{Value: fc.Value, Hits: fc.Hits})
+		out.Facets.Sources = append(out.Facets.Sources, Facet{Value: fc.Value, Hits: fc.Count})
 	}
 	for _, fc := range facets.Projects {
 		if fc.Value != "" {
-			out.Facets.Projects = append(out.Facets.Projects, Facet{Value: fc.Value, Machine: fc.Machine, Hits: fc.Hits})
+			out.Facets.Projects = append(out.Facets.Projects, Facet{Value: fc.Value, Machine: fc.Machine, Hits: fc.Count})
 		}
 	}
 	return nil, out, nil

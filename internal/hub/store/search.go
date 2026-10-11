@@ -203,12 +203,12 @@ func (s *Store) Search(ctx context.Context, terms []string, f FeedFilter, offset
 	return out, rows.Err()
 }
 
-// Facet is one facet value with its hit count.
+// Facet is one facet value with its count of hits, or of Sessions.
 type Facet struct {
 	MachineID string // for Project facets, the Project's Machine
 	Machine   string // the Machine's label
 	Value     string // Machine id, Source, or project_cwd ("" = No project)
-	Hits      int
+	Count     int
 }
 
 // Facets are the hit counts of a search per Machine, Source and Project
@@ -258,7 +258,7 @@ func (s *Store) searchFacets(ctx context.Context, terms []string, f FeedFilter, 
 		}
 		for rows.Next() {
 			var fc Facet
-			if err := rows.Scan(&fc.MachineID, &fc.Machine, &fc.Value, &fc.Hits); err != nil {
+			if err := rows.Scan(&fc.MachineID, &fc.Machine, &fc.Value, &fc.Count); err != nil {
 				rows.Close()
 				return out, err
 			}
@@ -272,9 +272,9 @@ func (s *Store) searchFacets(ctx context.Context, terms []string, f FeedFilter, 
 	return out, nil
 }
 
-// SearchTopHits is how many of its best Message hits a Session of a grouped
+// searchTopHits is how many of its best Message Hits a Session of a grouped
 // search shows (hub.md §4.7).
-const SearchTopHits = 3
+const searchTopHits = 3
 
 // SessionHits is one Session of a grouped search, with its best hits.
 type SessionHits struct {
@@ -288,9 +288,10 @@ type SessionHits struct {
 	LastActivityAt int64 // Unix ms, 0 when unknown
 	ParentID       int64 // set for a Child Session
 	ParentTitle    string
-	Hits           int   // all its hits, the title hit included
-	TitleHit       bool  // whether its title is a hit
-	Top            []Hit // its best Message hits, at most SearchTopHits, best first
+	Count          int   // all its Hits, the title Hit included
+	TitleHit       bool  // whether its title is a Hit
+	Top            []Hit // its best Message Hits, at most searchTopHits, best first
+	More           int   // its Message Hits past Top
 }
 
 // SearchSessions returns the Sessions with hits for terms and f's chips,
@@ -327,7 +328,7 @@ func (s *Store) SearchSessions(ctx context.Context, terms []string, f FeedFilter
 	for rows.Next() {
 		var g SessionHits
 		if err := rows.Scan(&g.SessionID, &g.Source, &g.NativeID, &g.Title, &g.MachineID, &g.Machine, &g.ProjectCwd,
-			&g.LastActivityAt, &g.ParentID, &g.ParentTitle, &g.Hits, &g.TitleHit); err != nil {
+			&g.LastActivityAt, &g.ParentID, &g.ParentTitle, &g.Count, &g.TitleHit); err != nil {
 			return nil, err
 		}
 		out = append(out, g)
@@ -356,7 +357,7 @@ func (s *Store) SearchSessions(ctx context.Context, terms []string, f FeedFilter
 		)
 		WHERE rn <= ?
 		ORDER BY sid, rn`,
-		matchExpr(terms), searchKindMessage, string(idList), SearchTopHits)
+		matchExpr(terms), searchKindMessage, string(idList), searchTopHits)
 	if err != nil {
 		return nil, err
 	}
@@ -383,13 +384,20 @@ func (s *Store) SearchSessions(ctx context.Context, terms []string, f FeedFilter
 		g := at[owner[rid]]
 		g.Top = append(g.Top, hits[rid])
 	}
+	for i := range out {
+		g := &out[i]
+		g.More = g.Count - len(g.Top)
+		if g.TitleHit {
+			g.More--
+		}
+	}
 	return out, nil
 }
 
-// SessionSearchHits returns a Session's Message hits for terms past its
-// SearchTopHits best ones, in Transcript order: at most limit of them after
-// skipping offset. total counts all its Message hits (hub.md §4.7).
-func (s *Store) SessionSearchHits(ctx context.Context, sessionID int64, terms []string, offset, limit int) (hits []Hit, total int, err error) {
+// SessionSearchHits returns a Session's Message Hits for terms past its
+// searchTopHits best ones, in Transcript order: at most limit of them after
+// skipping offset. more is how many are left after them (hub.md §4.7).
+func (s *Store) SessionSearchHits(ctx context.Context, sessionID int64, terms []string, offset, limit int) (hits []Hit, more int, err error) {
 	if len(terms) == 0 {
 		return nil, 0, nil
 	}
@@ -398,6 +406,7 @@ func (s *Store) SessionSearchHits(ctx context.Context, sessionID int64, terms []
 	const from = `
 		FROM search JOIN sessions s ON s.id = ?5
 		WHERE search MATCH ?1 AND search.kind = ?2 AND search.rowid BETWEEN ?3 AND ?4 AND s.parsed_at IS NOT NULL`
+	var total int
 	if err := s.read.QueryRowContext(ctx, `SELECT count(*)`+from, match...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
@@ -407,7 +416,7 @@ func (s *Store) SessionSearchHits(ctx context.Context, sessionID int64, terms []
 		WHERE rn > ?6
 		ORDER BY rid
 		LIMIT ?7 OFFSET ?8`,
-		append(match, SearchTopHits, limit, offset)...)
+		append(match, searchTopHits, limit, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -431,7 +440,7 @@ func (s *Store) SessionSearchHits(ctx context.Context, sessionID int64, terms []
 	for _, rid := range rids {
 		hits = append(hits, byRow[rid])
 	}
-	return hits, total, nil
+	return hits, max(total-searchTopHits-offset-len(hits), 0), nil
 }
 
 // hitsAt returns the Message hits for terms at the given search rows, by

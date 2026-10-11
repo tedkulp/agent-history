@@ -23,6 +23,9 @@ const (
 	searchMoreSize = 20
 )
 
+// searchTimeLayout dates Sessions and Hits in the results, which span years.
+const searchTimeLayout = "Jan 2, 2006 15:04"
+
 // groupView is one Session of the search results with its best Hits.
 type groupView struct {
 	ID          string          // the Session id
@@ -60,7 +63,7 @@ type moreView struct {
 type facetItem struct {
 	Label string
 	Title string // hover text
-	Hits  int
+	Count int
 	On    bool
 	Href  string
 }
@@ -123,8 +126,8 @@ func (s *server) groupFor(g store.SessionHits, q string, mark func(string) strin
 		Title:   templ.Raw(mark(titleOr(g.Title, g.NativeID))),
 		Source:  g.Source,
 		Machine: g.Machine,
-		Time:    s.localTime(g.LastActivityAt, "Jan 2 15:04"),
-		Count:   hitCount(g.Hits),
+		Time:    s.localTime(g.LastActivityAt, searchTimeLayout),
+		Count:   hitCount(g.Count),
 	}
 	v.Project, v.ProjectFull = projectName(g.ProjectCwd)
 	if g.ParentID != 0 {
@@ -133,11 +136,7 @@ func (s *server) groupFor(g store.SessionHits, q string, mark func(string) strin
 	for _, h := range g.Top {
 		v.Hits = append(v.Hits, s.hitFor(h, q))
 	}
-	messages := g.Hits
-	if g.TitleHit {
-		messages--
-	}
-	v.More = moreFor(g.SessionID, q, 0, messages-len(g.Top))
+	v.More = moreFor(g.SessionID, q, 0, g.More)
 	return v
 }
 
@@ -147,7 +146,7 @@ func (s *server) hitFor(h store.Hit, q string) hitView {
 	return hitView{
 		Href:    transcriptHL(h.SessionID, q) + "#m-" + h.MessageID,
 		Role:    h.Role,
-		Time:    s.localTime(h.Timestamp, "Jan 2 15:04"),
+		Time:    s.localTime(h.Timestamp, searchTimeLayout),
 		Snippet: templ.Raw(markSnippet(h.Snippet)),
 	}
 }
@@ -187,12 +186,12 @@ func (s *server) sessionHits(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 	offset = max(offset, 0)
-	hits, total, err := s.store.SessionSearchHits(r.Context(), id, store.ParseQuery(q), offset, searchMoreSize)
+	hits, more, err := s.store.SessionSearchHits(r.Context(), id, store.ParseQuery(q), offset, searchMoreSize)
 	if err != nil {
 		s.internal(w, r, err)
 		return
 	}
-	if total == 0 {
+	if len(hits) == 0 && more == 0 {
 		http.NotFound(w, r)
 		return
 	}
@@ -200,8 +199,7 @@ func (s *server) sessionHits(w http.ResponseWriter, r *http.Request) {
 	for _, h := range hits {
 		v.Hits = append(v.Hits, s.hitFor(h, q))
 	}
-	shown := offset + len(hits)
-	v.More = moreFor(id, q, shown, max(total-store.SearchTopHits-shown, 0))
+	v.More = moreFor(id, q, offset+len(hits), more)
 	s.render(w, r, http.StatusOK, groupHits(v))
 }
 
@@ -214,13 +212,13 @@ func (s *server) facets(ctx context.Context, p feedParams, terms []string, f sto
 	}
 	machines := facetGroup{Label: "Machine"}
 	for _, fc := range fs.Machines {
-		machines.Items = append(machines.Items, facetItem{Label: fc.Machine, Title: fc.MachineID, Hits: fc.Hits, On: p.Machine == fc.Value, Href: p.withMachine(fc.Value).url()})
+		machines.Items = append(machines.Items, facetItem{Label: fc.Machine, Title: fc.MachineID, Count: fc.Count, On: p.Machine == fc.Value, Href: p.withMachine(fc.Value).url()})
 	}
 	sources := facetGroup{Label: "Source"}
 	for _, fc := range fs.Sources {
 		q := p
 		q.Source = fc.Value
-		sources.Items = append(sources.Items, facetItem{Label: fc.Value, Hits: fc.Hits, On: p.Source == fc.Value, Href: q.url()})
+		sources.Items = append(sources.Items, facetItem{Label: fc.Value, Count: fc.Count, On: p.Source == fc.Value, Href: q.url()})
 	}
 	projects := facetGroup{Label: "Project"}
 	for _, fc := range fs.Projects {
@@ -231,7 +229,7 @@ func (s *server) facets(ctx context.Context, p feedParams, terms []string, f sto
 			full = name
 		}
 		projects.Items = append(projects.Items, facetItem{
-			Label: fc.Machine + " › " + name, Title: fc.Machine + ": " + full, Hits: fc.Hits,
+			Label: fc.Machine + " › " + name, Title: fc.Machine + ": " + full, Count: fc.Count,
 			On: p.Machine == fc.MachineID && p.Project == q.Project, Href: q.url(),
 		})
 	}

@@ -41,6 +41,8 @@ func TestSearchResultsLinkToTheMessage(t *testing.T) {
 		"<mark>kiwi</mark> task",
 		`<span class="role">user</span>`, `<span class="role">assistant</span>`,
 		"2 hits",
+		// Group and Hit times carry the year.
+		"Sep 1, 2026 ",
 		`class="facets"`, "<h4>Machine</h4>", "<h4>Source</h4>", "<h4>Project</h4>",
 	} {
 		if !strings.Contains(body, want) {

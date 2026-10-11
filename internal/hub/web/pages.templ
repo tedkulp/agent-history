@@ -162,7 +162,7 @@ templ searchPage(v searchView) {
 						for _, f := range g.Items {
 							<a class={ templ.KV("on", f.On) } href={ templ.SafeURL(f.Href) } title={ f.Title }>
 								<span>{ f.Label }</span>
-								<span class="n">{ strconv.Itoa(f.Hits) }</span>
+								<span class="n">{ strconv.Itoa(f.Count) }</span>
 							</a>
 						}
 					}
