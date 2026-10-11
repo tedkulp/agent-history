@@ -391,7 +391,7 @@ func TestSearchSessionsRankByBestHit(t *testing.T) {
 	if len(got) != 2 || got[0].Title != "Otters" {
 		t.Fatalf("groups = %+v, want the titled Session first", got)
 	}
-	// A title-only match is a group with no Message Hits.
+	// A title-only Hit is a group with no Message Hits.
 	if g := got[0]; !g.TitleHit || g.Hits != 1 || len(g.Top) != 0 {
 		t.Errorf("title-only group = %+v", g)
 	}

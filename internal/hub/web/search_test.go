@@ -60,7 +60,7 @@ func TestSearchResultsLinkToTheMessage(t *testing.T) {
 		t.Error("title hit doesn't link to the top")
 	}
 	if strings.Count(body, `class="group"`) != 1 || strings.Contains(body, `class="hit"`) || !strings.Contains(body, "1 hit<") {
-		t.Error("title-only match shows Hit rows")
+		t.Error("title-only Hit shows Hit rows")
 	}
 
 	// The Transcript page loads the script that marks hl terms.
