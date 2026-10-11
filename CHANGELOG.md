@@ -9,6 +9,10 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+### Changed
+
+- Web search lists the matching Sessions, 20 per page, each with its hit count and its 3 best hits; "+N more" loads the rest in place. Facets count Sessions instead of hits.
+
 ## [0.10.0] - 2026-10-10
 
 ### Added

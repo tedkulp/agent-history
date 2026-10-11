@@ -218,7 +218,7 @@ func TestSearchFacetsMatchHitsAndFilter(t *testing.T) {
 	flat := func(fs []Facet) []fc {
 		var out []fc
 		for _, f := range fs {
-			out = append(out, fc{f.MachineID, f.Value, f.Hits})
+			out = append(out, fc{f.MachineID, f.Value, f.Count})
 		}
 		return out
 	}
@@ -235,8 +235,8 @@ func TestSearchFacetsMatchHitsAndFilter(t *testing.T) {
 	// Each facet's count is the number of hits its filter leaves.
 	for _, f := range fs.Projects {
 		cwd := f.Value
-		if n := len(search(t, s, "llama", FeedFilter{Machine: f.MachineID, Project: &cwd})); n != f.Hits {
-			t.Errorf("project %s/%q: %d hits, facet says %d", f.MachineID, cwd, n, f.Hits)
+		if n := len(search(t, s, "llama", FeedFilter{Machine: f.MachineID, Project: &cwd})); n != f.Count {
+			t.Errorf("project %s/%q: %d hits, facet says %d", f.MachineID, cwd, n, f.Count)
 		}
 	}
 	if n := len(search(t, s, "llama", FeedFilter{Machine: "m2"})); n != 2 {
@@ -295,7 +295,7 @@ func TestSearchSinceUntilAndHitTimes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fs.Sources) != 1 || fs.Sources[0].Hits != 2 {
+	if len(fs.Sources) != 1 || fs.Sources[0].Count != 2 {
 		t.Errorf("facets with since = %+v", fs.Sources)
 	}
 }
@@ -328,5 +328,200 @@ func TestTranscriptRangeAndMessageOrdinal(t *testing.T) {
 	}
 	if _, ok, _ := s.MessageOrdinal(ctx, id, "nope"); ok {
 		t.Error("MessageOrdinal of an unknown Message is ok")
+	}
+}
+
+// chattySession is a Claude Code Session titled title whose user prompts are
+// the given texts, one Message each, in order.
+func chattySession(title string, prompts ...string) string {
+	var b strings.Builder
+	parent := "null"
+	for i, p := range prompts {
+		id := fmt.Sprintf("p%02d", i)
+		fmt.Fprintf(&b, `{"type":"user","uuid":%q,"parentUuid":%s,"timestamp":"2026-09-01T10:%02d:00.000Z","cwd":"/Users/ted/src/app","message":{"role":"user","content":%q}}`+"\n", id, parent, i, p)
+		parent = fmt.Sprintf("%q", id)
+	}
+	fmt.Fprintf(&b, `{"type":"custom-title","customTitle":%q}`+"\n", title)
+	return b.String()
+}
+
+func searchSessions(t *testing.T, s *Store, q string, f FeedFilter, offset, limit int) []SessionHits {
+	t.Helper()
+	got, err := s.SearchSessions(context.Background(), ParseQuery(q), f, offset, limit)
+	if err != nil {
+		t.Fatalf("search sessions %q: %v", q, err)
+	}
+	return got
+}
+
+// mooseSession has ten Message Hits for "moose" of varying weight, and a
+// title that doesn't match.
+func mooseSession() string {
+	var prompts []string
+	for i := 0; i < 10; i++ {
+		prompts = append(prompts, "moose "+strings.Repeat("filler words here ", (i*7)%10))
+	}
+	return chattySession("Antlers", prompts...)
+}
+
+func TestSearchSessionsGroupsHitsBySession(t *testing.T) {
+	s := seedSearch(t, mooseSession())
+	got := searchSessions(t, s, "moose", FeedFilter{}, 0, 20)
+	if len(got) != 1 {
+		t.Fatalf("Sessions = %d, want 1", len(got))
+	}
+	g := got[0]
+	if g.Count != 10 || g.More != 7 || g.TitleHit || g.Title != "Antlers" || len(g.Top) != searchTopHits {
+		t.Fatalf("group = %+v", g)
+	}
+	// The top Hits are the Session's best-ranked Message Hits, as Search ranks them.
+	all := search(t, s, "moose", FeedFilter{})
+	for i, h := range g.Top {
+		if h.MessageID != all[i].MessageID || h.Role != "user" || !strings.Contains(h.Snippet, SnippetOpen+"moose"+SnippetClose) || h.Timestamp == 0 {
+			t.Errorf("top[%d] = %+v, want %s", i, h, all[i].MessageID)
+		}
+	}
+}
+
+func TestSearchSessionsRankByBestHit(t *testing.T) {
+	body := searchSession("tell me about otters please, and more words so this row is long", "otters are nice", "", "x", "")
+	titled := searchSession("unrelated start", "ok", "", "y", "") + `{"type":"custom-title","customTitle":"Otters"}` + "\n"
+	s := seedSearch(t, body, titled)
+	got := searchSessions(t, s, "otters", FeedFilter{}, 0, 20)
+	if len(got) != 2 || got[0].Title != "Otters" {
+		t.Fatalf("groups = %+v, want the titled Session first", got)
+	}
+	// A title-only Hit is a group with no Message Hits.
+	if g := got[0]; !g.TitleHit || g.Count != 1 || g.More != 0 || len(g.Top) != 0 {
+		t.Errorf("title-only group = %+v", g)
+	}
+	// The other Session hits on its title (the prompt), the prompt and the reply.
+	if g := got[1]; !g.TitleHit || g.Count != 3 || g.More != 0 || len(g.Top) != 2 {
+		t.Errorf("body group = %+v", g)
+	}
+}
+
+func TestSearchSessionsPageBySession(t *testing.T) {
+	var sessions []string
+	for i := 0; i < 7; i++ {
+		sessions = append(sessions, searchSession(fmt.Sprint("heron ", i), "heron reply", "", "x", ""))
+	}
+	s := seedSearch(t, sessions...)
+	seen := map[int64]bool{}
+	for off := 0; off < 9; off += 3 {
+		for _, g := range searchSessions(t, s, "heron", FeedFilter{}, off, 3) {
+			if seen[g.SessionID] {
+				t.Errorf("Session %d repeated", g.SessionID)
+			}
+			seen[g.SessionID] = true
+		}
+	}
+	if len(seen) != 7 {
+		t.Errorf("paged Sessions = %d, want 7", len(seen))
+	}
+}
+
+func TestSearchSessionsChildSessionIsItsOwnGroup(t *testing.T) {
+	s, _ := openParsing(t)
+	appendTo(t, s, protocol.SourceClaudeCode, mainKey, []byte(line1+line2))
+	child := `{"type":"user","uuid":"c1","parentUuid":null,"isSidechain":true,"timestamp":"2026-09-01T10:00:05.000Z","cwd":"/Users/ted/src/app","message":{"role":"user","content":"child walrus task"}}` + "\n"
+	appendTo(t, s, protocol.SourceClaudeCode, childKey, []byte(child))
+	for parseNext(t, s) {
+	}
+	got := searchSessions(t, s, "walrus", FeedFilter{}, 0, 20)
+	if len(got) != 1 || got[0].ParentID != sessionIDOf(t, s, sessUUID) || got[0].ParentTitle != "hello" {
+		t.Errorf("groups = %+v", got)
+	}
+}
+
+func TestSessionSearchHitsSkipTheTopInTranscriptOrder(t *testing.T) {
+	s := seedSearch(t, mooseSession())
+	ctx := context.Background()
+	terms := ParseQuery("moose")
+	g := searchSessions(t, s, "moose", FeedFilter{}, 0, 20)[0]
+	top := map[string]bool{}
+	for _, h := range g.Top {
+		top[h.MessageID] = true
+	}
+	var rest []string
+	for i := 0; i < 10; i++ {
+		if id := fmt.Sprintf("p%02d", i); !top[id] {
+			rest = append(rest, id)
+		}
+	}
+	var got []string
+	for off := 0; off < 10; off += 4 {
+		hits, more, err := s.SessionSearchHits(ctx, g.SessionID, terms, off, 4)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := max(len(rest)-off-len(hits), 0); more != want {
+			t.Errorf("more after %d = %d, want %d", off, more, want)
+		}
+		for _, h := range hits {
+			if !strings.Contains(h.Snippet, SnippetOpen) || h.Role != "user" {
+				t.Errorf("hit = %+v", h)
+			}
+			got = append(got, h.MessageID)
+		}
+	}
+	if !reflect.DeepEqual(got, rest) {
+		t.Errorf("expanded = %v, want %v", got, rest)
+	}
+}
+
+func TestSearchSessionFacetsCountSessions(t *testing.T) {
+	s, _ := openParsing(t)
+	ctx := context.Background()
+	if err := s.UpsertMachine(ctx, "m2", protocol.MachineInfo{Hostname: "desk", HomeDir: "/home/ted"}); err != nil {
+		t.Fatal(err)
+	}
+	add := func(machine, cwd, native, prompt string) {
+		body := strings.ReplaceAll(searchSession(prompt, "llama reply", "", "x", ""), "/Users/ted/src/app", cwd)
+		prev, _ := s.CurrentContent(ctx, machine, protocol.SourceClaudeCode, claudeKey(native))
+		if _, err := s.Append(ctx, AppendRequest{
+			MachineID: machine, Source: protocol.SourceClaudeCode, RecordKey: claudeKey(native),
+			PrefixSha256: hexSum(prev), Data: []byte(body), Compressed: zstdBytes(t, []byte(body)),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("m1", "/Users/ted/src/app", uuid(1), "llama one")
+	add("m1", "/Users/ted/src/app", uuid(2), "llama two")
+	add("m1", "/Users/ted", uuid(3), "llama three")
+	add("m2", "/home/ted/src/app", uuid(4), "llama four")
+	add("m2", "/home/ted/src/app", uuid(5), "no match")
+	for parseNext(t, s) {
+	}
+	fs, err := s.SearchSessionFacets(ctx, ParseQuery("llama"), FeedFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type fc struct {
+		machine, value string
+		n              int
+	}
+	flat := func(fs []Facet) []fc {
+		var out []fc
+		for _, f := range fs {
+			out = append(out, fc{f.MachineID, f.Value, f.Count})
+		}
+		return out
+	}
+	// Session 5 hits on its reply alone.
+	if got, want := flat(fs.Machines), []fc{{"m1", "m1", 3}, {"m2", "m2", 2}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("machines = %v, want %v", got, want)
+	}
+	if got, want := flat(fs.Sources), []fc{{"", "claude-code", 5}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("sources = %v, want %v", got, want)
+	}
+	if got, want := flat(fs.Projects), []fc{{"m2", "/home/ted/src/app", 2}, {"m1", "/Users/ted/src/app", 2}, {"m1", "", 1}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("projects = %v, want %v", got, want)
+	}
+	for _, f := range fs.Projects {
+		cwd := f.Value
+		if n := len(searchSessions(t, s, "llama", FeedFilter{Machine: f.MachineID, Project: &cwd}, 0, 20)); n != f.Count {
+			t.Errorf("project %s/%q: %d Sessions, facet says %d", f.MachineID, cwd, n, f.Count)
+		}
 	}
 }

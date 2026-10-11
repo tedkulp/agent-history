@@ -424,7 +424,7 @@ CREATE VIRTUAL TABLE search USING fts5(
 
 **Query translation.** The search box is plain text, not FTS5 syntax. The Hub splits the input on whitespace, keeps `"quoted phrases"` together, turns FTS5 operator characters into spaces (so `foo-bar` is the phrase `"foo bar"`, as the tokenizer splits it), drops terms with no letter or digit, wraps each term in double quotes, and ANDs them. The last term gets a `*` prefix match. Input that leaves no terms shows the feed.
 
-**Ranking:** `ORDER BY bm25(search) * CASE kind WHEN 'title' THEN 2.0 ELSE 1.0 END` (bm25 is negative; lower is better, so title hits count double).
+**Ranking:** `ORDER BY bm25(search) * CASE kind WHEN 'title' THEN 2.0 ELSE 1.0 END` (bm25 is negative; lower is better, so title hits count double). The web UI ranks each Session by its best hit's score, ties broken by Session id; within a Session, hits rank by the same score, ties broken by position. The MCP `search` tool lists the hits themselves in this order.
 
 **Snippets:** `snippet(search, 0, '', '', '…', 24)`. The Hub HTML-escapes the result, then swaps the two private-use sentinels for `<mark>` and `</mark>`, so Transcript text can never inject HTML.
 
@@ -613,11 +613,13 @@ The UI is **search-first**: a search box over a feed of recent Sessions from eve
 
 #### Search results (`/?q=…`)
 
-- A flat list of hits, 50 per page with "Load more" (`offset=`). Each hit shows the Session title (terms marked), a snippet around the match (§3.7), and Source · Machine › Project · the Message's role.
-- A hit links to `/sessions/{id}?hl=<q>#m-<message id>`. A title hit links to the top of the Transcript.
-- Hits in Child Sessions are included and labelled "↳ child of <parent title>".
-- A **facet sidebar** shows hit counts per Machine, Source and Project. Clicking a count adds that chip.
-- Active chips apply to the search too. Ordering is bm25 with title boost (§3.7).
+- The matching **Sessions**, ranked by their best hit (§3.7), 20 per page with "Load more" (`offset=` counts Sessions).
+- Each Session is a group. Its header shows the Session title (terms marked), Source · Machine › Project, its last activity time and its hit count ("14 hits", "1 hit"), and links to `/sessions/{id}?hl=<q>`. A title hit shows only here, though it counts toward the rank and the hit count.
+- Under the header, up to **3** of its best-ranked Message hits, each with its role, timestamp and a snippet around the match (§3.7), linking to `/sessions/{id}?hl=<q>#m-<message id>`.
+- A Session with more Message hits has a "+N more" control beside an "Open Transcript" link. It loads the next **20** hits in place with htmx (`/sessions/{id}/hits?q=<q>&offset=`), in Transcript order, skipping the 3 shown, and counts down until none are left.
+- Child Sessions get their own group, labelled "↳ child of <parent title>".
+- A **facet sidebar** shows how many matching Sessions each Machine, Source and Project has. Clicking a count adds that chip.
+- Active chips apply to the search too.
 
 #### Transcript (`/sessions/{id}`)
 

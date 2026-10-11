@@ -16,26 +16,54 @@ import (
 	"github.com/tedkulp/agent-history/internal/hub/store"
 )
 
-// searchPageSize is the number of hits per search page (hub.md §4.7).
-const searchPageSize = 50
+// searchPageSize is the number of Sessions per search page, and
+// searchMoreSize the number of Hits a group's "+N more" loads (hub.md §4.7).
+const (
+	searchPageSize = 20
+	searchMoreSize = 20
+)
 
-type hitView struct {
-	Href        string
+// searchTimeLayout dates Sessions and Hits in the results, which span years.
+const searchTimeLayout = "Jan 2, 2006 15:04"
+
+// groupView is one Session of the search results with its best Hits.
+type groupView struct {
+	ID          string          // the Session id
+	Href        string          // the Transcript, with the query to highlight
 	Title       templ.Component // the Session title with the terms marked
-	Snippet     templ.Component // nil for a title hit
+	ChildOf     string          // "↳ child of …" for a Child Session
 	Source      string
 	Machine     string
 	Project     string
 	ProjectFull string
-	Role        string
-	ChildOf     string // "↳ child of …" for a hit in a Child Session
+	Time        string // last activity
+	Count       string // "14 hits"
+	Hits        []hitView
+	More        moreView
+}
+
+// hitView is one Message Hit row of a group.
+type hitView struct {
+	Href    string
+	Role    string
+	Time    string
+	Snippet templ.Component
+}
+
+// moreView is a group's footer: "+N more" loads the next Hits in place,
+// beside a link to the Transcript. Shown while N > 0, and after the last
+// load.
+type moreView struct {
+	N    int
+	URL  string
+	Href string // the Transcript
 }
 
 // facetItem is one facet count; Href adds its chip (hub.md §4.7).
 type facetItem struct {
 	Label string
 	Title string // hover text
-	Hits  int
+	Count int
 	On    bool
 	Href  string
 }
@@ -49,32 +77,33 @@ type searchView struct {
 	Params feedParams
 	Chips  []chipRow
 	Facets []facetGroup
-	Hits   []hitView
+	Groups []groupView
 	More   string // "Load more" URL, "" on the last page
 }
 
-// search serves /?q= with terms: a ranked hit list with a facet sidebar, or
-// with htmx, the next page of hits.
+// search serves /?q= with terms: the matching Sessions, ranked, each with
+// its best Hits, beside a facet sidebar; or with htmx, the next page of
+// Sessions.
 func (s *server) search(w http.ResponseWriter, r *http.Request, p feedParams, terms []string) {
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 	offset = max(offset, 0)
 	f := p.filter()
-	hits, err := s.store.Search(r.Context(), terms, f, offset, searchPageSize+1)
+	groups, err := s.store.SearchSessions(r.Context(), terms, f, offset, searchPageSize+1)
 	if err != nil {
 		s.internal(w, r, err)
 		return
 	}
 	v := searchView{Params: p}
-	if len(hits) > searchPageSize {
-		hits = hits[:searchPageSize]
+	if len(groups) > searchPageSize {
+		groups = groups[:searchPageSize]
 		v.More = p.url("offset", strconv.Itoa(offset+searchPageSize))
 	}
 	mark := termMarker(terms)
-	for _, h := range hits {
-		v.Hits = append(v.Hits, hitFor(h, p.Q, mark))
+	for _, g := range groups {
+		v.Groups = append(v.Groups, s.groupFor(g, p.Q, mark))
 	}
 	if r.Header.Get("HX-Request") == "true" {
-		s.render(w, r, http.StatusOK, searchHits(v))
+		s.render(w, r, http.StatusOK, searchGroups(v))
 		return
 	}
 	if v.Chips, err = s.chips(r.Context(), p); err != nil {
@@ -88,45 +117,108 @@ func (s *server) search(w http.ResponseWriter, r *http.Request, p feedParams, te
 	s.render(w, r, http.StatusOK, searchPage(v))
 }
 
-// hitFor is the view of one hit. A Message hit links to its anchor with the
-// query to highlight; a title hit links to the top of the Transcript.
-func hitFor(h store.Hit, q string, mark func(string) string) hitView {
-	v := hitView{
-		Href:    sessionHref(h.SessionID) + "?" + url.Values{"hl": {q}}.Encode(),
-		Title:   templ.Raw(mark(titleOr(h.Title, h.NativeID))),
-		Source:  h.Source,
-		Machine: h.Machine,
-		Role:    h.Role,
+// groupFor is the view of one Session of the results. A title Hit counts,
+// but has no row of its own: the header shows the marked title.
+func (s *server) groupFor(g store.SessionHits, q string, mark func(string) string) groupView {
+	v := groupView{
+		ID:      strconv.FormatInt(g.SessionID, 10),
+		Href:    transcriptHL(g.SessionID, q),
+		Title:   templ.Raw(mark(titleOr(g.Title, g.NativeID))),
+		Source:  g.Source,
+		Machine: g.Machine,
+		Time:    s.localTime(g.LastActivityAt, searchTimeLayout),
+		Count:   hitCount(g.Count),
 	}
-	v.Project, v.ProjectFull = projectName(h.ProjectCwd)
-	if h.MessageID != "" {
-		v.Href += "#m-" + h.MessageID
-		v.Snippet = templ.Raw(markSnippet(h.Snippet))
-	} else {
-		v.Role = "title"
+	v.Project, v.ProjectFull = projectName(g.ProjectCwd)
+	if g.ParentID != 0 {
+		v.ChildOf = "↳ child of " + g.ParentTitle
 	}
-	if h.ParentID != 0 {
-		v.ChildOf = "↳ child of " + h.ParentTitle
+	for _, h := range g.Top {
+		v.Hits = append(v.Hits, s.hitFor(h, q))
 	}
+	v.More = moreFor(g.SessionID, q, 0, g.More)
 	return v
+}
+
+// hitFor is the view of one Message Hit: a link to its anchor with the
+// query to highlight.
+func (s *server) hitFor(h store.Hit, q string) hitView {
+	return hitView{
+		Href:    transcriptHL(h.SessionID, q) + "#m-" + h.MessageID,
+		Role:    h.Role,
+		Time:    s.localTime(h.Timestamp, searchTimeLayout),
+		Snippet: templ.Raw(markSnippet(h.Snippet)),
+	}
+}
+
+// moreFor is a group's footer with n Hits left to load, the next from
+// offset past the top ones.
+func moreFor(sessionID int64, q string, offset, n int) moreView {
+	return moreView{
+		N:    n,
+		URL:  sessionHref(sessionID) + "/hits?" + url.Values{"q": {q}, "offset": {strconv.Itoa(offset)}}.Encode(),
+		Href: transcriptHL(sessionID, q),
+	}
+}
+
+// transcriptHL is a Session's Transcript with q to highlight.
+func transcriptHL(sessionID int64, q string) string {
+	return sessionHref(sessionID) + "?" + url.Values{"hl": {q}}.Encode()
+}
+
+// hitCount is "1 hit" or "n hits".
+func hitCount(n int) string {
+	if n == 1 {
+		return "1 hit"
+	}
+	return strconv.Itoa(n) + " hits"
+}
+
+// sessionHits serves a group's "+N more": the Session's next Message Hits
+// for q in Transcript order, and the footer again with what's left
+// (hub.md §4.7).
+func (s *server) sessionHits(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	q := r.URL.Query().Get("q")
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	offset = max(offset, 0)
+	hits, more, err := s.store.SessionSearchHits(r.Context(), id, store.ParseQuery(q), offset, searchMoreSize)
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	if len(hits) == 0 && more == 0 {
+		http.NotFound(w, r)
+		return
+	}
+	var v groupView
+	for _, h := range hits {
+		v.Hits = append(v.Hits, s.hitFor(h, q))
+	}
+	v.More = moreFor(id, q, offset+len(hits), more)
+	s.render(w, r, http.StatusOK, groupHits(v))
 }
 
 // facets builds the Machine, Source and Project facet groups. Each count
 // links to the search with that chip added.
 func (s *server) facets(ctx context.Context, p feedParams, terms []string, f store.FeedFilter) ([]facetGroup, error) {
-	fs, err := s.store.SearchFacets(ctx, terms, f)
+	fs, err := s.store.SearchSessionFacets(ctx, terms, f)
 	if err != nil {
 		return nil, err
 	}
 	machines := facetGroup{Label: "Machine"}
 	for _, fc := range fs.Machines {
-		machines.Items = append(machines.Items, facetItem{Label: fc.Machine, Title: fc.MachineID, Hits: fc.Hits, On: p.Machine == fc.Value, Href: p.withMachine(fc.Value).url()})
+		machines.Items = append(machines.Items, facetItem{Label: fc.Machine, Title: fc.MachineID, Count: fc.Count, On: p.Machine == fc.Value, Href: p.withMachine(fc.Value).url()})
 	}
 	sources := facetGroup{Label: "Source"}
 	for _, fc := range fs.Sources {
 		q := p
 		q.Source = fc.Value
-		sources.Items = append(sources.Items, facetItem{Label: fc.Value, Hits: fc.Hits, On: p.Source == fc.Value, Href: q.url()})
+		sources.Items = append(sources.Items, facetItem{Label: fc.Value, Count: fc.Count, On: p.Source == fc.Value, Href: q.url()})
 	}
 	projects := facetGroup{Label: "Project"}
 	for _, fc := range fs.Projects {
@@ -137,7 +229,7 @@ func (s *server) facets(ctx context.Context, p feedParams, terms []string, f sto
 			full = name
 		}
 		projects.Items = append(projects.Items, facetItem{
-			Label: fc.Machine + " › " + name, Title: fc.Machine + ": " + full, Hits: fc.Hits,
+			Label: fc.Machine + " › " + name, Title: fc.Machine + ": " + full, Count: fc.Count,
 			On: p.Machine == fc.MachineID && p.Project == q.Project, Href: q.url(),
 		})
 	}
