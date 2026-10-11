@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"io"
 
 	"github.com/tedkulp/agent-history/internal/hub/store"
@@ -38,7 +39,8 @@ func TestSearchResultsLinkToTheMessage(t *testing.T) {
 		`Fruit &lt;i&gt;hunt&lt;/i&gt;`,
 		"↳ child of Fruit &lt;i&gt;hunt&lt;/i&gt;",
 		"<mark>kiwi</mark> task",
-		"· user", "· assistant",
+		`<span class="role">user</span>`, `<span class="role">assistant</span>`,
+		"2 hits",
 		`class="facets"`, "<h4>Machine</h4>", "<h4>Source</h4>", "<h4>Project</h4>",
 	} {
 		if !strings.Contains(body, want) {
@@ -51,10 +53,14 @@ func TestSearchResultsLinkToTheMessage(t *testing.T) {
 		}
 	}
 
-	// A title hit links to the top of the Transcript.
+	// A title hit shows only in its group's header, which links to the top of
+	// the Transcript.
 	_, body = get(t, srv.URL+"/?q=hunt")
-	if !strings.Contains(body, `href="/sessions/`+id+`?hl=hunt"`) || !strings.Contains(body, "· title") {
+	if !strings.Contains(body, `href="/sessions/`+id+`?hl=hunt"`) || !strings.Contains(body, "Fruit &lt;i&gt;<mark>hunt</mark>&lt;/i&gt;") {
 		t.Error("title hit doesn't link to the top")
+	}
+	if strings.Count(body, `class="group"`) != 1 || strings.Contains(body, `class="hit"`) || !strings.Contains(body, "1 hit<") {
+		t.Error("title-only match shows Hit rows")
 	}
 
 	// The Transcript page loads the script that marks hl terms.
@@ -92,27 +98,27 @@ func TestSearchFacetsAddChips(t *testing.T) {
 	_, body := get(t, srv.URL+"/?q=otter")
 	// Each Session hits on its prompt and on its title, which is the prompt.
 	for _, want := range []string{
-		`href="/?machine=m1&amp;q=otter" title="m1"><span>laptop</span> <span class="n">4</span>`,
-		`href="/?machine=m2&amp;q=otter" title="m2"><span>desk</span> <span class="n">2</span>`,
+		`href="/?machine=m1&amp;q=otter" title="m1"><span>laptop</span> <span class="n">2</span>`,
+		`href="/?machine=m2&amp;q=otter" title="m2"><span>desk</span> <span class="n">1</span>`,
 		`href="/?q=otter&amp;source=claude-code"`,
 		`href="/?machine=m1&amp;project=-&amp;q=otter"`,
 		`href="/?machine=m1&amp;project=%2FUsers%2Fted%2Fsrc%2Fapp&amp;q=otter"`,
-		`<span>laptop › app</span> <span class="n">2</span>`,
+		`<span>laptop › app</span> <span class="n">1</span>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("facets lack %q", want)
 		}
 	}
-	if n := strings.Count(body, `class="hit"`); n != 6 {
-		t.Errorf("hits = %d, want 6", n)
+	if n := strings.Count(body, `class="group"`); n != 3 {
+		t.Errorf("groups = %d, want 3", n)
 	}
 
 	_, body = get(t, srv.URL+"/?q=otter&machine=m1&project=-")
 	if !strings.Contains(body, "</mark> two") || strings.Contains(body, "</mark> one") || strings.Contains(body, "</mark> three") {
 		t.Error("Project facet does not filter")
 	}
-	if n := strings.Count(body, `class="hit"`); n != 2 {
-		t.Errorf("filtered hits = %d, want 2", n)
+	if n := strings.Count(body, `class="group"`); n != 1 {
+		t.Errorf("filtered groups = %d, want 1", n)
 	}
 	// The active chips stay in the search box's form.
 	if !strings.Contains(body, `name="machine" value="m1"`) || !strings.Contains(body, `name="project" value="-"`) {
@@ -138,15 +144,86 @@ func TestSearchLoadMore(t *testing.T) {
 	}
 	srv := newSiteRecords(t, recs)
 	_, body := get(t, srv.URL+"/?q=badger")
-	if n := strings.Count(body, `class="hit"`); n != searchPageSize {
-		t.Fatalf("first page = %d hits", n)
+	if n := strings.Count(body, `class="group"`); n != searchPageSize {
+		t.Fatalf("first page = %d Sessions", n)
 	}
-	if !strings.Contains(body, `hx-get="/?offset=50&amp;q=badger"`) {
+	if !strings.Contains(body, `hx-get="/?offset=20&amp;q=badger"`) {
 		t.Fatal("no Load more link")
 	}
-	resp, next := getHX(t, srv.URL+"/?offset=50&q=badger")
-	if resp != 200 || strings.Count(next, `class="hit"`) != 10 || strings.Contains(next, "<html") || strings.Contains(next, "Load more") {
-		t.Errorf("second page: status %d, %d hits", resp, strings.Count(next, `class="hit"`))
+	resp, next := getHX(t, srv.URL+"/?offset=20&q=badger")
+	if resp != 200 || strings.Count(next, `class="group"`) != 10 || strings.Contains(next, "<html") || strings.Contains(next, "Load more") {
+		t.Errorf("second page: status %d, %d Sessions", resp, strings.Count(next, `class="group"`))
+	}
+	ids := map[string]bool{}
+	for _, page := range []string{body, next} {
+		for _, part := range strings.Split(page, `class="group" id="g-`)[1:] {
+			id := part[:strings.IndexByte(part, '"')]
+			if ids[id] {
+				t.Errorf("Session %s repeated", id)
+			}
+			ids[id] = true
+		}
+	}
+}
+
+func TestSearchGroupExpandsInTranscriptOrder(t *testing.T) {
+	var b strings.Builder
+	parent := "null"
+	for i := 0; i < 25; i++ {
+		id := fmt.Sprintf("p%02d", i)
+		fmt.Fprintf(&b, `{"type":"user","uuid":%q,"parentUuid":%s,"timestamp":"2026-09-01T10:%02d:00.000Z","cwd":"/Users/ted/src/app","message":{"role":"user","content":"marmot %s"}}`+"\n",
+			id, parent, i, strings.Repeat("filler ", (i*7)%10))
+		parent = fmt.Sprintf("%q", id)
+	}
+	b.WriteString(`{"type":"custom-title","customTitle":"Burrows"}` + "\n")
+	srv := newSite(t, map[string]string{"-Users-ted-src-app/" + sess + ".jsonl": b.String()})
+	_, home := get(t, srv.URL+"/")
+	id := sessionID(t, home, "Burrows")
+
+	_, body := get(t, srv.URL+"/?q=marmot")
+	if strings.Count(body, `class="group"`) != 1 || !strings.Contains(body, "25 hits") || strings.Count(body, `class="hit"`) != 3 {
+		t.Fatal("25 Hits in one Session don't make one group of three rows")
+	}
+	more := `hx-get="/sessions/` + id + `/hits?offset=0&amp;q=marmot"`
+	if !strings.Contains(body, more) || !strings.Contains(body, "+22 more") || !strings.Contains(body, `href="/sessions/`+id+`?hl=marmot">Open Transcript`) {
+		t.Fatalf("no +22 more control in %s", body)
+	}
+	shown := map[string]bool{}
+	for _, part := range strings.Split(body, `?hl=marmot#m-`)[1:] {
+		shown[part[:3]] = true
+	}
+
+	var order []string
+	code, next := getHX(t, srv.URL+"/sessions/"+id+"/hits?offset=0&q=marmot")
+	if code != 200 || strings.Count(next, `class="hit"`) != 20 || !strings.Contains(next, "+2 more") ||
+		!strings.Contains(next, `hx-get="/sessions/`+id+`/hits?offset=20&amp;q=marmot"`) {
+		t.Fatalf("first expansion: status %d: %s", code, next)
+	}
+	collect := func(page string) {
+		for _, part := range strings.Split(page, `?hl=marmot#m-`)[1:] {
+			order = append(order, part[:3])
+		}
+	}
+	collect(next)
+	_, last := getHX(t, srv.URL+"/sessions/"+id+"/hits?offset=20&q=marmot")
+	if strings.Count(last, `class="hit"`) != 2 || strings.Contains(last, "more<") || !strings.Contains(last, "Open Transcript") {
+		t.Errorf("last expansion: %s", last)
+	}
+	collect(last)
+	if len(order) != 22 {
+		t.Fatalf("expanded %d Hits, want 22", len(order))
+	}
+	for i, m := range order {
+		if shown[m] {
+			t.Errorf("expansion repeats top Hit %s", m)
+		}
+		if i > 0 && order[i-1] >= m {
+			t.Errorf("expansion out of Transcript order: %v", order)
+			break
+		}
+	}
+	if code, _ := get(t, srv.URL+"/sessions/999/hits?q=marmot"); code != 404 {
+		t.Errorf("unknown Session: status %d", code)
 	}
 }
 

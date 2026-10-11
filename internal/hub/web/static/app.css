@@ -99,7 +99,7 @@ details.notes ul{margin:6px 0;padding-left:18px} details.notes pre{margin:4px 0 
 .outline .n{font-size:11px}
 @media (max-width:760px){.tr{grid-template-columns:minmax(0,1fr)}.outline{display:none}}
 
-/* Search: the box, ranked hits and a facet sidebar (hub.md §4.7). */
+/* Search: the box, ranked Sessions with their hits and a facet sidebar (hub.md §4.7). */
 mark{background:var(--mark);color:inherit;border-radius:2px;padding:0 1px}
 .msg.user .bubble mark{color:#000}
 .search{margin-bottom:10px;position:relative}
@@ -108,10 +108,14 @@ mark{background:var(--mark);color:inherit;border-radius:2px;padding:0 1px}
 .search input::-webkit-search-cancel-button{display:none}
 .search input{width:100%;font:17px var(--sans);padding:11px 44px 11px 16px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);box-shadow:0 1px 3px #0001}
 .results{display:grid;grid-template-columns:minmax(0,1fr) 220px;gap:24px}
-.hit{display:block;padding:10px 12px;border-radius:8px;color:var(--ink);border:1px solid transparent}
-.hit:hover{border-color:var(--line);background:var(--panel);text-decoration:none}
-.hit .t{font-weight:500} .hit .child{font-size:12px;color:var(--dim)}
-.hit .snip{font-size:13px;overflow-wrap:anywhere} .hit .m{font-size:12px;color:var(--dim);margin-top:2px}
+.group{margin-bottom:14px}
+.gh,.hit{display:block;padding:8px 12px;border-radius:8px;color:var(--ink);border:1px solid transparent}
+.gh:hover,.hit:hover{border-color:var(--line);background:var(--panel);text-decoration:none}
+.gh .t{font-weight:500} .gh .child{font-size:12px;color:var(--dim)} .gh .m{font-size:12px;color:var(--dim);margin-top:2px}
+.hit{margin-left:16px;padding:6px 12px}
+.hit .snip{font-size:13px;overflow-wrap:anywhere} .hit .m{font-size:11.5px;color:var(--dim)}
+.gmore{margin-left:28px;font-size:12.5px;display:flex;gap:12px;align-items:center}
+.gmore button{font:inherit;color:var(--acc);background:none;border:0;padding:0;cursor:pointer}
 .facets h4{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim);margin:14px 0 4px} .facets h4:first-child{margin-top:0}
 .facets a{display:flex;justify-content:space-between;gap:8px;font-size:13px;padding:2px 0;color:var(--ink)}
 .facets a span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap} .facets a .n{color:var(--dim)}

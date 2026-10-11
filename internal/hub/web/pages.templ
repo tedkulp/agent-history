@@ -142,18 +142,18 @@ templ feedRows(v feedView) {
 	}
 }
 
-// searchPage is the search results: ranked hits beside a facet sidebar
-// (hub.md §4.7).
+// searchPage is the search results: ranked Sessions, each with its best
+// Hits, beside a facet sidebar (hub.md §4.7).
 templ searchPage(v searchView) {
 	@layout(v.Params.Q + " · Agent History") {
 		@searchForm(v.Params)
 		@chipRows(v.Chips)
 		<div class="results">
 			<div class="hits">
-				if len(v.Hits) == 0 {
+				if len(v.Groups) == 0 {
 					<p class="dim">No matches.</p>
 				}
-				@searchHits(v)
+				@searchGroups(v)
 			</div>
 			<aside class="facets">
 				for _, g := range v.Facets {
@@ -172,31 +172,63 @@ templ searchPage(v searchView) {
 	}
 }
 
-// searchHits is one page of hits, followed by its "Load more" link. htmx
-// swaps the link for the next page.
-templ searchHits(v searchView) {
-	for _, h := range v.Hits {
-		<a class="hit" href={ templ.SafeURL(h.Href) }>
-			<div class="t">
-				@h.Title
-			</div>
-			if h.ChildOf != "" {
-				<div class="child">{ h.ChildOf }</div>
-			}
-			if h.Snippet != nil {
-				<div class="snip">
-					@h.Snippet
+// searchGroups is one page of Sessions, followed by its "Load more" link.
+// htmx swaps the link for the next page.
+templ searchGroups(v searchView) {
+	for _, g := range v.Groups {
+		<div class="group" id={ "g-" + g.ID }>
+			<a class="gh" href={ templ.SafeURL(g.Href) }>
+				<div class="t">
+					@g.Title
 				</div>
+				if g.ChildOf != "" {
+					<div class="child">{ g.ChildOf }</div>
+				}
+				<div class="m">
+					@sourceBadge(g.Source)
+					· { g.Machine } › <span title={ g.ProjectFull }>{ g.Project }</span> · { g.Time } · <span class="n">{ g.Count }</span>
+				</div>
+			</a>
+			for _, h := range g.Hits {
+				@hitRow(h)
 			}
-			<div class="m">
-				@sourceBadge(h.Source)
-				· { h.Machine } › <span title={ h.ProjectFull }>{ h.Project }</span> · { h.Role }
-			</div>
-		</a>
+			if g.More.N > 0 {
+				@groupMore(g.More)
+			}
+		</div>
 	}
 	if v.More != "" {
 		<a class="more" href={ templ.SafeURL(v.More) } hx-get={ v.More } hx-swap="outerHTML">Load more</a>
 	}
+}
+
+templ hitRow(h hitView) {
+	<a class="hit" href={ templ.SafeURL(h.Href) }>
+		<div class="m"><span class="role">{ h.Role }</span> · { h.Time }</div>
+		<div class="snip">
+			@h.Snippet
+		</div>
+	</a>
+}
+
+// groupMore is a group's footer. htmx swaps it for the next Hits and the
+// footer again.
+templ groupMore(m moreView) {
+	<div class="gmore">
+		if m.N > 0 {
+			<button type="button" hx-get={ m.URL } hx-target="closest .gmore" hx-swap="outerHTML">+{ strconv.Itoa(m.N) } more</button>
+		}
+		<a href={ templ.SafeURL(m.Href) }>Open Transcript</a>
+	</div>
+}
+
+// groupHits is the next Hits of a group, in Transcript order, then its
+// footer.
+templ groupHits(v groupView) {
+	for _, h := range v.Hits {
+		@hitRow(h)
+	}
+	@groupMore(v.More)
 }
 
 // transcriptPage is a Session's Transcript. The data attributes let app.js

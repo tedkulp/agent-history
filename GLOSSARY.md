@@ -50,6 +50,10 @@ _Avoid_: built-in command, system command
 **Tool call**:
 A tool request together with its result, treated as one unit.
 
+**Hit**:
+A Message or Session title that matches a search. A search lists the matching Sessions, each with its Hits.
+_Avoid_: match, result
+
 **Raw record**:
 The Source's original on-disk data for a Session, kept verbatim alongside the parsed Transcript: one Source file, or one Session's rows for a database-backed Source. When its content is rewritten rather than appended to, the earlier content is kept as a superseded version.
 
@@ -81,6 +85,7 @@ _Avoid_: rebuild, reindex
 - A **Project** belongs to exactly one **Machine**; the same path on two Machines is two **Projects**
 - A **Session** belongs to at most one **Project**, fixed by where it started
 - A **Child Session** has exactly one parent **Session** and is spawned by one **Tool call** in it
+- A **Hit** belongs to exactly one **Session**; a search ranks each **Session** by its best **Hit**
 - A **Transcript** has one or more **Messages**; a **Message** has one or more **Parts**
 
 ## Flagged ambiguities
