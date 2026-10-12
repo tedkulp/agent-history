@@ -34,10 +34,13 @@ Supported today: **Claude Code**, **Codex**, **oh-my-pi**, **opencode** and **He
   that runs as a launchd or systemd user service.
 
 ![The feed: every session from every machine, newest first](docs/images/feed.png)
+*The feed: every session from every machine, newest first.*
 
 ![Search: matches grouped by session, with the hits highlighted](docs/images/search.png)
+*Search: matches grouped by session, with the hits highlighted.*
 
 ![A transcript, with tool calls collapsed](docs/images/transcript.png)
+*A transcript, with tool calls collapsed.*
 
 > [!WARNING]
 > The Hub has no authentication and no TLS. Run it on a private network
