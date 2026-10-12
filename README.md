@@ -35,6 +35,8 @@ Supported today: **Claude Code**, **Codex**, **oh-my-pi**, **opencode** and **He
 
 ![The feed: every session from every machine, newest first](docs/images/feed.png)
 
+![Search: matches grouped by session, with the hits highlighted](docs/images/search.png)
+
 ![A transcript, with tool calls collapsed](docs/images/transcript.png)
 
 > [!WARNING]

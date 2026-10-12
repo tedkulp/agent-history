@@ -42,4 +42,5 @@ shot() { # file url height
 }
 mkdir -p "$work/firefox" docs/images
 shot feed.png "$hub_url/" 820
+shot search.png "$hub_url/?q=orders" 620
 shot transcript.png "$hub_url$transcript" 800
