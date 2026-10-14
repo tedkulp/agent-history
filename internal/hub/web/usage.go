@@ -122,15 +122,15 @@ func usageURL(rng, by string) string {
 // breakdown for one fixed window, read afresh on each load.
 func (s *server) usage(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	rng := usageRanges[1]
+	var rng usageRange
 	for _, c := range usageRanges {
-		if c.Param == q.Get("range") {
+		if c.Param == q.Get("range") || rng.Param == "" && c.Param == defaultUsageRange {
 			rng = c
 		}
 	}
-	by, byLabel := defaultUsageBy, usageBys[0].Label
+	var by, byLabel string
 	for _, c := range usageBys {
-		if c.Param == q.Get("by") {
+		if c.Param == q.Get("by") || by == "" && c.Param == defaultUsageBy {
 			by, byLabel = c.Param, c.Label
 		}
 	}
@@ -206,7 +206,7 @@ func usageChartFor(days []store.UsageDay, first, last time.Time) usageChart {
 	var top int64
 	for _, d := range days {
 		byDay[d.Day.Format(key)] = d.Usage
-		top = max(top, sum(d.Usage))
+		top = max(top, d.Sum())
 	}
 	c := usageChart{First: first.Format("Jan 2"), Last: last.Format("Jan 2"), Max: num(top).Short}
 	n := 0
@@ -232,8 +232,6 @@ func usageChartFor(days []store.UsageDay, first, last time.Time) usageChart {
 	c.ViewBox = fmt.Sprintf("0 0 %d %d", max(n, 1)*usageSlot, usageChartH)
 	return c
 }
-
-func sum(u parser.Usage) int64 { return u.Input + u.Output + u.CacheRead + u.CacheWrite + u.Reasoning }
 
 func coord(f float64) string { return strconv.FormatFloat(f, 'f', 2, 64) }
 

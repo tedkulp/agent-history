@@ -258,6 +258,9 @@ func (u *Usage) Add(u2 Usage) {
 	u.Reasoning += u2.Reasoning
 }
 
+// Sum is the five counts added together.
+func (u Usage) Sum() int64 { return u.Input + u.Output + u.CacheRead + u.CacheWrite + u.Reasoning }
+
 // IsZero reports whether every count is 0.
 func (u Usage) IsZero() bool { return u == Usage{} }
 

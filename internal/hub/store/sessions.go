@@ -435,7 +435,7 @@ func (s *Store) SaveParse(ctx context.Context, job Job, parserVersion int, res p
 		total, hasUsage = *res.Session.Usage, true
 	}
 	var usageJSON sql.NullString
-	if hasUsage {
+	if hasUsage && !total.IsZero() { // all-zero counts are no Usage (hub.md §3.4)
 		b, _ := json.Marshal(total)
 		usageJSON = sql.NullString{String: string(b), Valid: true}
 	}

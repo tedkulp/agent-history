@@ -59,8 +59,9 @@ func TestUsageReport(t *testing.T) {
 			usageMsg("h2", 0, "gpt", nil), // no timestamp: dated by its Session's start
 		},
 	})
-	// N reported no Usage; O is long before the window.
+	// N reported no Usage, Z only zero counts; O is long before the window.
 	saveResult(t, s, "claude-code", "N", parser.Result{Messages: []parser.Message{usageMsg("n1", at(10, 9, 0), "", nil)}})
+	saveResult(t, s, "claude-code", "Z", parser.Result{Messages: []parser.Message{usageMsg("z1", at(10, 9, 0), "opus", &parser.Usage{})}})
 	saveResult(t, s, "claude-code", "O", parser.Result{
 		Session:  parser.Session{StartedAt: at(1, 9, 0), Cwd: "/Users/ted/src/app"},
 		Messages: []parser.Message{usageMsg("o1", at(1, 9, 0), "opus", &parser.Usage{Input: 1000})},
@@ -71,12 +72,12 @@ func TestUsageReport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantTotal := UsageCounts{Usage: parser.Usage{Input: 135, Output: 3}, Sessions: 3, Messages: 7}
+	wantTotal := UsageCounts{Usage: parser.Usage{Input: 135, Output: 3}, Sessions: 4, Messages: 8}
 	if rep.Total != wantTotal {
 		t.Errorf("total = %+v, want %+v", rep.Total, wantTotal)
 	}
-	if rep.NoUsage != 1 {
-		t.Errorf("no Usage = %d, want 1", rep.NoUsage)
+	if rep.NoUsage != 2 {
+		t.Errorf("no Usage = %d, want 2", rep.NoUsage)
 	}
 	wantDays := []UsageDay{
 		{Day: day(9), Usage: parser.Usage{Input: 100}},
@@ -88,7 +89,7 @@ func TestUsageReport(t *testing.T) {
 	}
 	wantSources := []UsageGroup{
 		{Key: "hermes", Label: "hermes", UsageCounts: UsageCounts{Usage: parser.Usage{Input: 100}, Sessions: 1, Messages: 2}},
-		{Key: "claude-code", Label: "claude-code", UsageCounts: UsageCounts{Usage: parser.Usage{Input: 35, Output: 3}, Sessions: 2, Messages: 5}},
+		{Key: "claude-code", Label: "claude-code", UsageCounts: UsageCounts{Usage: parser.Usage{Input: 35, Output: 3}, Sessions: 3, Messages: 6}},
 	}
 	if !reflect.DeepEqual(rep.Groups, wantSources) {
 		t.Errorf("by source =\n%+v\nwant\n%+v", rep.Groups, wantSources)
@@ -102,7 +103,7 @@ func TestUsageReport(t *testing.T) {
 	wantProjects := []UsageGroup{
 		{Key: "/Users/ted/src/h", Label: "/Users/ted/src/h", Machine: "laptop", UsageCounts: UsageCounts{Usage: parser.Usage{Input: 100}, Sessions: 1, Messages: 2}},
 		{Key: "/Users/ted/src/app", Label: "/Users/ted/src/app", Machine: "laptop", UsageCounts: UsageCounts{Usage: parser.Usage{Input: 35, Output: 3}, Sessions: 1, Messages: 4}},
-		{Key: "", Label: "", Machine: "laptop", UsageCounts: UsageCounts{Sessions: 1, Messages: 1}},
+		{Key: "", Label: "", Machine: "laptop", UsageCounts: UsageCounts{Sessions: 2, Messages: 2}},
 	}
 	if !reflect.DeepEqual(rep.Groups, wantProjects) {
 		t.Errorf("by project =\n%+v\nwant\n%+v", rep.Groups, wantProjects)
@@ -115,7 +116,7 @@ func TestUsageReport(t *testing.T) {
 	}
 	wantModels := []UsageGroup{
 		{Key: "gpt", Label: "gpt", UsageCounts: UsageCounts{Usage: parser.Usage{Input: 100}, Sessions: 1, Messages: 2}},
-		{Key: "opus", Label: "opus", UsageCounts: UsageCounts{Usage: parser.Usage{Input: 30, Output: 3}, Sessions: 1, Messages: 3}},
+		{Key: "opus", Label: "opus", UsageCounts: UsageCounts{Usage: parser.Usage{Input: 30, Output: 3}, Sessions: 2, Messages: 4}},
 		{Key: "haiku", Label: "haiku", UsageCounts: UsageCounts{Usage: parser.Usage{Input: 5}, Messages: 1}},
 		{Key: "unknown", Label: "unknown", UsageCounts: UsageCounts{Sessions: 1, Messages: 1}},
 	}
@@ -136,7 +137,7 @@ func TestUsageReport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rep.Total.Input != 1135 || rep.Total.Sessions != 4 || len(rep.Days) != 4 || rep.Days[0].Day != day(1) {
+	if rep.Total.Input != 1135 || rep.Total.Sessions != 5 || len(rep.Days) != 4 || rep.Days[0].Day != day(1) {
 		t.Errorf("all time: total = %+v, days = %+v", rep.Total, rep.Days)
 	}
 }

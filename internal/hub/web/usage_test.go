@@ -102,7 +102,8 @@ func TestUsagePage(t *testing.T) {
 }
 
 func TestUsagePageWithoutNoUsageLine(t *testing.T) {
-	srv := usageSite(t, record{"m1", "20261010_120000_aaaaaa", hmExport(t, "20261010_120000_aaaaaa", time.Now().Add(-time.Second), 5, 5)})
+	started := time.Now().Add(-time.Second)
+	srv := usageSite(t, record{"m1", "20261010_120000_aaaaaa", hmExport(t, "20261010_120000_aaaaaa", started, 5, 5)})
 	_, page := get(t, srv.URL+"/usage?range=all&by=project")
 	if strings.Contains(page, "reported no Usage") {
 		t.Errorf("no-Usage line shown with none")
@@ -110,7 +111,12 @@ func TestUsagePageWithoutNoUsageLine(t *testing.T) {
 	if !strings.Contains(page, `<td title="/Users/ted/src/app">app <span class="dim">laptop</span></td>`) {
 		t.Errorf("project row missing")
 	}
-	if n := strings.Count(page, `<g class="bar">`); n != 1 {
-		t.Errorf("all-time chart has %d bars, want 1 (today)", n)
+	// One bar, unless the Session started yesterday, just before midnight.
+	want := 1
+	if started.Day() != time.Now().Day() {
+		want = 2
+	}
+	if n := strings.Count(page, `<g class="bar">`); n != want {
+		t.Errorf("all-time chart has %d bars, want %d", n, want)
 	}
 }

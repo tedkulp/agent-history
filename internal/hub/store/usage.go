@@ -25,6 +25,11 @@ type UsageCounts struct {
 	Messages int
 }
 
+// dest is where a row of usageSums scans to.
+func (c *UsageCounts) dest() []any {
+	return []any{&c.Input, &c.Output, &c.CacheRead, &c.CacheWrite, &c.Reasoning, &c.Sessions, &c.Messages}
+}
+
 // UsageGroup is one row of a Usage breakdown.
 type UsageGroup struct {
 	Key     string // the Source, Machine id, Project cwd ("" = No project) or model
@@ -102,9 +107,7 @@ func (s *Store) UsageReport(ctx context.Context, since int64, loc *time.Location
 		return UsageReport{}, fmt.Errorf("unknown Usage breakdown %q", by)
 	}
 	var rep UsageReport
-	t := &rep.Total
-	if err := s.read.QueryRowContext(ctx, usageWindow+`SELECT `+usageSums+` FROM win`, since).Scan(
-		&t.Input, &t.Output, &t.CacheRead, &t.CacheWrite, &t.Reasoning, &t.Sessions, &t.Messages); err != nil {
+	if err := s.read.QueryRowContext(ctx, usageWindow+`SELECT `+usageSums+` FROM win`, since).Scan(rep.Total.dest()...); err != nil {
 		return UsageReport{}, err
 	}
 	if err := s.read.QueryRowContext(ctx, `
@@ -123,15 +126,14 @@ func (s *Store) UsageReport(ctx context.Context, since int64, loc *time.Location
 		SELECT `+g.cols+`, `+usageSums+`
 		FROM win `+g.join+`
 		GROUP BY `+g.group+`
-		ORDER BY input + output + cache_read + cache_write DESC, 2`, since)
+		ORDER BY input + output + cache_read + cache_write + reasoning DESC, 2`, since)
 	if err != nil {
 		return UsageReport{}, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var r UsageGroup
-		if err := rows.Scan(&r.Key, &r.Label, &r.Machine,
-			&r.Input, &r.Output, &r.CacheRead, &r.CacheWrite, &r.Reasoning, &r.Sessions, &r.Messages); err != nil {
+		if err := rows.Scan(append([]any{&r.Key, &r.Label, &r.Machine}, r.dest()...)...); err != nil {
 			return UsageReport{}, err
 		}
 		rep.Groups = append(rep.Groups, r)
@@ -158,10 +160,9 @@ func (s *Store) usageDays(ctx context.Context, since int64, loc *time.Location) 
 	for rows.Next() {
 		var (
 			bucket int64
-			u      parser.Usage
-			n      int
+			c      UsageCounts
 		)
-		if err := rows.Scan(&bucket, &u.Input, &u.Output, &u.CacheRead, &u.CacheWrite, &u.Reasoning, &n, &n); err != nil {
+		if err := rows.Scan(append([]any{&bucket}, c.dest()...)...); err != nil {
 			return nil, err
 		}
 		y, m, d := time.UnixMilli(bucket * usageBucket.Milliseconds()).In(loc).Date()
@@ -169,7 +170,7 @@ func (s *Store) usageDays(ctx context.Context, since int64, loc *time.Location) 
 		if len(days) == 0 || !days[len(days)-1].Day.Equal(day) {
 			days = append(days, UsageDay{Day: day})
 		}
-		days[len(days)-1].Add(u)
+		days[len(days)-1].Add(c.Usage)
 	}
 	return days, rows.Err()
 }
