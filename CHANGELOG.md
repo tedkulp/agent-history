@@ -11,7 +11,7 @@ One version covers the Collector and the Hub together (see
 
 ### Added
 
-- A Usage page (`/usage`, linked from every page's header) totals tokens across Sessions over the last 7, 30 or 90 days or all time: one tile per Usage field, a daily stacked bar chart, and a breakdown by Source, Machine, Project or model.
+- A Usage page (`/usage`, linked from every page's header) totals tokens across Sessions over the last 7, 30 or 90 days or all time: one tile per Usage field, a daily chart stacked by Usage field, and a breakdown by Source, Machine, Project or model with its own daily chart of the top 5 and the rest as "Other".
 - Hermes Sessions report Usage, from Hermes's per-Session token totals.
 
 ## [0.11.0] - 2026-10-11

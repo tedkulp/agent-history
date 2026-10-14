@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/tedkulp/agent-history/internal/hub/parser"
@@ -56,8 +57,9 @@ type usageNum struct {
 	Full  string
 }
 
-// usageLegend is one field's legend entry; Class is its swatch colour.
-type usageLegend struct{ Label, Class string }
+// usageLegend is one series of a chart: a Usage field or a breakdown group.
+// Class colours its segments and legend swatch; Title is hover text.
+type usageLegend struct{ Label, Title, Class string }
 
 type usageTile struct {
 	Label string
@@ -73,7 +75,7 @@ type usageRow struct {
 	Nums    []usageNum
 }
 
-// usageSeg is one field's slice of a day's bar, in chart units.
+// usageSeg is one series' slice of a day's bar, in chart units.
 type usageSeg struct {
 	Class string
 	Y, H  string
@@ -85,13 +87,15 @@ type usageBar struct {
 	Segs  []usageSeg
 }
 
-// usageChart is the daily stacked bar chart, drawn in a viewBox
-// usageSlot units per day wide and usageChartH high.
+// usageChart is a daily stacked bar chart, drawn in a viewBox usageSlot
+// units per day wide and usageChartH high.
 type usageChart struct {
+	Title       string
 	ViewBox     string
 	Bars        []usageBar
 	First, Last string // the first and last day's labels
 	Max         string // the tallest bar's total
+	Legend      []usageLegend
 }
 
 const (
@@ -100,15 +104,19 @@ const (
 	usageChartH = 100
 )
 
+// usageTopGroups is how many breakdown groups the group chart shows on
+// their own; the rest stack as one "Other".
+const usageTopGroups = 5
+
 type usageView struct {
 	Ranges  []usageLink
 	Bys     []usageLink
 	ByLabel string
 	Refresh string
 	Tiles   []usageTile
-	NoUsage string // "12 Sessions in range reported no Usage"; "" when none
-	Chart   usageChart
-	Legend  []usageLegend
+	NoUsage string     // "12 Sessions in range reported no Usage"; "" when none
+	Chart   usageChart // by Usage field
+	ByChart usageChart // by the breakdown's groups
 	Columns []string
 	Rows    []usageRow
 }
@@ -158,7 +166,6 @@ func (s *server) usage(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, f := range usageFields {
 		v.Tiles = append(v.Tiles, usageTile{f.Label, num(f.Of(rep.Total.Usage))})
-		v.Legend = append(v.Legend, usageLegend{f.Label, f.Class})
 		v.Columns = append(v.Columns, f.Label)
 	}
 	v.Tiles = append(v.Tiles, usageTile{"Sessions", num(int64(rep.Total.Sessions))}, usageTile{"Messages", num(int64(rep.Total.Messages))})
@@ -178,13 +185,13 @@ func (s *server) usage(w http.ResponseWriter, r *http.Request) {
 			first = rep.Days[0].Day
 		}
 	}
-	v.Chart = usageChartFor(rep.Days, first, today)
+	v.Chart = fieldChart(rep.Days, first, today)
 
 	for _, g := range rep.Groups {
 		row := usageRow{Label: g.Label}
 		switch by {
 		case store.UsageByProject:
-			row.Label, row.Title = projectName(g.Key)
+			row.Label, row.Title = projectName(g.Label)
 			row.Machine = g.Machine
 		case store.UsageByMachine:
 			row.Title = g.Key
@@ -195,36 +202,106 @@ func (s *server) usage(w http.ResponseWriter, r *http.Request) {
 		row.Nums = append(row.Nums, num(int64(g.Sessions)), num(int64(g.Messages)))
 		v.Rows = append(v.Rows, row)
 	}
+	v.ByChart = groupChart(rep, v.Rows, byLabel, first, today)
 	s.render(w, r, http.StatusOK, usagePage(v))
 }
 
-// usageChartFor draws one stacked bar per day from first to last, both
-// local midnights; a day with no Usage is an empty slot.
-func usageChartFor(days []store.UsageDay, first, last time.Time) usageChart {
-	const key = "2006-01-02"
-	byDay := map[string]parser.Usage{}
-	var top int64
+// dayKey is a day's key in a chart's per-day values.
+const dayKey = "2006-01-02"
+
+// fieldChart stacks each day's Usage by field.
+func fieldChart(days []store.UsageDay, first, last time.Time) usageChart {
+	byDay := map[string][]int64{}
 	for _, d := range days {
-		byDay[d.Day.Format(key)] = d.Usage
-		top = max(top, d.Sum())
+		for _, f := range usageFields {
+			byDay[d.Day.Format(dayKey)] = append(byDay[d.Day.Format(dayKey)], f.Of(d.Usage))
+		}
 	}
-	c := usageChart{First: first.Format("Jan 2"), Last: last.Format("Jan 2"), Max: num(top).Short}
+	var series []usageLegend
+	for _, f := range usageFields {
+		series = append(series, usageLegend{Label: f.Label, Class: f.Class})
+	}
+	return drawChart("Tokens per day", series, byDay, first, last)
+}
+
+// groupChart stacks each day's tokens by the breakdown's top groups, with
+// the rest as "Other". rows are the breakdown's table rows, in rep.Groups
+// order, for the groups' labels.
+func groupChart(rep store.UsageReport, rows []usageRow, byLabel string, first, last time.Time) usageChart {
+	var (
+		series []usageLegend
+		keys   []string
+		rest   bool
+	)
+	for i, g := range rep.Groups {
+		if g.Sum() == 0 {
+			continue // most tokens first: none of the rest have any
+		}
+		if len(keys) == usageTopGroups {
+			rest = true
+			break
+		}
+		l := usageLegend{Label: rows[i].Label, Title: rows[i].Title, Class: "g" + strconv.Itoa(len(keys)+1)}
+		if rows[i].Machine != "" {
+			l.Label += " · " + rows[i].Machine
+		}
+		series = append(series, l)
+		keys = append(keys, g.Key)
+	}
+	if rest {
+		series = append(series, usageLegend{Label: "Other", Class: "g0"})
+	}
+	byDay := map[string][]int64{}
+	for _, d := range rep.GroupDays {
+		var vals []int64
+		other := int64(0)
+		for _, t := range d.Tokens {
+			other += t
+		}
+		for _, k := range keys {
+			vals = append(vals, d.Tokens[k])
+			other -= d.Tokens[k]
+		}
+		if rest {
+			vals = append(vals, other)
+		}
+		byDay[d.Day.Format(dayKey)] = vals
+	}
+	return drawChart("Tokens per day by "+strings.ToLower(byLabel), series, byDay, first, last)
+}
+
+// drawChart draws one stacked bar per day from first to last, both local
+// midnights, from each day's values, one per series; a day with none is an
+// empty slot.
+func drawChart(title string, series []usageLegend, byDay map[string][]int64, first, last time.Time) usageChart {
+	var top int64
+	for _, vals := range byDay {
+		var sum int64
+		for _, v := range vals {
+			sum += v
+		}
+		top = max(top, sum)
+	}
+	c := usageChart{Title: title, First: first.Format("Jan 2"), Last: last.Format("Jan 2"), Max: num(top).Short, Legend: series}
 	n := 0
 	// AddDate, not Add, so a DST change keeps each step on a midnight.
 	for day := first; !day.After(last); day = day.AddDate(0, 0, 1) {
-		u := byDay[day.Format(key)]
+		vals := byDay[day.Format(dayKey)]
 		b := usageBar{X: coord(float64(n*usageSlot + (usageSlot-usageBarW)/2)), W: coord(usageBarW)}
 		b.Title = day.Format("Mon, Jan 2")
 		y := float64(usageChartH)
-		for _, f := range usageFields {
-			v := f.Of(u)
-			b.Title += fmt.Sprintf(" · %s %s", f.Label, num(v).Full)
-			if v == 0 || top == 0 {
+		for i, s := range series {
+			var v int64
+			if i < len(vals) {
+				v = vals[i]
+			}
+			b.Title += fmt.Sprintf(" · %s %s", s.Label, num(v).Full)
+			if v == 0 {
 				continue
 			}
 			h := float64(v) / float64(top) * usageChartH
 			y -= h
-			b.Segs = append(b.Segs, usageSeg{Class: f.Class, Y: coord(y), H: coord(h)})
+			b.Segs = append(b.Segs, usageSeg{Class: s.Class, Y: coord(y), H: coord(h)})
 		}
 		c.Bars = append(c.Bars, b)
 		n++

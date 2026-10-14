@@ -94,6 +94,14 @@ func TestUsageReport(t *testing.T) {
 	if !reflect.DeepEqual(rep.Groups, wantSources) {
 		t.Errorf("by source =\n%+v\nwant\n%+v", rep.Groups, wantSources)
 	}
+	wantGroupDays := []UsageGroupDay{
+		{Day: day(9), Tokens: map[string]int64{"hermes": 100}},
+		{Day: day(10), Tokens: map[string]int64{"claude-code": 11}},
+		{Day: day(11), Tokens: map[string]int64{"claude-code": 27}},
+	}
+	if !reflect.DeepEqual(rep.GroupDays, wantGroupDays) {
+		t.Errorf("group days =\n%+v\nwant\n%+v", rep.GroupDays, wantGroupDays)
+	}
 
 	// The Child Session's tokens count under its parent's Project.
 	rep, err = s.UsageReport(ctx, since, loc, UsageByProject)
@@ -101,12 +109,15 @@ func TestUsageReport(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantProjects := []UsageGroup{
-		{Key: "/Users/ted/src/h", Label: "/Users/ted/src/h", Machine: "laptop", UsageCounts: UsageCounts{Usage: parser.Usage{Input: 100}, Sessions: 1, Messages: 2}},
-		{Key: "/Users/ted/src/app", Label: "/Users/ted/src/app", Machine: "laptop", UsageCounts: UsageCounts{Usage: parser.Usage{Input: 35, Output: 3}, Sessions: 1, Messages: 4}},
-		{Key: "", Label: "", Machine: "laptop", UsageCounts: UsageCounts{Sessions: 2, Messages: 2}},
+		{Key: "m1/Users/ted/src/h", Label: "/Users/ted/src/h", Machine: "laptop", UsageCounts: UsageCounts{Usage: parser.Usage{Input: 100}, Sessions: 1, Messages: 2}},
+		{Key: "m1/Users/ted/src/app", Label: "/Users/ted/src/app", Machine: "laptop", UsageCounts: UsageCounts{Usage: parser.Usage{Input: 35, Output: 3}, Sessions: 1, Messages: 4}},
+		{Key: "m1", Label: "", Machine: "laptop", UsageCounts: UsageCounts{Sessions: 2, Messages: 2}},
 	}
 	if !reflect.DeepEqual(rep.Groups, wantProjects) {
 		t.Errorf("by project =\n%+v\nwant\n%+v", rep.Groups, wantProjects)
+	}
+	if got := rep.GroupDays[2].Tokens; !reflect.DeepEqual(got, map[string]int64{"m1/Users/ted/src/app": 27}) {
+		t.Errorf("by project, day 11 = %v", got)
 	}
 
 	// A Message's model is its own, else its Session's, else "unknown".

@@ -1,8 +1,9 @@
 /* Agent History: plain CSS, variant C of docs/prototype/webui. */
 :root{--bg:#fbfbfa;--panel:#fff;--ink:#1d1d1f;--dim:#6b6b70;--line:#e4e4e2;--acc:#3b5bdb;--tool:#f6f6f4;--mark:#ffe066;--add:#e6f6ea;--add-ink:#1c6b33;--del:#fdecec;--del-ink:#9b2226;--bad:#c92a2a;--warn:#fff4db;
 --u-in:#3b5bdb;--u-out:#e8590c;--u-cr:#74c0fc;--u-cw:#2f9e44;--u-re:#ae3ec9;
+--g1:#0c8599;--g2:#f08c00;--g3:#7048e8;--g4:#e64980;--g5:#5c940d;--g0:#adb5bd;
 --mono:ui-monospace,SFMono-Regular,Menlo,monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
-@media (prefers-color-scheme:dark){:root{--bg:#141416;--panel:#1c1c1f;--ink:#e8e8ea;--dim:#9a9aa2;--line:#2e2e33;--acc:#8ea2ff;--tool:#202024;--mark:#8a6d00;--add:#15301d;--add-ink:#8fe0a4;--del:#3a1a1c;--del-ink:#ffa3a8;--bad:#ff8787;--warn:#3a3016;--u-in:#8ea2ff;--u-out:#ff922b;--u-cr:#1c7ed6;--u-cw:#69db7c;--u-re:#da77f2}}
+@media (prefers-color-scheme:dark){:root{--bg:#141416;--panel:#1c1c1f;--ink:#e8e8ea;--dim:#9a9aa2;--line:#2e2e33;--acc:#8ea2ff;--tool:#202024;--mark:#8a6d00;--add:#15301d;--add-ink:#8fe0a4;--del:#3a1a1c;--del-ink:#ffa3a8;--bad:#ff8787;--warn:#3a3016;--u-in:#8ea2ff;--u-out:#ff922b;--u-cr:#1c7ed6;--u-cw:#69db7c;--u-re:#da77f2;--g1:#3bc9db;--g2:#ffc078;--g3:#9775fa;--g4:#f783ac;--g5:#a9e34b;--g0:#5c5f66}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--sans)}
 a{color:var(--acc);text-decoration:none} a:hover{text-decoration:underline}
@@ -168,13 +169,18 @@ html.hide-tools details.cluster:not(.revealed),html.hide-tools .msg.tools-only:n
 .chart svg{display:block;width:100%;height:160px}
 .chart .slot{fill:var(--tool)}
 .chart .bar:hover .slot{fill:var(--line)}
-.chart-max,.chart-axis{font-size:11px;font-variant-numeric:tabular-nums}
+.chart-head{display:flex;justify-content:space-between;gap:12px;font-size:11px;font-variant-numeric:tabular-nums}
+.chart-title{font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--dim)}
+.chart-axis{font-size:11px;font-variant-numeric:tabular-nums}
 .chart-axis{display:flex;justify-content:space-between;margin-top:2px}
 .legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--dim);margin-top:6px}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
 .chart .in,.legend i.in{fill:var(--u-in);background:var(--u-in)} .chart .out,.legend i.out{fill:var(--u-out);background:var(--u-out)}
 .chart .cr,.legend i.cr{fill:var(--u-cr);background:var(--u-cr)} .chart .cw,.legend i.cw{fill:var(--u-cw);background:var(--u-cw)}
 .chart .re,.legend i.re{fill:var(--u-re);background:var(--u-re)}
+.chart .g1,.legend i.g1{fill:var(--g1);background:var(--g1)} .chart .g2,.legend i.g2{fill:var(--g2);background:var(--g2)}
+.chart .g3,.legend i.g3{fill:var(--g3);background:var(--g3)} .chart .g4,.legend i.g4{fill:var(--g4);background:var(--g4)}
+.chart .g5,.legend i.g5{fill:var(--g5);background:var(--g5)} .chart .g0,.legend i.g0{fill:var(--g0);background:var(--g0)}
 .usage-table{overflow-x:auto}
 .usage-table table{width:100%;font-size:13px;background:var(--panel)}
 .usage-table th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim);font-weight:600;text-align:left}

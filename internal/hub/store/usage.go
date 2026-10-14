@@ -32,7 +32,7 @@ func (c *UsageCounts) dest() []any {
 
 // UsageGroup is one row of a Usage breakdown.
 type UsageGroup struct {
-	Key     string // the Source, Machine id, Project cwd ("" = No project) or model
+	Key     string // the Source, Machine id, Machine id then Project cwd, or model
 	Label   string // the Source, Machine label, Project cwd or model
 	Machine string // the Project's Machine label; "" in other breakdowns
 	UsageCounts
@@ -44,12 +44,20 @@ type UsageDay struct {
 	parser.Usage
 }
 
+// UsageGroupDay is each breakdown group's tokens (all five fields added) on
+// one day, by UsageGroup.Key.
+type UsageGroupDay struct {
+	Day    time.Time
+	Tokens map[string]int64
+}
+
 // UsageReport is the Usage page's data (hub.md §4.7).
 type UsageReport struct {
-	Total   UsageCounts
-	NoUsage int          // top-level Sessions in the window that reported no Usage
-	Days    []UsageDay   // the days with Usage, oldest first
-	Groups  []UsageGroup // most tokens first
+	Total     UsageCounts
+	NoUsage   int             // top-level Sessions in the window that reported no Usage
+	Days      []UsageDay      // the days with Usage, oldest first
+	Groups    []UsageGroup    // most tokens first
+	GroupDays []UsageGroupDay // the days with Usage, oldest first
 }
 
 // usageWindow lists, from ?1 on, each Message (msg = 1) dated by its
@@ -88,15 +96,24 @@ const usageSums = `
 	count(DISTINCT CASE WHEN win.msg = 1 AND win.parent_session_id IS NULL THEN win.sid END),
 	coalesce(sum(win.msg), 0)`
 
-// usageGroupings are each breakdown's key, label and Machine columns, its
-// joins and its GROUP BY. A Child Session's Project is its top-level
-// Session's.
-var usageGroupings = map[string]struct{ cols, join, group string }{
-	UsageBySource:  {`win.source, win.source, ''`, ``, `win.source`},
-	UsageByMachine: {`m.id, ` + machineLabel + `, ''`, `JOIN machines m ON m.id = win.machine_id`, `m.id`},
-	UsageByProject: {`coalesce(rs.project_cwd, ''), coalesce(rs.project_cwd, ''), ` + machineLabel,
-		`JOIN sessions rs ON rs.id = win.root JOIN machines m ON m.id = rs.machine_id`, `rs.machine_id, rs.project_cwd`},
-	UsageByModel: {`win.model, win.model, ''`, ``, `win.model`},
+// usageTokens is the five Usage fields of a win row added together.
+const usageTokens = `coalesce(json_extract(win.u, '$.input'), 0) + coalesce(json_extract(win.u, '$.output'), 0) +
+	coalesce(json_extract(win.u, '$.cache_read'), 0) + coalesce(json_extract(win.u, '$.cache_write'), 0) +
+	coalesce(json_extract(win.u, '$.reasoning'), 0)`
+
+// usageGrouping is a breakdown's key, label and Machine columns and the
+// joins they need. The key is also its GROUP BY.
+type usageGrouping struct{ key, label, machine, join string }
+
+// usageGroupings are the breakdowns. A Project's key is its Machine id then
+// its cwd, since the same path on two Machines is two Projects; a Child
+// Session's Project is its top-level Session's.
+var usageGroupings = map[string]usageGrouping{
+	UsageBySource:  {`win.source`, `win.source`, `''`, ``},
+	UsageByMachine: {`m.id`, machineLabel, `''`, `JOIN machines m ON m.id = win.machine_id`},
+	UsageByProject: {`rs.machine_id || coalesce(rs.project_cwd, '')`, `coalesce(rs.project_cwd, '')`, machineLabel,
+		`JOIN sessions rs ON rs.id = win.root JOIN machines m ON m.id = rs.machine_id`},
+	UsageByModel: {`win.model`, `win.model`, `''`, ``},
 }
 
 // UsageReport totals Usage dated from since (Unix ms; 0 = all time) on, by
@@ -121,11 +138,14 @@ func (s *Store) UsageReport(ctx context.Context, since int64, loc *time.Location
 	if rep.Days, err = s.usageDays(ctx, since, loc); err != nil {
 		return UsageReport{}, err
 	}
+	if rep.GroupDays, err = s.usageGroupDays(ctx, since, loc, g); err != nil {
+		return UsageReport{}, err
+	}
 
 	rows, err := s.read.QueryContext(ctx, usageWindow+`
-		SELECT `+g.cols+`, `+usageSums+`
+		SELECT `+g.key+`, `+g.label+`, `+g.machine+`, `+usageSums+`
 		FROM win `+g.join+`
-		GROUP BY `+g.group+`
+		GROUP BY 1
 		ORDER BY input + output + cache_read + cache_write + reasoning DESC, 2`, since)
 	if err != nil {
 		return UsageReport{}, err
@@ -165,12 +185,46 @@ func (s *Store) usageDays(ctx context.Context, since int64, loc *time.Location) 
 		if err := rows.Scan(append([]any{&bucket}, c.dest()...)...); err != nil {
 			return nil, err
 		}
-		y, m, d := time.UnixMilli(bucket * usageBucket.Milliseconds()).In(loc).Date()
-		day := time.Date(y, m, d, 0, 0, 0, 0, loc)
+		day := bucketDay(bucket, loc)
 		if len(days) == 0 || !days[len(days)-1].Day.Equal(day) {
 			days = append(days, UsageDay{Day: day})
 		}
 		days[len(days)-1].Add(c.Usage)
 	}
 	return days, rows.Err()
+}
+
+// usageGroupDays sums the dated tokens by day in loc and group g, oldest
+// first.
+func (s *Store) usageGroupDays(ctx context.Context, since int64, loc *time.Location, g usageGrouping) ([]UsageGroupDay, error) {
+	rows, err := s.read.QueryContext(ctx, usageWindow+`
+		SELECT win.at / ?2, `+g.key+`, sum(`+usageTokens+`)
+		FROM win `+g.join+` WHERE win.u IS NOT NULL
+		GROUP BY 1, 2 ORDER BY 1`, since, usageBucket.Milliseconds())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var days []UsageGroupDay
+	for rows.Next() {
+		var (
+			bucket, tokens int64
+			key            string
+		)
+		if err := rows.Scan(&bucket, &key, &tokens); err != nil {
+			return nil, err
+		}
+		day := bucketDay(bucket, loc)
+		if len(days) == 0 || !days[len(days)-1].Day.Equal(day) {
+			days = append(days, UsageGroupDay{Day: day, Tokens: map[string]int64{}})
+		}
+		days[len(days)-1].Tokens[key] += tokens
+	}
+	return days, rows.Err()
+}
+
+// bucketDay is the local midnight starting the day a usageBucket falls on.
+func bucketDay(bucket int64, loc *time.Location) time.Time {
+	y, m, d := time.UnixMilli(bucket * usageBucket.Milliseconds()).In(loc).Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, loc)
 }

@@ -2,12 +2,15 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/tedkulp/agent-history/internal/hub/parser"
+	"github.com/tedkulp/agent-history/internal/hub/store"
 	"github.com/tedkulp/agent-history/protocol"
 )
 
@@ -31,6 +34,15 @@ func hmExport(t *testing.T, id string, at time.Time, input, output int) string {
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// chartBars counts the bars of the page's i-th chart.
+func chartBars(page string, i int) int {
+	charts := strings.Split(page, `<figure class="chart">`)
+	if i+1 >= len(charts) {
+		return -1
+	}
+	return strings.Count(strings.Split(charts[i+1], "</figure>")[0], `<g class="bar">`)
 }
 
 func usageSite(t *testing.T, recs ...record) *httptest.Server {
@@ -65,8 +77,15 @@ func TestUsagePage(t *testing.T) {
 			t.Errorf("/usage lacks %q", want)
 		}
 	}
-	if n := strings.Count(page, `<g class="bar">`); n != 30 {
+	if n := chartBars(page, 0); n != 30 {
 		t.Errorf("30d chart has %d bars, want 30", n)
+	}
+	// The group chart has the same days, one series for the one Source.
+	if n := chartBars(page, 1); n != 30 {
+		t.Errorf("30d group chart has %d bars, want 30", n)
+	}
+	if !strings.Contains(page, "Tokens per day by source") || !strings.Contains(page, `<i class="g1"></i>hermes</span>`) {
+		t.Errorf("group chart missing its title or legend")
 	}
 	// Session count: both are top-level and active; Message count: both rows.
 	if !strings.Contains(page, `<div class="lab">Sessions</div><div class="v" title="2">2</div>`) {
@@ -84,7 +103,7 @@ func TestUsagePage(t *testing.T) {
 			t.Errorf("/usage?range=7d&by=model lacks %q", want)
 		}
 	}
-	if n := strings.Count(page, `<g class="bar">`); n != 7 {
+	if n := chartBars(page, 0); n != 7 {
 		t.Errorf("7d chart has %d bars, want 7", n)
 	}
 
@@ -116,7 +135,41 @@ func TestUsagePageWithoutNoUsageLine(t *testing.T) {
 	if started.Day() != time.Now().Day() {
 		want = 2
 	}
-	if n := strings.Count(page, `<g class="bar">`); n != want {
+	if n := chartBars(page, 0); n != want {
 		t.Errorf("all-time chart has %d bars, want %d", n, want)
+	}
+}
+
+// The group chart stacks the top groups on their own and the rest as
+// "Other"; groups with no tokens are left out.
+func TestGroupChartMergesTheRestIntoOther(t *testing.T) {
+	loc := time.FixedZone("X", 0)
+	day := time.Date(2026, 10, 14, 0, 0, 0, 0, loc)
+	rep := store.UsageReport{GroupDays: []store.UsageGroupDay{{Day: day, Tokens: map[string]int64{}}}}
+	var rows []usageRow
+	for i := range 8 {
+		k := fmt.Sprint("k", i)
+		tokens := int64(70 - 10*i) // k7 has none
+		rep.Groups = append(rep.Groups, store.UsageGroup{Key: k, Label: k, UsageCounts: store.UsageCounts{Usage: parser.Usage{Input: tokens}}})
+		rep.GroupDays[0].Tokens[k] = tokens
+		rows = append(rows, usageRow{Label: k})
+	}
+	c := groupChart(rep, rows, "Model", day, day)
+	var labels []string
+	for _, l := range c.Legend {
+		labels = append(labels, l.Label+"/"+l.Class)
+	}
+	if got, want := strings.Join(labels, " "), "k0/g1 k1/g2 k2/g3 k3/g4 k4/g5 Other/g0"; got != want {
+		t.Errorf("legend = %s, want %s", got, want)
+	}
+	if len(c.Bars) != 1 || len(c.Bars[0].Segs) != 6 {
+		t.Fatalf("bars = %+v", c.Bars)
+	}
+	// k5 and k6 make Other: 20 + 10 of the tallest bar's 280.
+	if !strings.Contains(c.Bars[0].Title, "Other 30") || c.Title != "Tokens per day by model" {
+		t.Errorf("title = %q, bar = %q", c.Title, c.Bars[0].Title)
+	}
+	if other := c.Bars[0].Segs[5]; other.Class != "g0" || other.H != coord(30.0/280*usageChartH) {
+		t.Errorf("Other segment = %+v", other)
 	}
 }
