@@ -430,6 +430,10 @@ func (s *Store) SaveParse(ctx context.Context, job Job, parserVersion int, res p
 	if err := insertSearchTitle(ctx, tx, id, title); err != nil {
 		return err
 	}
+	if !hasUsage && res.Session.Usage != nil {
+		// A Source that counts tokens per Session only (hub.md §3.4).
+		total, hasUsage = *res.Session.Usage, true
+	}
 	var usageJSON sql.NullString
 	if hasUsage {
 		b, _ := json.Marshal(total)

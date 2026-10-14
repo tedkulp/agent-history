@@ -1,0 +1,83 @@
+package web
+
+// usagePage is token Usage across Sessions for one window (hub.md §4.7),
+// rendered afresh on each load.
+templ usagePage(v usageView) {
+	@layout("Usage · Agent History") {
+		<div class="usage">
+			<div class="usage-bar">
+				<nav class="tabs" aria-label="Range">
+					for _, l := range v.Ranges {
+						<a class={ templ.KV("on", l.On) } href={ templ.SafeURL(l.Href) }>{ l.Label }</a>
+					}
+				</nav>
+				<a class="refresh" href={ templ.SafeURL(v.Refresh) }>⟳ Refresh</a>
+			</div>
+			<div class="tiles">
+				for _, t := range v.Tiles {
+					<div class="tile"><div class="lab">{ t.Label }</div><div class="v" title={ t.Full }>{ t.Short }</div></div>
+				}
+			</div>
+			if v.NoUsage != "" {
+				<p class="dim no-usage">{ v.NoUsage }</p>
+			}
+			<figure class="chart">
+				<div class="chart-max dim">{ v.Chart.Max }</div>
+				<svg viewBox={ v.Chart.ViewBox } preserveAspectRatio="none" role="img" aria-label="Tokens per day">
+					for _, b := range v.Chart.Bars {
+						<g class="bar">
+							<title>{ b.Title }</title>
+							<rect class="slot" x={ b.X } y="0" width={ b.W } height="100"></rect>
+							for _, sg := range b.Segs {
+								<rect class={ sg.Class } x={ b.X } y={ sg.Y } width={ b.W } height={ sg.H }></rect>
+							}
+						</g>
+					}
+				</svg>
+				<figcaption class="chart-axis dim"><span>{ v.Chart.First }</span><span>{ v.Chart.Last }</span></figcaption>
+				<div class="legend">
+					for _, l := range v.Legend {
+						<span><i class={ l.Class }></i>{ l.Label }</span>
+					}
+				</div>
+			</figure>
+			<nav class="tabs" aria-label="Breakdown">
+				for _, l := range v.Bys {
+					<a class={ templ.KV("on", l.On) } href={ templ.SafeURL(l.Href) }>{ l.Label }</a>
+				}
+			</nav>
+			if len(v.Rows) == 0 {
+				<p class="dim empty">No Sessions in range.</p>
+			} else {
+				<div class="usage-table">
+					<table>
+						<thead>
+							<tr>
+								<th>{ v.ByLabel }</th>
+								for _, c := range v.Columns {
+									<th class="n">{ c }</th>
+								}
+							</tr>
+						</thead>
+						<tbody>
+							for _, r := range v.Rows {
+								<tr>
+									if r.Machine != "" {
+										<td title={ r.Title }>{ r.Label } <span class="dim">{ r.Machine }</span></td>
+									} else if r.Title != "" {
+										<td title={ r.Title }>{ r.Label }</td>
+									} else {
+										<td>{ r.Label }</td>
+									}
+									for _, n := range r.Nums {
+										<td class="n" title={ n.Full }>{ n.Short }</td>
+									}
+								</tr>
+							}
+						</tbody>
+					</table>
+				</div>
+			}
+		</div>
+	}
+}

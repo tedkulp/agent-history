@@ -48,7 +48,7 @@ func layout(title string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</title><script>try{if(localStorage.getItem(\"agent-history.hide-tools\")===\"1\")document.documentElement.classList.add(\"hide-tools\")}catch(e){}</script><link rel=\"stylesheet\" href=\"/static/app.css\"><link rel=\"stylesheet\" href=\"/static/chroma.css\"><script src=\"/static/htmx.min.js\" defer></script><script src=\"/static/app.js\" defer></script></head><body><div class=\"wrap\"><header class=\"top\"><a class=\"brand\" href=\"/\">Agent History</a></header>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</title><script>try{if(localStorage.getItem(\"agent-history.hide-tools\")===\"1\")document.documentElement.classList.add(\"hide-tools\")}catch(e){}</script><link rel=\"stylesheet\" href=\"/static/app.css\"><link rel=\"stylesheet\" href=\"/static/chroma.css\"><script src=\"/static/htmx.min.js\" defer></script><script src=\"/static/app.js\" defer></script></head><body><div class=\"wrap\"><header class=\"top\"><a class=\"brand\" href=\"/\">Agent History</a><a class=\"nav\" href=\"/usage\">Usage</a></header>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

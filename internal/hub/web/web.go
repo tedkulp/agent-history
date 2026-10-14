@@ -59,6 +59,7 @@ func New(s *store.Store, b *live.Broadcaster, log *slog.Logger) http.Handler {
 	mux.HandleFunc("GET /events", srv.feedEvents)
 	mux.HandleFunc("GET /feed/rows", srv.feedLiveRows)
 	mux.HandleFunc("GET /reparse", srv.reparseStatus)
+	mux.HandleFunc("GET /usage", srv.usage)
 	mux.HandleFunc("GET /sessions/{id}", srv.transcript)
 	mux.HandleFunc("GET /sessions/{id}/events", srv.events)
 	mux.HandleFunc("GET /sessions/{id}/messages", srv.transcriptTail)

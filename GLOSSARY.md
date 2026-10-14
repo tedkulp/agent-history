@@ -50,6 +50,10 @@ _Avoid_: built-in command, system command
 **Tool call**:
 A tool request together with its result, treated as one unit.
 
+**Usage**:
+The token counts a Source reports for its assistant Messages: input, output, cache read, cache write, and reasoning. A Session's Usage is the sum over its Transcript, so tokens spent on abandoned branches are not counted.
+_Avoid_: cost, spend, metrics
+
 **Hit**:
 A Message or Session title that matches a search. A search lists the matching Sessions, each with its Hits.
 _Avoid_: match, result
@@ -85,6 +89,7 @@ _Avoid_: rebuild, reindex
 - A **Project** belongs to exactly one **Machine**; the same path on two Machines is two **Projects**
 - A **Session** belongs to at most one **Project**, fixed by where it started
 - A **Child Session** has exactly one parent **Session** and is spawned by one **Tool call** in it
+- A **Session** has one **Usage**, counted once even when it is a **Child Session**
 - A **Hit** belongs to exactly one **Session**; a search ranks each **Session** by its best **Hit**
 - A **Transcript** has one or more **Messages**; a **Message** has one or more **Parts**
 

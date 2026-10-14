@@ -106,6 +106,9 @@ type Session struct {
 	ParentNativeID     string
 	SpawningCallID     string
 	ForkedFromNativeID string
+	// Usage is the Session's Usage for a Source that reports it per Session
+	// rather than per Message. The Hub uses it only when no Message has Usage.
+	Usage *Usage
 }
 
 // Message is one turn in a Transcript. Model, Provider and Usage are set on
@@ -237,7 +240,7 @@ func NewImage(mime string, b []byte) (ImagePayload, Image) {
 	return ImagePayload{SHA256: h, MIME: mime}, Image{SHA256: h, MIME: mime, Bytes: b}
 }
 
-// Usage is an assistant Message's token usage.
+// Usage is an assistant Message's token usage, or a whole Session's.
 type Usage struct {
 	Input      int64 `json:"input"`
 	Output     int64 `json:"output"`
@@ -254,6 +257,9 @@ func (u *Usage) Add(u2 Usage) {
 	u.CacheWrite += u2.CacheWrite
 	u.Reasoning += u2.Reasoning
 }
+
+// IsZero reports whether every count is 0.
+func (u Usage) IsZero() bool { return u == Usage{} }
 
 // Warning is one aggregated Parse warning.
 type Warning struct {

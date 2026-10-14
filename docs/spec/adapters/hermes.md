@@ -103,7 +103,7 @@ Read the record's lines. A line with an unknown `table` is Raw only. A line that
 
 - `timestamp` is float unix seconds → milliseconds.
 - **Content.** Plain text is one `text` Part. Content starting `\x00json:` is Hermes's encoding of a multimodal list: `text` items become `text` Parts, `image_url` items with a base64 `data:` URL become `image` Parts (else an `attachment` labelled `image`), and other items are `unknown`.
-- Usage is not mapped: Hermes keeps token counts per Session, not per message.
+- Messages have no Usage: Hermes keeps token counts per Session, not per message (§3.6).
 - A Message left with no Parts is dropped.
 
 ### 3.4 Tool calls
@@ -137,6 +137,7 @@ A `subagent` Session is its own record with `parent_native_id` = `parent_session
 | `source_version` | `null` |
 | `parent_native_id` | `parent_session_id` for a `subagent` Session; else `null` |
 | `forked_from_native_id` | `null` |
+| Usage | `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `reasoning_tokens`; none when all are 0 |
 
 ### 3.7 Ids
 
@@ -155,7 +156,7 @@ A `subagent` Session is its own record with `parent_native_id` = `parent_session
 
 - Chat-gateway and `cron` Sessions.
 - Hermes's other databases (`kanban.db`, `projects.db`, `shared-state.db`) and `sessions/sessions.json`.
-- Cost and token fields from `sessions`.
+- Cost fields from `sessions`.
 - Several Hermes profiles, or several roots, on one Machine.
 
 ## 6. Acceptance checklist

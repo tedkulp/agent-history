@@ -209,3 +209,18 @@ func TestMissingCwd(t *testing.T) {
 		}
 	}
 }
+
+// Usage is the sessions row's token totals; all zero (the fixtures) is none.
+func TestSessionUsage(t *testing.T) {
+	if u := fixture(t, parentID).Session.Usage; u != nil {
+		t.Errorf("zero tokens: usage = %+v, want nil", u)
+	}
+	row, _ := json.Marshal(map[string]any{"table": "sessions", "row": map[string]any{
+		"id": "s", "source": "cli", "started_at": 1.0, "cwd": "/x",
+		"input_tokens": 100, "output_tokens": 20, "cache_read_tokens": 300, "cache_write_tokens": 40, "reasoning_tokens": 5}})
+	u := parse(t, "s", row).Session.Usage
+	want := parser.Usage{Input: 100, Output: 20, CacheRead: 300, CacheWrite: 40, Reasoning: 5}
+	if u == nil || *u != want {
+		t.Errorf("usage = %+v, want %+v", u, want)
+	}
+}

@@ -92,6 +92,7 @@ All on one listener, plain HTTP.
 |---|---|
 | `GET /` | Home: the feed, or search results when `q` is set. Query params: `q`, `machine`, `project` (`-` = "No project"), `source`, `warnings=1`, `before` and `before_id` (feed cursor), `offset` (search paging: hits are ranked, not dated). |
 | `GET /events` | `text/event-stream` for the feed's first page: a `changed` event naming the Sessions the feed lists (with the chips in the query: `machine`, `project`, `source`, `warnings`) that were parsed from live data since the last event (§4.7) |
+| `GET /usage` | The Usage page (§4.7). Query params: `range` (`7d`, `30d`, `90d` or `all`; default and fallback `30d`) and `by` (`source`, `machine`, `project` or `model`; default and fallback `source`). |
 | `GET /reparse` | htmx fragment: the re-parse banner at the current count, polled by a feed page that shows it (§4.7). `286` with a "finished" banner once no re-parse jobs remain. |
 | `GET /sessions/{id}` | A Transcript page. Optional `hl=<terms>` highlights search terms. Messages carry anchors `#m-<message id>`. |
 | `GET /sessions/{id}/events` | `text/event-stream`: a `changed` event each time the Session is parsed again from live data (§4.7). `404` for a stub or unknown id. |
@@ -290,7 +291,7 @@ CREATE TABLE sessions (
   parent_session_id       INTEGER REFERENCES sessions(id),
   spawning_call_id        TEXT,
   forked_from_id          INTEGER REFERENCES sessions(id),
-  usage_json              TEXT,     -- Session totals, derived from Messages
+  usage_json              TEXT,     -- Session totals, derived from Messages, else the parser's Session-level Usage
   parse_status            TEXT NOT NULL DEFAULT 'pending',  -- pending | ok | failed
   parse_error             TEXT,
   parsed_at               INTEGER,  -- last successful parse; NULL = never parsed
@@ -308,6 +309,7 @@ CREATE INDEX sessions_parent  ON sessions(parent_session_id);
 - **Stub rows**: when a parse names a parent or fork origin that has no row yet, the Hub creates one (`parse_status = 'pending'`, no records) so the link always resolves. A stub gets filled when its own records arrive. Stubs are never shown in the feed (§4.7).
 - `title`: from the Source if it has one, else the Transcript's first title candidate truncated to 80 characters, else empty (the web UI shows the native id). A title candidate is the first user text or the first `slash_command` marker whose text starts with `/` and isn't a **Housekeeping command** (`/clear /reset /new /resume /compact /model /login /logout /config /status /cost /help /exit /effort /fast /theme /permissions /context /usage /init`), whichever comes first. The command's args are kept (`/implement-next 42`). `first_prompt` stays user text only.
 - A failed parse **keeps the previous good Transcript**: only `parse_status`, `parse_error` and `parse_attempted_version` change.
+- `usage_json` is the sum of the Messages' **Usage**. A Source that counts tokens per Session only (Hermes) sets the Session's Usage in its parse result instead; it is used when no Message has Usage. All-zero counts are no Usage.
 - Project is a column, not a table. Projects have no metadata of their own.
 - `sessions.unknown_part_count` from the original storage decision is **dropped**: `parse_warnings` replaces it.
 
@@ -374,7 +376,7 @@ CREATE TABLE blobs (
 - `diff` is set by the parser for file-editing tools (e.g. Claude `Edit`), so the UI can render a diff without knowing Source tool names.
 - `child_sessions` lists the native ids of the Child Sessions a call spawned, usually one; an oh-my-pi `task` call can spawn several. `[]` for ordinary calls.
 - `blobs` are content-addressed, so the same image stored twice is one row. Blobs are never deleted, even if a re-parse stops referencing them.
-- **Usage** is kept per assistant Message. `sessions.usage_json` is the sum. Codex's duplicate usage records are deduped by its parser.
+- **Usage** is kept per assistant Message. `sessions.usage_json` is the sum, else the Session-level Usage of a Source that has no per-Message counts (§3.4). Codex's duplicate usage records are deduped by its parser.
 
 Source: [Normalized Transcript model](https://github.com/tedkulp/agent-history/issues/9), [Hub storage schema](https://github.com/tedkulp/agent-history/issues/12), [Web UI: browse and search screens](https://github.com/tedkulp/agent-history/issues/13); payload field names, the id charset and the preview filled in while writing this spec; `child_sessions` as a list filled in by [Write the adapter specs](https://github.com/tedkulp/agent-history/issues/23)
 
@@ -642,6 +644,22 @@ The UI is **search-first**: a search box over a feed of recent Sessions from eve
   - Otherwise (a rewind, a new branch or a compaction reshuffled earlier Messages) the endpoint answers `409`, and the page shows a "Transcript changed — reload" banner instead of patching.
   - An update costs one Message query from `count-1` on plus the header, well under a full page render.
 - **Arriving from search**: the target Message flashes briefly (as does any Message jumped to by an in-page link), and each `hl` term is wrapped in `<mark>` in the rendered text, case-insensitive. Highlighting touches text nodes only, never tags or attributes.
+
+#### Usage (`/usage`)
+
+Token **Usage** across Sessions, rendered on the server on each load: no live updates. The header of every page links to it ("Usage", beside "Agent History").
+
+- **Range**: `7d`, `30d` (default) or `90d` is that many days ending today, from local midnight; `all` is all time. Days are local days in the Hub's zone, as the feed's day labels are. The range tabs keep `by`; a "⟳ Refresh" link reloads with the same `range` and `by`.
+- **Tiles**: the window's total of each Usage field (input, output, cache read, cache write, reasoning), then its Session count and Message count, compact (`1.2M`) with the exact number on hover.
+- A muted "N Sessions in range reported no Usage" line under the tiles counts the top-level Sessions in range with no `usage_json`. It is absent when there are none.
+- **Chart**: inline SVG drawn on the server, one bar per day of the window (for `all`, from the first day with Usage), stacked by Usage field and scaled to the tallest day, with a legend. A day with no Usage is an empty slot. Hovering a bar shows its date and each field.
+- **Breakdown**: tabs for **Source**, **Machine** (its label), **Project** (shown by basename with its Machine; "No project" for none) and **model**, chosen by `by` and keeping `range`. Each row has the five Usage fields, Sessions and Messages; most tokens (input + output + cache) first. Rows are not links.
+- **Counting**:
+  - A Message is dated by its `timestamp`, else its Session's `started_at`; its tokens fall on that day, so a Session spanning midnight splits across both days. Session-level Usage with no per-Message breakdown (Hermes) is dated by `started_at`. Anything with neither date is left out.
+  - A Session is **in range** when it has a Message in the window.
+  - Every Session's Usage counts once, Child Sessions included. In the Project breakdown a Child Session counts under its top-level Session's Project.
+  - Session counts are top-level Sessions in range only, as in the feed. Message counts include every Message in the window, Child Sessions' too.
+  - A Message's model is its own `model`, else its Session's `model`, else "unknown", with no normalization. A model row's Sessions are the top-level Sessions with a Message of that model in the window.
 
 **Rejected:** drill-down pages (a page per level is slow for the most common action, "find that conversation"); a three-pane reader (tool calls always expanded bury the conversation, and three panes are cramped on narrow screens).
 

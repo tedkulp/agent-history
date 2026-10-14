@@ -20,7 +20,7 @@ import (
 
 // version is the parser_version. Bump it whenever output changes for
 // existing data (hub.md §4.5).
-const version = 2
+const version = 3
 
 const layoutSqlite = "sqlite"
 
@@ -66,6 +66,11 @@ type sessionRow struct {
 	StartedAt       float64  `json:"started_at"`
 	EndedAt         *float64 `json:"ended_at"`
 	LastActivityAt  *float64 `json:"last_activity_at"`
+	InputTokens     int64    `json:"input_tokens"`
+	OutputTokens    int64    `json:"output_tokens"`
+	CacheRead       int64    `json:"cache_read_tokens"`
+	CacheWrite      int64    `json:"cache_write_tokens"`
+	Reasoning       int64    `json:"reasoning_tokens"`
 }
 
 // messageRow is a messages row's columns the parser reads.
@@ -150,6 +155,10 @@ func (*Parser) Parse(in parser.Input) (parser.Result, error) {
 		StartedAt: millis(s.StartedAt),
 		Cwd:       str(s.Cwd),
 		GitBranch: str(s.GitBranch),
+	}
+	// Hermes counts tokens per Session, not per message (hermes.md §3.6).
+	if u := (parser.Usage{Input: s.InputTokens, Output: s.OutputTokens, CacheRead: s.CacheRead, CacheWrite: s.CacheWrite, Reasoning: s.Reasoning}); !u.IsZero() {
+		res.Session.Usage = &u
 	}
 	if s.EntryPoint == subagentEntryPoint {
 		// Only a subagent is a Child Session. Compression continuations
