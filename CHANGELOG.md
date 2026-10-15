@@ -9,6 +9,10 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+### Fixed
+
+- Claude Code's `agents_killed` system line no longer raises an unknown-type Parse warning.
+
 ## [0.12.0] - 2026-10-14
 
 ### Added

@@ -20,7 +20,7 @@ import (
 
 // version is the parser_version. Bump it whenever output changes for
 // existing data (hub.md §4.5).
-const version = 13
+const version = 14
 
 const (
 	layout     = "jsonl"
@@ -130,6 +130,7 @@ var rawOnly = map[string]bool{
 var rawOnlySystem = map[string]bool{
 	"turn_duration": true, "local_command": true, "away_summary": true,
 	"stop_hook_summary": true, "informational": true, "api_error": true, "bridge_status": true,
+	"agents_killed": true,
 }
 
 const (
