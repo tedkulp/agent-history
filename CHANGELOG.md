@@ -11,6 +11,7 @@ One version covers the Collector and the Hub together (see
 
 ### Fixed
 
+- Claude Code's `api-request`, `api-request-shape` and `api-request-blob` lines no longer raise unknown-type Parse warnings.
 - Claude Code's `agents_killed` system line no longer raises an unknown-type Parse warning.
 
 ## [0.12.0] - 2026-10-14
