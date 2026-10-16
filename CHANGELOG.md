@@ -9,6 +9,8 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-10-16
+
 ### Fixed
 
 - Claude Code's `api-request`, `api-request-shape` and `api-request-blob` lines no longer raise unknown-type Parse warnings.
@@ -147,7 +149,8 @@ One version covers the Collector and the Hub together (see
 - Release pipeline: CI, GoReleaser archives for the Collector and a
   multi-arch Hub image, published from a version tag.
 
-[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.12.1...HEAD
+[0.12.1]: https://github.com/tedkulp/agent-history/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/tedkulp/agent-history/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/tedkulp/agent-history/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/tedkulp/agent-history/compare/v0.9.0...v0.10.0
