@@ -20,7 +20,7 @@ import (
 
 // version is the parser_version. Bump it whenever output changes for
 // existing data (hub.md §4.5).
-const version = 3
+const version = 4
 
 const layoutSqlite = "sqlite"
 
@@ -64,7 +64,6 @@ type sessionRow struct {
 	GitBranch       *string  `json:"git_branch"`
 	ParentSessionID *string  `json:"parent_session_id"`
 	StartedAt       float64  `json:"started_at"`
-	EndedAt         *float64 `json:"ended_at"`
 	LastActivityAt  *float64 `json:"last_activity_at"`
 	InputTokens     int64    `json:"input_tokens"`
 	OutputTokens    int64    `json:"output_tokens"`
@@ -173,11 +172,11 @@ func (*Parser) Parse(in parser.Input) (parser.Result, error) {
 		// (hermes.md §3.6); anywhere else, a missing cwd is news.
 		warn.Add(parser.WarnMissingField, "cwd", string(sraw))
 	}
+	// Not ended_at: Hermes's startup orphan reap sets it to the restart
+	// time, long after the last activity (hermes.md §3.6).
 	last := s.StartedAt
-	for _, t := range []*float64{s.EndedAt, s.LastActivityAt} {
-		if t != nil {
-			last = max(last, *t)
-		}
+	if s.LastActivityAt != nil {
+		last = max(last, *s.LastActivityAt)
 	}
 
 	// The Transcript is the shown rows: active, or compacted away but kept.

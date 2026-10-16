@@ -165,10 +165,6 @@ func TestParentOnlyForSubagents(t *testing.T) {
 // Rows sort by display_order, then id; a row with none sorts by its id.
 // cwd falls back to git_repo_root.
 func TestDisplayOrder(t *testing.T) {
-	line := func(table string, row map[string]any) string {
-		b, _ := json.Marshal(map[string]any{"table": table, "row": row})
-		return string(b)
-	}
 	msg := func(id int, order any, text string) string {
 		return line("messages", map[string]any{"id": id, "role": "user", "content": text, "timestamp": 1.0, "active": 1, "compacted": 0, "display_order": order})
 	}
@@ -223,4 +219,32 @@ func TestSessionUsage(t *testing.T) {
 	if u == nil || *u != want {
 		t.Errorf("usage = %+v, want %+v", u, want)
 	}
+}
+
+// ended_at isn't activity: Hermes's startup orphan reap sets it to the
+// restart time, days after the Session's last message.
+func TestEndedAtIsNotActivity(t *testing.T) {
+	for _, c := range []struct {
+		name               string
+		lastActivity, msgT float64
+		want               int64
+	}{
+		{"message latest", 2.0, 3.0, 3000},
+		{"last_activity_at latest", 4.0, 3.0, 4000},
+	} {
+		main := strings.Join([]string{
+			line("sessions", map[string]any{"id": "s", "source": "cli", "started_at": 1.0, "cwd": "/x",
+				"last_activity_at": c.lastActivity, "ended_at": 500000.0, "end_reason": "startup_orphan_reap"}),
+			line("messages", map[string]any{"id": 1, "role": "user", "content": "hi", "timestamp": c.msgT, "active": 1, "compacted": 0}),
+		}, "\n")
+		if got := parse(t, "s", []byte(main)).Session.LastActivityAt; got != c.want {
+			t.Errorf("%s: last_activity_at = %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// line is one exported row, as the Collector writes it.
+func line(table string, row map[string]any) string {
+	b, _ := json.Marshal(map[string]any{"table": table, "row": row})
+	return string(b)
 }

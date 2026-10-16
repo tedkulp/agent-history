@@ -13,6 +13,7 @@ One version covers the Collector and the Hub together (see
 
 - Claude Code's `api-request`, `api-request-shape` and `api-request-blob` lines no longer raise unknown-type Parse warnings.
 - Claude Code's `agents_killed` system line no longer raises an unknown-type Parse warning.
+- A Hermes Session's last activity no longer jumps to when Hermes restarted and closed it; existing Hermes Sessions re-parse with the corrected time.
 
 ## [0.12.0] - 2026-10-14
 
