@@ -10,7 +10,8 @@ import (
 	"github.com/tedkulp/agent-history/protocol"
 )
 
-// headerOf fetches path and returns the page's top header.
+// headerOf fetches url and returns the page's top header, without its
+// closing tag.
 func headerOf(t *testing.T, url string) string {
 	t.Helper()
 	resp, err := http.Get(url)
@@ -18,15 +19,25 @@ func headerOf(t *testing.T, url string) string {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
 	page := string(body)
 	start := strings.Index(page, `<header class="top">`)
 	if start < 0 {
 		t.Fatalf("%s: no top header in %q", url, page)
 	}
-	return page[start : start+strings.Index(page[start:], "</header>")]
+	end := strings.Index(page[start:], "</header>")
+	if end < 0 {
+		t.Fatalf("%s: unclosed top header in %q", url, page)
+	}
+	return page[start : start+end]
 }
 
+// stampBuild sets the build info for the rest of the test, as the release
+// ldflags would. It swaps package globals the server reads, so tests that
+// call it must not run in parallel.
 func stampBuild(t *testing.T, version, buildTime string) {
 	t.Helper()
 	v, bt := buildinfo.Version, buildinfo.BuildTime
