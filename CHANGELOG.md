@@ -9,6 +9,10 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+### Added
+
+- Every web page's header shows the Hub's version and build date on the right (`dev` for a dev build).
+
 ## [0.12.1] - 2026-10-16
 
 ### Fixed

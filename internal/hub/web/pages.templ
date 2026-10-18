@@ -22,11 +22,20 @@ templ layout(title string) {
 		</head>
 		<body>
 			<div class="wrap">
-				<header class="top"><a class="brand" href="/">Agent History</a><a class="nav" href="/usage">Usage</a></header>
+				<header class="top"><a class="brand" href="/">Agent History</a><a class="nav" href="/usage">Usage</a>@versionTag()</header>
 				{ children... }
 			</div>
 		</body>
 	</html>
+}
+
+templ versionTag() {
+	{{ label, title := versionLabel() }}
+	if title != "" {
+		<span class="version" title={ title }>{ label }</span>
+	} else {
+		<span class="version">{ label }</span>
+	}
 }
 
 templ sourceBadge(source string) {

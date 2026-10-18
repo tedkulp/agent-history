@@ -586,6 +586,8 @@ Source: [Hub language and web UI stack](https://github.com/tedkulp/agent-history
 
 The UI is **search-first**: a search box over a feed of recent Sessions from every Machine. Machine, Source and Project are **filter chips**, not pages. The throwaway prototype is in [`docs/prototype/webui/`](../prototype/webui/): run `go -C docs/prototype/webui run .`, open http://127.0.0.1:8791/?v=C. Variant C is the chosen design.
 
+Every page's header carries the Hub's build label at its right edge: `v<Version> · <YYYY-MM-DD>` with the full build time as its tooltip, `v<Version>` alone when no valid build time was stamped, and `dev` for a dev build ([#82](https://github.com/tedkulp/agent-history/issues/82)).
+
 #### Home (`/`, no `q`)
 
 - A large search box at the top, focused on load. It searches every Transcript on every Machine.
@@ -708,7 +710,7 @@ Source: [Hub storage schema](https://github.com/tedkulp/agent-history/issues/12)
 
 ### 4.11 Release (Hub side)
 
-- One lockstep `vX.Y.Z` tag, pushed by a human, releases both the Collector and the Hub. GoReleaser (OSS), driven by GitHub Actions, builds the image and injects the version via ldflags.
+- One lockstep `vX.Y.Z` tag, pushed by a human, releases both the Collector and the Hub. GoReleaser (OSS), driven by GitHub Actions, builds the image and injects the version, and the commit time as the build time, via ldflags.
 - Image: `ghcr.io/tedkulp/agent-history-hub`, `linux/amd64` + `linux/arm64`, tagged **`vX.Y.Z`, `vX.Y` and `latest`**. No `vX` tag, no `edge` or `main` builds in v1.
 - Pre-release tags (`vX.Y.Z-rc.N`) publish the `vX.Y.Z-rc.N` image tag only, and never move `vX.Y` or `latest`.
 - The image gets a GitHub artifact attestation (`actions/attest-build-provenance`). No cosign, no SBOM in v1.

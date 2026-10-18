@@ -19,6 +19,7 @@ builds:
     flags: [-trimpath]
     ldflags: &ldflags
       - -s -w -X github.com/tedkulp/agent-history/internal/buildinfo.Version={{ .Version }}
+      - -X github.com/tedkulp/agent-history/internal/buildinfo.BuildTime={{ .CommitDate }}
   - id: hub
     main: ./cmd/hub
     binary: agent-history-hub
