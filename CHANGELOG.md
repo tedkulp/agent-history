@@ -9,6 +9,8 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-20
+
 ### Added
 
 - Every web page's header shows the Hub's version and build date on the right (`dev` for a dev build).
@@ -154,7 +156,8 @@ One version covers the Collector and the Hub together (see
 - Release pipeline: CI, GoReleaser archives for the Collector and a
   multi-arch Hub image, published from a version tag.
 
-[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.12.1...HEAD
+[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/tedkulp/agent-history/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/tedkulp/agent-history/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/tedkulp/agent-history/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/tedkulp/agent-history/compare/v0.10.0...v0.11.0
