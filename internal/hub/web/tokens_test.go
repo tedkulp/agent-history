@@ -47,17 +47,20 @@ func TestTranscriptHeaderWithoutUsage(t *testing.T) {
 // The total adds all five fields, and a parent's figure leaves out its
 // Child Sessions', which show their own.
 func TestTranscriptHeaderTokensExcludeChildSessions(t *testing.T) {
-	main := line("u1", "", "user", `"go"`) +
+	parent := line("u1", "", "user", `"go"`) +
 		assistantWithUsage("a1", "u1", `{"input_tokens":1000,"output_tokens":200,"cache_read_input_tokens":30,"cache_creation_input_tokens":4,"output_tokens_details":{"thinking_tokens":5}}`)
 	child := `{"type":"user","uuid":"c1","parentUuid":null,"isSidechain":true,"timestamp":"2026-09-01T10:00:05.000Z","cwd":"/Users/ted/src/app","message":{"role":"user","content":"child task"}}` + "\n" +
 		assistantWithUsage("c2", "c1", `{"input_tokens":2000000,"output_tokens":0}`)
 	srv := newSite(t, map[string]string{
-		"-Users-ted-src-app/" + sess + ".jsonl":                   main,
+		"-Users-ted-src-app/" + sess + ".jsonl":                   parent,
 		"-Users-ted-src-app/" + sess + "/subagents/agent-a.jsonl": child,
 	})
 
 	_, feed := get(t, srv.URL+"/")
 	i := strings.Index(feed, `href="/sessions/`)
+	if i < 0 {
+		t.Fatal("feed lists no Session")
+	}
 	link := feed[i+len(`href="`):]
 	link = link[:strings.Index(link, `"`)]
 

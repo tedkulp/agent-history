@@ -454,12 +454,10 @@ func (s *Store) sessionHeader(ctx context.Context, id int64) (h SessionHeader, o
 		return h, false, err
 	}
 	if usageJSON.Valid {
-		var u parser.Usage
-		if err := json.Unmarshal([]byte(usageJSON.String), &u); err != nil {
+		// All-zero counts are stored as NULL (hub.md §3.4).
+		h.Usage = new(parser.Usage)
+		if err := json.Unmarshal([]byte(usageJSON.String), h.Usage); err != nil {
 			return h, false, err
-		}
-		if !u.IsZero() {
-			h.Usage = &u
 		}
 	}
 	if parseErr.Valid {
