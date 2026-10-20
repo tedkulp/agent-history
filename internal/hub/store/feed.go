@@ -273,6 +273,9 @@ type SessionHeader struct {
 	GitBranch  string
 	Model      string
 	StartedAt  int64
+	// Usage is the Session's own Usage, not its Child Sessions'; nil when
+	// it has none (hub.md §3.4).
+	Usage *parser.Usage
 	// SourceVersion, Warnings and ParseError are for the Notes (hub.md
 	// §4.7). ParseError is set when the latest parse failed; Parsed is
 	// false when no parse ever succeeded, so there is no Transcript.
@@ -433,21 +436,31 @@ func (s *Store) sessionHeader(ctx context.Context, id int64) (h SessionHeader, o
 		forkedFrom     sql.NullInt64
 		spawningCallID string
 		parseErr       sql.NullString
+		usageJSON      sql.NullString
 	)
 	err = s.read.QueryRowContext(ctx, `
 		SELECT s.id, s.source, s.native_id, coalesce(s.title, ''), m.id, `+machineLabel+`, coalesce(s.project_cwd, ''),
 			coalesce(s.git_branch, ''), coalesce(s.model, ''), coalesce(s.started_at, 0), coalesce(s.source_version, ''),
 			s.parent_session_id, coalesce(s.spawning_call_id, ''), s.forked_from_id,
-			CASE WHEN s.parse_status = 'failed' THEN coalesce(s.parse_error, '') END, s.parsed_at IS NOT NULL
+			CASE WHEN s.parse_status = 'failed' THEN coalesce(s.parse_error, '') END, s.parsed_at IS NOT NULL, s.usage_json
 		FROM sessions s JOIN machines m ON m.id = s.machine_id
 		WHERE s.id = ? AND (s.parsed_at IS NOT NULL OR s.parse_status = 'failed')`, id).Scan(
 		&h.ID, &h.Source, &h.NativeID, &h.Title, &h.MachineID, &h.Machine, &h.ProjectCwd, &h.GitBranch, &h.Model, &h.StartedAt, &h.SourceVersion,
-		&parentID, &spawningCallID, &forkedFrom, &parseErr, &h.Parsed)
+		&parentID, &spawningCallID, &forkedFrom, &parseErr, &h.Parsed, &usageJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return h, false, nil
 	}
 	if err != nil {
 		return h, false, err
+	}
+	if usageJSON.Valid {
+		var u parser.Usage
+		if err := json.Unmarshal([]byte(usageJSON.String), &u); err != nil {
+			return h, false, err
+		}
+		if !u.IsZero() {
+			h.Usage = &u
+		}
 	}
 	if parseErr.Valid {
 		h.ParseError = parseErr.String

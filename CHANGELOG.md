@@ -12,6 +12,7 @@ One version covers the Collector and the Hub together (see
 ### Added
 
 - Every web page's header shows the Hub's version and build date on the right (`dev` for a dev build).
+- A Session's Transcript header shows its own token total (e.g. `1.2M tokens`), with each Usage field's exact count on hover, updated live.
 
 ## [0.12.1] - 2026-10-16
 

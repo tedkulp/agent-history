@@ -328,6 +328,17 @@ func num(n int64) usageNum {
 	return usageNum{Short: short, Full: thousands(n)}
 }
 
+// tokensNum is a Session's Usage total, compact, with each field's exact
+// count on hover (hub.md §4.7).
+func tokensNum(u parser.Usage) usageNum {
+	n := num(u.Sum())
+	var fields []string
+	for _, f := range usageFields {
+		fields = append(fields, f.Label+" "+thousands(f.Of(u)))
+	}
+	return usageNum{Short: n.Short + " tokens", Full: strings.Join(fields, "\n")}
+}
+
 // thousands writes n with comma separators.
 func thousands(n int64) string {
 	s := strconv.FormatInt(n, 10)

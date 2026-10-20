@@ -627,7 +627,8 @@ Every page's header carries the Hub's build label at its right edge: `v<Version>
 
 #### Transcript (`/sessions/{id}`)
 
-- **Header**: title, Source, Machine and Project (both link to the feed filtered by them), git branch, model, start time, and "↰ child of …" (linking to the spawning call's anchor in the parent) for a Child Session, or "forked from …" for a fork.
+- **Header**: title, Source, Machine and Project (both link to the feed filtered by them), git branch, model, start time, the Session's token total, and "↰ child of …" (linking to the spawning call's anchor in the parent) for a Child Session, or "forked from …" for a fork.
+  - The token total is the sum of the Session's five Usage fields, compact like the Usage page's tiles (e.g. `1.2M tokens`), with each field's exact count on hover. It's the Session's own Usage only: a parent's total leaves out its Child Sessions, whose headers show their own. A Session with no Usage shows none. The live update's header carries it, so it grows as the Session is parsed again.
   - The spawning call is `spawning_call_id` when the parser set it. Otherwise the Hub looks in the parent's `tool_call` Parts for one whose `child_sessions` contains this Session's native id. If neither finds a call, the link goes to the top of the parent.
 - **Notes** under the header, collapsed by default:
   - Parse warnings: e.g. "12 items not understood (unknown_type: `foo_event` ×10, …)", with `source_version` and each `first_excerpt` on expand.

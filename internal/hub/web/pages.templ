@@ -329,6 +329,9 @@ templ transcriptHead(h headerView) {
 			if h.Started != "" {
 				<span>{ h.Started }</span>
 			}
+			if h.Tokens.Short != "" {
+				<span class="tokens" title={ h.Tokens.Full }>{ h.Tokens.Short }</span>
+			}
 			if h.ParentHref != "" {
 				<a class="parent" href={ templ.SafeURL(h.ParentHref) }>{ h.ParentLabel }</a>
 			} else if h.ParentLabel != "" {
