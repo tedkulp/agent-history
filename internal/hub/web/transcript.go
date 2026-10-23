@@ -195,6 +195,12 @@ func newCommandView(mp parser.MarkerPayload) *commandView {
 // summary; the summary opens below it.
 const compactionSummaryLabel = "Compaction summary"
 
+// markerIcons are the icons that lead a marker pill's text.
+var markerIcons = map[string]string{
+	parser.MarkerScheduledTask: "⏰",
+	parser.MarkerForkSource:    "⑂",
+}
+
 // newMarkerView labels a marker pill. A compaction summary, and any other
 // marker text over one line, opens below the pill as Markdown. A
 // shell_command pill shows its whole command, and its output, cut to 4 KB,
@@ -205,11 +211,8 @@ const compactionSummaryLabel = "Compaction summary"
 // fork sign and its text, and its note opens below it as preformatted text.
 func newMarkerView(partID string, mp parser.MarkerPayload) *markerView {
 	v := &markerView{Kind: mp.Marker, Label: mp.Text}
-	if mp.Marker == parser.MarkerScheduledTask {
-		v.Label = "⏰ " + cut(cmp.Or(mp.Text, mp.Marker), markerLabelMax)
-	}
-	if mp.Marker == parser.MarkerForkSource {
-		v.Label = "⑂ " + cut(cmp.Or(mp.Text, mp.Marker), markerLabelMax)
+	if icon, ok := markerIcons[mp.Marker]; ok {
+		v.Label = icon + " " + cut(cmp.Or(mp.Text, mp.Marker), markerLabelMax)
 	}
 	if mp.Marker == parser.MarkerTaskNotification {
 		var task parser.TaskPayload
