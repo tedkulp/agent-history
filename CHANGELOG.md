@@ -9,6 +9,8 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-10-23
+
 ### Fixed
 
 - A forked Claude Code Session's fork note no longer raises a `task-notification` Parse warning or shows as raw tags; it is a compact "⑂ Forked from another session" marker that opens to the note.
@@ -160,7 +162,8 @@ One version covers the Collector and the Hub together (see
 - Release pipeline: CI, GoReleaser archives for the Collector and a
   multi-arch Hub image, published from a version tag.
 
-[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/tedkulp/agent-history/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/tedkulp/agent-history/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/tedkulp/agent-history/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/tedkulp/agent-history/compare/v0.11.0...v0.12.0
