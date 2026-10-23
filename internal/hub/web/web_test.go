@@ -664,6 +664,39 @@ func TestTranscriptScheduledTask(t *testing.T) {
 	}
 }
 
+func TestTranscriptForkSource(t *testing.T) {
+	ts := time.Now().UTC().Add(-time.Minute).Format("2006-01-02T15:04:05.000Z")
+	lines := []map[string]any{
+		{"type": "user", "uuid": "u1", "timestamp": ts, "cwd": "/Users/ted/src/app",
+			"message": map[string]any{"role": "user", "content": "Real prompt"}},
+		{"type": "user", "uuid": "f1", "parentUuid": "u1", "timestamp": ts, "cwd": "/Users/ted/src/app", "origin": map[string]any{"kind": "task-notification"},
+			"message": map[string]any{"role": "user", "content": "<task-notification>\n<fork-source>\nForked from <b>Calendar</b>.\n</fork-source>\n</task-notification>"}},
+	}
+	var main strings.Builder
+	enc := json.NewEncoder(&main)
+	enc.SetEscapeHTML(false)
+	for _, l := range lines {
+		if err := enc.Encode(l); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srv := newSiteRecords(t, []record{{"m1", "-Users-ted-src-app/" + sess + ".jsonl", main.String()}})
+
+	_, feed := get(t, srv.URL+"/")
+	i := strings.Index(feed, `href="/sessions/`)
+	link := feed[i+len(`href="`):]
+	_, page := get(t, srv.URL+link[:strings.Index(link, `"`)])
+	want := `<details class="marker fork_source"><summary>⑂ Forked from another session</summary><pre class="out">Forked from &lt;b&gt;Calendar&lt;/b&gt;.</pre></details>`
+	if !strings.Contains(page, want) {
+		t.Errorf("transcript lacks %q", want)
+	}
+	for _, bad := range []string{"<b>Calendar</b>", "fork-source", `href="#m-f1"`} {
+		if strings.Contains(page, bad) {
+			t.Errorf("transcript shows %q", bad)
+		}
+	}
+}
+
 func TestTranscriptShellCommands(t *testing.T) {
 	now := time.Now().UTC()
 	ts := func(s int) string {

@@ -94,7 +94,7 @@ Every line is a JSON object with a `type`. Conversation lines also carry `uuid`,
 |---|---|
 | `user`, `assistant` | Messages (§3.3) |
 | `system` | By `subtype`: `compact_boundary` → `marker` (`compaction`). `scheduled_task_fire` (a `/loop` wakeup or scheduled task firing) → a user Message with a `marker` Part (`scheduled_task`), text = the line's `content`, `output` = its `prompt` (none when absent); `taskId`, `cron`, `taskKind` and `cronKind` stay Raw only, and the `isMeta` user line after it that repeats the prompt stays Raw only (§3.3). `turn_duration`, `local_command`, `away_summary`, `stop_hook_summary`, `informational`, `api_error`, `bridge_status`, `agents_killed` → Raw only. Any other subtype → `unknown`. |
-| `attachment` | Raw only (context Claude Code injects: reminders, tool listings, environment), with one exception: subtype `queued_command` whose `attachment.isMeta` is not `true` becomes a user Message with `attachment.prompt` as its text (a block list gives its `text` and `image` blocks), or a `task_notification` marker (§3.3) when its `commandMode` is `task-notification` or its prompt is a string starting with `<task-notification>` |
+| `attachment` | Raw only (context Claude Code injects: reminders, tool listings, environment), with one exception: subtype `queued_command` whose `attachment.isMeta` is not `true` becomes a user Message with `attachment.prompt` as its text (a block list gives its `text` and `image` blocks), or a `task_notification` or `fork_source` marker (§3.3) when its `commandMode` is `task-notification` or its prompt is a string starting with `<task-notification>` |
 | `summary` | Raw only; used for the title fallback (§3.6) |
 | `custom-title`, `ai-title` | Raw only; used for the title (§3.6) |
 | `file-history-snapshot`, `file-history-delta`, `last-prompt`, `mode`, `permission-mode`, `queue-operation`, `progress`, `atis-latch`, `bridge-session`, `cost-state`, `agent-name`, `pr-link`, `frame-link`, `artifact-autoreact-ledger`, `artifact-comment-monitor`, `continued-in`, `api-request`, `api-request-shape`, `api-request-blob` | Raw only (bookkeeping) |
@@ -138,7 +138,7 @@ Walking the path in order:
 | A string starting with `<bash-stdout>` or `<bash-stderr>` that directly follows a `<bash-input>` line on the path | No Message. It is that marker's `output`: the `<bash-stdout>` body, then the `<bash-stderr>` body, each only when non-empty, joined with a newline. Claude Code writes both bodies HTML-escaped (`-&gt;`), so they are unescaped; the `<bash-input>` body is written raw. A command with no output line, or with both bodies empty, has no `output`. |
 | A string starting with `<bash-stdout>` or `<bash-stderr>` with no command before it | Raw only |
 | A string starting with `<local-command-stdout>`, `<local-command-stderr>` or `<local-command-caveat>` | Raw only |
-| A string, with `origin.kind: "task-notification"` or starting with `<task-notification>` (a background task or sub-agent finished). Block-list content is an ordinary `user` Message. | `marker` Part (`task_notification`), see **Task notifications** below |
+| A string, with `origin.kind: "task-notification"` or starting with `<task-notification>` (a background task or sub-agent finished). Block-list content is an ordinary `user` Message. | `marker` Part (`task_notification`, or `fork_source`), see **Task notifications** below |
 | Anything else | A `user` Message |
 
 **Task notifications**
@@ -155,6 +155,8 @@ Claude Code tells the model a background task (an agent, a background shell comm
 | `<usage>` | `task.tokens` (`<subagent_tokens>`), `task.tool_uses` (`<tool_uses>`), `task.duration_ms` (`<duration_ms>`), each only when present and a whole number |
 
 `<task-id>`, `<note>`, `<output-file>`, `<worktree>`, text outside the tags, and any tag not listed are Raw only. `<result>` and `<event>` are free text that can quote the block's own tags, so each runs from its first opening tag to its last closing tag, the block ends at its last `</task-notification>`, the other tags are read only before them, and `<usage>` only after them. A block without its closing `</task-notification>` or without a non-empty `<summary>` is malformed: it is a Parse warning (`missing_field`, source type `task-notification`) and the line keeps its ordinary rendering (a `user` Message with the text).
+
+**Fork source.** When a Session is forked, Claude Code writes a `<task-notification>` block whose only tag is `<fork-source>`: a note to the model about the Session it was copied from. A closed block holding a `<fork-source>` and nothing else but whitespace becomes a `marker` Part with `marker: "fork_source"`, text `Forked from another session`, and `output` = the `<fork-source>` body, trimmed. Its body is free text, so it runs from the first `<fork-source>` to the last `</fork-source>`. It is not a Parse warning. A block with `<fork-source>` and any other tag or text is read as above, with `<fork-source>` Raw only: without a non-empty `<summary>` it is malformed.
 
 In a `user` Message: a string content is one `text` Part. In a block list, `text` → `text`, `image` with a `base64` source → `image` (bytes decoded, MIME from `media_type`), `document` → `attachment` (label = its title or MIME type), any other block type → `unknown`. `tool_result` blocks mixed in still merge into their calls.
 

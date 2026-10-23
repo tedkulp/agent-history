@@ -20,7 +20,7 @@ import (
 
 // version is the parser_version. Bump it whenever output changes for
 // existing data (hub.md §4.5).
-const version = 15
+const version = 16
 
 const (
 	layout     = "jsonl"
@@ -653,8 +653,12 @@ const (
 	taskClose = "</task-notification>"
 )
 
+// forkSourceText is a fork_source marker's text.
+const forkSourceText = "Forked from another session"
+
 // taskNotification reads a <task-notification> block (claude-code.md §3.3).
-// ok is false when it is malformed: unclosed, or without a summary.
+// A block holding only a <fork-source> is a fork_source marker. ok is false
+// when it is malformed: unclosed, or without a summary.
 //
 // A <result> or <event> is free text that can quote any of the block's own
 // tags, so each runs from its first opening tag to its last closing one, the
@@ -669,6 +673,9 @@ func taskNotification(s string) (mp parser.MarkerPayload, ok bool) {
 		return mp, false
 	}
 	body = body[:end]
+	if note, ok := forkSource(body); ok {
+		return parser.MarkerPayload{Marker: parser.MarkerForkSource, Text: forkSourceText, Output: note}, true
+	}
 	head, tail := body, body
 	for _, tag := range []string{"result", "event"} {
 		if i := strings.Index(body, "<"+tag+">"); i >= 0 && i < len(head) {
@@ -700,6 +707,18 @@ func taskNotification(s string) (mp parser.MarkerPayload, ok bool) {
 			DurationMS: num("duration_ms"),
 		},
 	}, true
+}
+
+// forkSource is the trimmed <fork-source> body of a block body that holds
+// nothing else but whitespace. Its body is free text, so it runs to the last
+// </fork-source>.
+func forkSource(body string) (string, bool) {
+	rest, ok := strings.CutPrefix(strings.TrimSpace(body), "<fork-source>")
+	if !ok {
+		return "", false
+	}
+	note, ok := strings.CutSuffix(rest, "</fork-source>")
+	return strings.TrimSpace(note), ok
 }
 
 // tagBody is the text between the first <tag> and the </tag> after it, or

@@ -9,6 +9,10 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+### Fixed
+
+- A forked Claude Code Session's fork note no longer raises a `task-notification` Parse warning or shows as raw tags; it is a compact "⑂ Forked from another session" marker that opens to the note.
+
 ## [0.13.0] - 2026-10-20
 
 ### Added

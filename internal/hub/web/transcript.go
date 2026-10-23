@@ -201,11 +201,15 @@ const compactionSummaryLabel = "Compaction summary"
 // opens below it as preformatted text. A task_notification pill shows its
 // summary, and its result opens below it as Markdown, or its event as
 // preformatted text. A scheduled_task pill shows a clock and its text, and
-// its prompt opens below it as preformatted text.
+// its prompt opens below it as preformatted text. A fork_source pill shows a
+// fork sign and its text, and its note opens below it as preformatted text.
 func newMarkerView(partID string, mp parser.MarkerPayload) *markerView {
 	v := &markerView{Kind: mp.Marker, Label: mp.Text}
 	if mp.Marker == parser.MarkerScheduledTask {
 		v.Label = "⏰ " + cut(cmp.Or(mp.Text, mp.Marker), markerLabelMax)
+	}
+	if mp.Marker == parser.MarkerForkSource {
+		v.Label = "⑂ " + cut(cmp.Or(mp.Text, mp.Marker), markerLabelMax)
 	}
 	if mp.Marker == parser.MarkerTaskNotification {
 		var task parser.TaskPayload
@@ -222,7 +226,7 @@ func newMarkerView(partID string, mp parser.MarkerPayload) *markerView {
 		}
 	}
 	switch mp.Marker {
-	case parser.MarkerShellCommand, parser.MarkerTaskNotification, parser.MarkerScheduledTask:
+	case parser.MarkerShellCommand, parser.MarkerTaskNotification, parser.MarkerScheduledTask, parser.MarkerForkSource:
 		// Output is never Markdown.
 		v.Output = parser.CutBytes(mp.Output, stubOver)
 		if n := len(mp.Output) - len(v.Output); n > 0 {

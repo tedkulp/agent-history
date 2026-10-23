@@ -83,7 +83,7 @@ dialog.img-view .orig{padding:4px 12px;border-radius:999px;background:var(--pane
 details.marker>summary{cursor:pointer;text-align:center}
 details.marker .bubble{max-width:none;margin:6px 0 4px;color:var(--ink);font-size:13px}
 .marker.shell_command{font-family:var(--mono);white-space:pre-wrap;border-radius:8px;text-align:left} details.marker.shell_command>summary{text-align:left} details.marker pre.out{text-align:left;color:var(--ink);margin:6px 0 4px}
-.marker.task_notification a.call{margin-left:4px} .marker .st.completed{color:var(--add-ink)} .marker .st.failed{color:var(--bad)} details.marker.task_notification pre.out,details.marker.scheduled_task pre.out{white-space:pre-wrap}
+.marker.task_notification a.call{margin-left:4px} .marker .st.completed{color:var(--add-ink)} .marker .st.failed{color:var(--bad)} details.marker.task_notification pre.out,details.marker.scheduled_task pre.out,details.marker.fork_source pre.out{white-space:pre-wrap}
 .bubble.command code.cmd{font-size:11.5px} .bubble.command code.cmd + p{display:inline;margin-left:4px}
 .bubble.unknown{background:var(--warn);font-size:12.5px} .msg.user .bubble.unknown{background:var(--warn);color:var(--ink);border-color:var(--line)}
 .bubble.unknown pre{margin:4px 0 0}

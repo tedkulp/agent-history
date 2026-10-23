@@ -997,6 +997,51 @@ func TestParseTaskNotificationResultQuotingTags(t *testing.T) {
 	}
 }
 
+// TestParseForkSource: a block holding only <fork-source> is a fork_source
+// marker in both forms, with no warning; with other tags it is read as any
+// other task notification (claude-code.md §3.3).
+func TestParseForkSource(t *testing.T) {
+	note := "This session began as a fork (copy) of another session.\nIt quotes <fork-source>x</fork-source> too."
+	fork := notification("<fork-source>\n" + note + "\n</fork-source>")
+	withStatus := notification("<status>completed</status>", "<fork-source>\nx\n</fork-source>")
+	withSummary := notification("<summary>Agent finished</summary>", "<fork-source>\nx\n</fork-source>")
+	fromOrigin := userLine("n1", "u1", "2026-09-01T10:00:01.000Z", fork)
+	fromOrigin["origin"] = map[string]any{"kind": "task-notification"}
+	queued := func(uuid, parent, prompt string) map[string]any {
+		return map[string]any{"type": "attachment", "uuid": uuid, "parentUuid": parent, "timestamp": "2026-09-01T10:00:02.000Z",
+			"attachment": map[string]any{"type": "queued_command", "prompt": prompt, "commandMode": "task-notification"}}
+	}
+	main := jsonl(t,
+		userLine("u1", "", "2026-09-01T10:00:00.000Z", "go"),
+		fromOrigin,
+		queued("n2", "n1", fork),
+		userLine("n3", "n2", "2026-09-01T10:00:03.000Z", withStatus),
+		userLine("n4", "n3", "2026-09-01T10:00:04.000Z", withSummary),
+	)
+	res := parse(t, main, nil)
+	want := []flat{
+		{ID: "u1", Role: "user", Texts: []string{"go"}},
+		{ID: "n1", Role: "user", Texts: []string{"[fork_source Forked from another session]"}},
+		{ID: "n2", Role: "user", Texts: []string{"[fork_source Forked from another session]"}},
+		{ID: "n3", Role: "user", Texts: []string{withStatus}},
+		{ID: "n4", Role: "user", Texts: []string{"[task_notification Agent finished]"}},
+	}
+	if got := flatten(res.Messages); !reflect.DeepEqual(got, want) {
+		t.Fatalf("messages:\n got %+v\nwant %+v", got, want)
+	}
+	for _, i := range []int{1, 2} {
+		j, _ := json.Marshal(res.Messages[i].Parts[0].Payload)
+		wantJ, _ := json.Marshal(parser.MarkerPayload{Marker: parser.MarkerForkSource, Text: "Forked from another session", Output: note})
+		if string(j) != string(wantJ) {
+			t.Errorf("message %d payload = %s\nwant %s", i, j, wantJ)
+		}
+	}
+	// Only the block with a status and no summary is malformed.
+	if len(res.Warnings) != 1 || res.Warnings[0].Count != 1 || res.Warnings[0].SourceType != "task-notification" {
+		t.Errorf("warnings = %+v", res.Warnings)
+	}
+}
+
 // TestScheduledTaskFire: a fire line is a scheduled_task marker with its
 // prompt as the output, and the isMeta prompt line after it stays Raw only
 // (claude-code.md §3.1).

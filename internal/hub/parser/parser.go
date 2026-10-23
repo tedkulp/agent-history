@@ -48,6 +48,9 @@ const (
 	// MarkerScheduledTask is a /loop wakeup or scheduled task firing; its
 	// Output is the prompt it resumes with.
 	MarkerScheduledTask = "scheduled_task"
+	// MarkerForkSource is a forked Session's note about the Session it was
+	// copied from; its Output is the note.
+	MarkerForkSource = "fork_source"
 )
 
 // CompactionText is a compaction marker's text when the Source gives no
@@ -149,8 +152,8 @@ type AttachmentPayload struct {
 }
 
 // MarkerPayload is the payload of a marker Part. Output is a shell_command's
-// output, a task_notification's event or a scheduled_task's prompt, "" when
-// it has none. Task is set on a task_notification only.
+// output, a task_notification's event, a scheduled_task's prompt or a
+// fork_source's note, "" when it has none. Task is set on a task_notification only.
 type MarkerPayload struct {
 	Marker string       `json:"marker"`
 	Text   string       `json:"text"`
