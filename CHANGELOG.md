@@ -9,6 +9,10 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+### Fixed
+
+- Claude Code's `tools-used` line no longer raises an unknown-type Parse warning.
+
 ## [0.13.1] - 2026-10-23
 
 ### Fixed
