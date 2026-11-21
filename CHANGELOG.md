@@ -14,6 +14,7 @@ One version covers the Collector and the Hub together (see
 - Claude Code's `data-flow-records` line no longer raises an unknown-type Parse warning.
 - Claude Code's `session-owner` line no longer raises an unknown-type Parse warning.
 - Claude Code's `derived-from` line no longer raises an unknown-type Parse warning.
+- Codex's `additional_tools` response items (the tool definitions offered to the model) no longer raise an unknown-type Parse warning.
 
 ## [0.13.2] - 2026-11-02
 

@@ -455,6 +455,31 @@ func TestMappingRows(t *testing.T) {
 	}
 }
 
+// An additional_tools item (the tool definitions offered to the model) is
+// Raw only, like a developer message (codex.md §3.3).
+func TestAdditionalTools(t *testing.T) {
+	main := build(t, 0,
+		meta(thread, nil),
+		turn("gpt-6-sol", "medium"),
+		rl{"response_item", map[string]any{"type": "additional_tools", "id": "at_1", "role": "developer", "tools": []any{
+			map[string]any{"type": "namespace", "name": "functions", "description": "", "tools": []any{
+				map[string]any{"type": "custom", "name": "apply_patch", "description": "Edit files"}}}}}},
+		user(inText("Hi")),
+		say("final_answer", "Hello."),
+	)
+	res := parse(t, parser.Input{Main: main})
+	if ws := warnings(res); len(ws) != 0 {
+		t.Errorf("warnings %q, want none", ws)
+	}
+	var got [][]string
+	for _, m := range res.Messages {
+		got = append(got, append([]string{m.Role}, kinds(m)...))
+	}
+	if want := [][]string{{"user", "text"}, {"assistant", "text"}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("messages %v, want %v", got, want)
+	}
+}
+
 func sortStrings(s []string) []string { s = slices.Clone(s); slices.Sort(s); return s }
 
 // A Child Session's inherited parent context is Raw only; it links to its

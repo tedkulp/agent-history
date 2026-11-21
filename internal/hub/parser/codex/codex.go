@@ -21,7 +21,7 @@ import (
 
 // version is the parser_version. Bump it whenever output changes for
 // existing data (hub.md §4.5).
-const version = 1
+const version = 2
 
 const (
 	layout     = "jsonl"
@@ -587,6 +587,8 @@ func (b *builder) responseItem(l *line) {
 		b.toolCall(b.assistant(l), it)
 	case "function_call_output", "custom_tool_call_output":
 		// Merged into their call.
+	case "additional_tools":
+		// Tool definitions offered to the model: Raw only.
 	default:
 		b.unknown(b.assistant(l), it.Type, l.Payload)
 	}
