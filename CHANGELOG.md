@@ -12,6 +12,7 @@ One version covers the Collector and the Hub together (see
 ### Fixed
 
 - Claude Code's `data-flow-records` line no longer raises an unknown-type Parse warning.
+- Claude Code's `session-owner` line no longer raises an unknown-type Parse warning.
 
 ## [0.13.2] - 2026-11-02
 
