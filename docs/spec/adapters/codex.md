@@ -112,6 +112,7 @@ Source: [Normalized Transcript model](https://github.com/tedkulp/agent-history/i
 |---|---|
 | `message`, role `user` | A `user` Message. Each `input_text` block → `text`, `input_image` → `image`. **Injected context** blocks are Raw only: a block whose whole text is one `<tag>…</tag>` element (e.g. `<environment_context>`, `<user_instructions>`, `<recommended_plugins>`, `<skill>`, `<app-context>`). A message left with no Parts produces no Message. |
 | `message`, role `developer` or `system` | Raw only (instructions, like system prompts) |
+| `additional_tools` | Raw only (tool definitions offered to the model, like a system prompt) |
 | `message`, role `assistant` | `output_text` blocks → `text` Parts. Both `phase` values (`commentary`, `final_answer`) are text. |
 | `reasoning` | `thinking` Part: the `summary` texts joined by `\n\n`. No Part if the summary is empty. `encrypted_content` is Raw only. |
 | `function_call` | `tool_call` (§3.4) |
@@ -180,7 +181,7 @@ Source: [Normalized Transcript model](https://github.com/tedkulp/agent-history/i
 - **Archive / unarchive** moves the file. Same key, same bytes, nothing shipped.
 - **`codex delete`** removes the file locally. The Hub keeps it.
 - **Thread-store drift.** If Codex stops writing JSONL, the known-ignored `thread_history_*.sqlite` becomes newer than the newest claimed rollout. `status` shows both times (`collector.md` §4.7), so the operator notices. Reading the store is a later adapter change: a new Layout with a higher rank.
-- **`parser_version`** starts at `1`.
+- **`parser_version`** starts at `1`. `2` kept `additional_tools` items Raw only.
 
 Source: [Codex on-disk history format](https://github.com/tedkulp/agent-history/issues/3), [Source format drift](https://github.com/tedkulp/agent-history/issues/16)
 

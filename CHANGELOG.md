@@ -9,6 +9,10 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+### Fixed
+
+- Codex's `additional_tools` response items (the tool definitions offered to the model) no longer raise an unknown-type Parse warning.
+
 ## [0.13.2] - 2026-11-02
 
 ### Fixed
