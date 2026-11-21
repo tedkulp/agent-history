@@ -9,6 +9,8 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+## [0.13.3] - 2026-11-21
+
 ### Fixed
 
 - Claude Code's `data-flow-records` line no longer raises an unknown-type Parse warning.
@@ -175,7 +177,8 @@ One version covers the Collector and the Hub together (see
 - Release pipeline: CI, GoReleaser archives for the Collector and a
   multi-arch Hub image, published from a version tag.
 
-[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.13.2...HEAD
+[Unreleased]: https://github.com/tedkulp/agent-history/compare/v0.13.3...HEAD
+[0.13.3]: https://github.com/tedkulp/agent-history/compare/v0.13.2...v0.13.3
 [0.13.2]: https://github.com/tedkulp/agent-history/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/tedkulp/agent-history/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/tedkulp/agent-history/compare/v0.12.1...v0.13.0
