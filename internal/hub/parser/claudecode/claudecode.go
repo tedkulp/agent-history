@@ -125,7 +125,7 @@ var rawOnly = map[string]bool{
 	"bridge-session": true, "cost-state": true, "agent-name": true, "pr-link": true, "frame-link": true,
 	"artifact-autoreact-ledger": true, "artifact-comment-monitor": true, "continued-in": true,
 	"api-request": true, "api-request-shape": true, "api-request-blob": true, "tools-used": true,
-	"session-owner": true,
+	"data-flow-records": true, "session-owner": true,
 }
 
 // rawOnlySystem are the system subtypes kept in the Raw record only.
