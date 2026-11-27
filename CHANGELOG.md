@@ -9,6 +9,10 @@ One version covers the Collector and the Hub together (see
 
 ## [Unreleased]
 
+### Fixed
+
+- Claude Code's `data-flow-incomplete` line no longer raises an unknown-type Parse warning.
+
 ## [0.13.3] - 2026-11-21
 
 ### Fixed

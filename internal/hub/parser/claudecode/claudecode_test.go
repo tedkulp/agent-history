@@ -313,6 +313,7 @@ func TestParseLineTypes(t *testing.T) {
 		"mode", "permission-mode", "queue-operation", "progress", "atis-latch", "bridge-session", "cost-state",
 		"agent-name", "pr-link", "frame-link", "artifact-autoreact-ledger", "artifact-comment-monitor", "continued-in",
 		"api-request", "api-request-shape", "api-request-blob", "tools-used", "data-flow-records", "session-owner", "derived-from",
+		"data-flow-incomplete",
 		"attachment",
 	}
 	subtypes := []string{"turn_duration", "local_command", "away_summary", "stop_hook_summary", "informational", "api_error", "bridge_status", "agents_killed"}
@@ -338,6 +339,26 @@ func TestParseLineTypes(t *testing.T) {
 	want := []flat{
 		{ID: "u1", Role: "user", Texts: []string{"go"}},
 		{ID: "a1", Role: "assistant", Texts: []string{"one", "two"}},
+	}
+	if got := flatten(res.Messages); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v", got)
+	}
+	if len(res.Warnings) != 0 {
+		t.Errorf("warnings = %+v", res.Warnings)
+	}
+}
+
+func TestParseDataFlowIncomplete(t *testing.T) {
+	// claude-code.md §3.1: data-flow-incomplete is Raw only, with or without codes.
+	res := parse(t, jsonl(t,
+		userLine("u1", "", "2026-09-01T10:00:00.000Z", "go"),
+		map[string]any{"type": "data-flow-incomplete", "v": 1, "sessionId": "s"},
+		map[string]any{"type": "data-flow-incomplete", "v": 1, "sessionId": "s", "codes": []int{9}},
+		asstLine("a1", "u1", "2026-09-01T10:00:01.000Z", "msg_1", text("one"), nil),
+	), nil)
+	want := []flat{
+		{ID: "u1", Role: "user", Texts: []string{"go"}},
+		{ID: "a1", Role: "assistant", Texts: []string{"one"}},
 	}
 	if got := flatten(res.Messages); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v", got)
